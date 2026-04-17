@@ -1,0 +1,19 @@
+/target
+**/*.rs.bk
+Cargo.lock.bak
+
+# Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Local env
+.env
+.env.local
+
+# OS
+.DS_Store
+
+# Postgres data dirs (if anyone runs PG locally)
+pgdata/

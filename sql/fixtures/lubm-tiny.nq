@@ -1,0 +1,9 @@
+<http://example.org/u/alice> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://example.org/Professor> <http://example.org/g/dept-cs> .
+<http://example.org/u/alice> <http://example.org/teaches> <http://example.org/c/cs101> <http://example.org/g/dept-cs> .
+<http://example.org/u/alice> <http://example.org/name> "Alice Brackenridge" <http://example.org/g/dept-cs> .
+<http://example.org/u/bob> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://example.org/Student> <http://example.org/g/dept-cs> .
+<http://example.org/u/bob> <http://example.org/takes> <http://example.org/c/cs101> <http://example.org/g/dept-cs> .
+<http://example.org/u/bob> <http://example.org/name> "Bob"@en <http://example.org/g/dept-cs> .
+<http://example.org/c/cs101> <http://example.org/title> "Intro to CS"^^<http://www.w3.org/2001/XMLSchema#string> <http://example.org/g/dept-cs> .
+<http://example.org/u/carol> <http://example.org/credits> "42"^^<http://www.w3.org/2001/XMLSchema#integer> <http://example.org/g/dept-math> .
+<http://example.org/u/carol> <http://example.org/name> "Carol" .
