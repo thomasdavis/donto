@@ -1,5 +1,14 @@
 # donto cargo config. Empty by intent — the workspace root Cargo.toml
 # carries everything (resolver, profiles, deps).
 #
+# sccache is wired via environment, not via `build.rustc-wrapper`, because
+# setting the wrapper here would hard-fail any contributor who doesn't
+# have sccache installed. Opt in locally with:
+#
+#   cargo install sccache --locked
+#   export RUSTC_WRAPPER=sccache
+#
+# CI sets it explicitly in .github/workflows/ci.yml.
+#
 # Reserved for future per-target config (e.g. linker overrides for cross
 # builds) without churning Cargo.toml.

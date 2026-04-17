@@ -39,6 +39,10 @@ jobs:
     env:
       DONTO_TEST_DSN: postgres://donto:donto@127.0.0.1:55432/donto
       RUST_BACKTRACE: 1
+      # sccache wired via env so the repo's .cargo/config.toml stays
+      # unopinionated (no hard dep on sccache for local builds).
+      SCCACHE_GHA_ENABLED: "true"
+      RUSTC_WRAPPER: sccache
 
     steps:
       - uses: actions/checkout@v4
@@ -48,13 +52,17 @@ jobs:
         with:
           components: clippy, rustfmt
 
-      - name: Cache cargo
+      - name: Install sccache
+        uses: mozilla-actions/sccache-action@v0.0.6
+
+      - name: Cache cargo registry / git
         uses: actions/cache@v4
         with:
+          # target/ is intentionally *not* cached here — sccache handles
+          # compiler artifacts, and a stale target/ can shadow the wrapper.
           path: |
             ~/.cargo/registry
             ~/.cargo/git
-            target
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock', '**/Cargo.toml') }}
 
       - name: cargo fmt
@@ -69,11 +77,18 @@ jobs:
       - name: cargo test
         run: cargo test --workspace --locked -- --nocapture
 
+      - name: sccache stats
+        if: always()
+        run: sccache --show-stats
+
   msrv:
     # Enforce the rust-version floor declared in Cargo.toml. If a dep bump
     # requires a newer toolchain, bump Cargo.toml rust-version deliberately
     # rather than letting it drift. No Postgres: this only has to compile.
     runs-on: ubuntu-latest
+    env:
+      SCCACHE_GHA_ENABLED: "true"
+      RUSTC_WRAPPER: sccache
     steps:
       - uses: actions/checkout@v4
 
@@ -82,14 +97,20 @@ jobs:
         with:
           toolchain: "1.78"
 
-      - name: Cache cargo
+      - name: Install sccache
+        uses: mozilla-actions/sccache-action@v0.0.6
+
+      - name: Cache cargo registry / git
         uses: actions/cache@v4
         with:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
-            target
           key: ${{ runner.os }}-cargo-msrv-${{ hashFiles('**/Cargo.lock', '**/Cargo.toml') }}
 
       - name: cargo check --locked (workspace compiles on MSRV)
         run: cargo check --workspace --all-targets --locked
+
+      - name: sccache stats
+        if: always()
+        run: sccache --show-stats

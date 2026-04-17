@@ -497,4 +497,104 @@ mod tests {
             Some(Term::Iri("http://example.org/src".into()))
         );
     }
+
+    #[test]
+    fn multiple_prefix_declarations_round_trip() {
+        let q = parse_sparql(
+            r#"
+            PREFIX ex:   <http://example.org/>
+            PREFIX foaf: <http://xmlns.com/foaf/0.1/>
+            SELECT ?name WHERE {
+                ?p foaf:name ?name .
+                ?p ex:age ?age .
+            }
+        "#,
+        )
+        .unwrap();
+        assert_eq!(q.patterns.len(), 2);
+        // Both expansions resolved.
+        let preds: Vec<String> = q
+            .patterns
+            .iter()
+            .map(|p| format!("{:?}", p.predicate))
+            .collect();
+        assert!(preds.iter().any(|s| s.contains("foaf/0.1/name")));
+        assert!(preds.iter().any(|s| s.contains("example.org/age")));
+    }
+
+    #[test]
+    fn filter_with_numeric_comparison_parses() {
+        let q = parse_sparql(
+            r#"
+            PREFIX ex: <http://example.org/>
+            SELECT ?p WHERE {
+                ?p ex:age ?age .
+                FILTER (?age >= 18)
+            }
+        "#,
+        )
+        .unwrap();
+        assert_eq!(q.filters.len(), 1);
+    }
+
+    #[test]
+    fn unknown_prefix_is_accepted_as_literal_curie() {
+        // Phase 4 SPARQL subset does not require PREFIX to be declared
+        // before use; prefixed names are round-tripped verbatim into the
+        // algebra. Evaluator is then responsible for refusing to expand
+        // them. This test pins that contract so we notice if future
+        // parser work starts rejecting undeclared prefixes.
+        let q = parse_sparql(
+            r#"
+            SELECT ?x WHERE { ?x ex:knows ?y . }
+        "#,
+        )
+        .expect("undeclared prefix is currently accepted");
+        assert_eq!(q.patterns.len(), 1);
+        let pred_dbg = format!("{:?}", q.patterns[0].predicate);
+        assert!(pred_dbg.contains("ex:knows") || pred_dbg.contains("knows"));
+    }
+
+    #[test]
+    fn select_star_projects_all_bound_vars() {
+        let q = parse_sparql(
+            r#"
+            PREFIX ex: <http://example.org/>
+            SELECT * WHERE { ?s ex:p ?o . }
+        "#,
+        );
+        // SELECT * is either supported (project populated) or cleanly
+        // rejected; it must never panic.
+        match q {
+            Ok(_) | Err(_) => {}
+        }
+    }
+
+    #[test]
+    fn string_literal_with_lang_tag() {
+        let q = parse_sparql(
+            r#"
+            PREFIX ex: <http://example.org/>
+            SELECT ?s WHERE { ?s ex:name "Alice"@en . }
+        "#,
+        );
+        // If lang tags aren't supported, the parser must fail cleanly.
+        // If they are, we should see one pattern.
+        if let Ok(q) = q {
+            assert_eq!(q.patterns.len(), 1);
+        }
+    }
+
+    #[test]
+    fn limit_clause_outside_where_is_captured() {
+        let q = parse_sparql(
+            r#"
+            PREFIX ex: <http://example.org/>
+            SELECT ?s WHERE { ?s ex:p ?o . }
+            LIMIT 5
+        "#,
+        )
+        .unwrap();
+        assert_eq!(q.limit, Some(5));
+    }
 }

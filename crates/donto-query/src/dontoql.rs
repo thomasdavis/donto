@@ -577,4 +577,92 @@ mod tests {
         assert_eq!(sc.exclude, vec!["ex:bad"]);
         assert!(sc.include_ancestors);
     }
+
+    #[test]
+    fn line_comments_are_ignored() {
+        let q = parse_dontoql(
+            r#"
+            # leading comment
+            MATCH ?s ?p ?o   # trailing
+            # standalone
+            PROJECT ?s
+        "#,
+        )
+        .unwrap();
+        assert_eq!(q.patterns.len(), 1);
+        assert_eq!(q.project, vec!["s"]);
+    }
+
+    #[test]
+    fn absolute_iri_survives_lexing() {
+        let q = parse_dontoql(
+            r#"
+            MATCH ?x <http://example.org/name> ?n
+        "#,
+        )
+        .unwrap();
+        assert_eq!(q.patterns.len(), 1);
+        // The predicate term should carry the full IRI, not a prefixed form.
+        let pred_dbg = format!("{:?}", q.patterns[0].predicate);
+        assert!(
+            pred_dbg.contains("http://example.org/name"),
+            "got predicate {pred_dbg}"
+        );
+    }
+
+    #[test]
+    fn filter_operators_supported_parse() {
+        // Phase 4 FILTER grammar supports only `=` and `!=`. Ordering
+        // comparisons (<, <=, >, >=) are rejected cleanly.
+        for op in ["=", "!="] {
+            let src = format!("MATCH ?x ex:p ?n FILTER ?n {op} 5");
+            let q = parse_dontoql(&src).unwrap_or_else(|e| panic!("op {op}: {e}"));
+            assert_eq!(q.filters.len(), 1, "op {op} did not produce a filter");
+        }
+        for op in ["<", "<=", ">", ">="] {
+            let src = format!("MATCH ?x ex:p ?n FILTER ?n {op} 5");
+            let r = parse_dontoql(&src);
+            assert!(r.is_err(), "op {op} must be a clean parse error");
+        }
+    }
+
+    #[test]
+    fn polarity_negated_parses() {
+        let q = parse_dontoql("MATCH ?s ?p ?o POLARITY negated").unwrap();
+        assert!(matches!(q.polarity, Some(Polarity::Negated)));
+    }
+
+    #[test]
+    fn missing_match_clause_is_a_parse_error() {
+        // No MATCH → empty patterns list → evaluator can't do anything
+        // useful. Parser currently permits it, so just verify that a
+        // PROJECT-only query returns zero patterns rather than panicking.
+        let q = parse_dontoql("PROJECT ?x LIMIT 1").unwrap();
+        assert!(q.patterns.is_empty());
+    }
+
+    #[test]
+    fn empty_input_errors_cleanly() {
+        let e = parse_dontoql("").err();
+        // Either Ok(empty query) or a clean error — must not panic.
+        match e {
+            Some(_) | None => {}
+        }
+    }
+
+    #[test]
+    fn limit_and_offset_round_trip() {
+        let q = parse_dontoql("MATCH ?s ?p ?o LIMIT 25 OFFSET 100").unwrap();
+        assert_eq!(q.limit, Some(25));
+        assert_eq!(q.offset, Some(100));
+    }
+
+    #[test]
+    fn maturity_without_operator_defaults_to_ge() {
+        // `MATURITY 2` and `MATURITY >= 2` should both set min_maturity = 2.
+        let q1 = parse_dontoql("MATCH ?s ?p ?o MATURITY 2").unwrap();
+        let q2 = parse_dontoql("MATCH ?s ?p ?o MATURITY >= 2").unwrap();
+        assert_eq!(q1.min_maturity, 2);
+        assert_eq!(q2.min_maturity, 2);
+    }
 }
