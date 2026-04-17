@@ -21,6 +21,7 @@ pub const MIGRATIONS: &[(&str, &str)] = &[
     ("0009_rule",       include_str!("../../../sql/migrations/0009_rule.sql")),
     ("0010_certificate",include_str!("../../../sql/migrations/0010_certificate.sql")),
     ("0011_observability",include_str!("../../../sql/migrations/0011_observability.sql")),
+    ("0012_match_scope_fix",include_str!("../../../sql/migrations/0012_match_scope_fix.sql")),
 ];
 
 fn sha256_of(s: &str) -> Vec<u8> {

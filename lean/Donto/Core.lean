@@ -55,8 +55,8 @@ structure Context where
   deriving Repr
 
 structure ContextScope where
-  include             : List IRI := []
-  exclude             : List IRI := []
+  includeCtxs         : List IRI := []
+  excludeCtxs         : List IRI := []
   includeDescendants  : Bool := true
   includeAncestors    : Bool := false
   deriving Repr

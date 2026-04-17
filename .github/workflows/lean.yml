@@ -1,0 +1,40 @@
+name: lean overlay
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'lean/**'
+      - '.github/workflows/lean.yml'
+  pull_request:
+    paths:
+      - 'lean/**'
+      - '.github/workflows/lean.yml'
+
+jobs:
+  lake-build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install elan + Lean toolchain
+        run: |
+          curl -sSf https://raw.githubusercontent.com/leanprover/elan/master/elan-init.sh | \
+            sh -s -- -y --default-toolchain $(cat lean/lean-toolchain)
+          echo "$HOME/.elan/bin" >> $GITHUB_PATH
+
+      - name: Cache lake build
+        uses: actions/cache@v4
+        with:
+          path: lean/.lake
+          key: ${{ runner.os }}-lake-${{ hashFiles('lean/lean-toolchain', 'lean/lakefile.lean', 'lean/**/*.lean') }}
+
+      - name: lake build
+        run: |
+          cd lean
+          lake build
+
+      - name: Smoke test donto_engine
+        run: |
+          cd lean
+          echo "" | ./.lake/build/bin/donto_engine

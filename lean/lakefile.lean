@@ -5,7 +5,7 @@ package donto where
   -- The Lean side of donto. Provides Shape and Rule combinators, the DIR
   -- AST, encoders/decoders, and the standard library. dontosrv (Rust) calls
   -- into a compiled Lean executable that streams DIR over stdio.
-  leanOptions := #[⟨`linter.unusedVariables, .ofNat 0⟩]
+  leanOptions := #[⟨`linter.unusedVariables, false⟩]
 
 @[default_target]
 lean_lib Donto

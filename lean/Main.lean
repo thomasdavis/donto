@@ -8,8 +8,13 @@
 
 import Donto
 
+/-- Read until EOF on the given stream, accumulating lines. -/
+partial def drainStream (s : IO.FS.Stream) (acc : String := "") : IO String := do
+  let line ← s.getLine
+  if line.isEmpty then return acc else drainStream s (acc ++ line)
+
 def main : IO Unit := do
   IO.println "donto_engine ready"
   let stdin ← IO.getStdin
-  let _ ← stdin.readToEnd
+  let _payload ← drainStream stdin
   IO.println "{\"ack\":true,\"engine\":\"lean\",\"version\":\"0.1.0\"}"

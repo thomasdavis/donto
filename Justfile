@@ -37,3 +37,20 @@ smoke: pg-up
     just migrate
     just ingest-fixture
     cargo run -p donto-cli -- --dsn '{{dsn}}' match --predicate http://example.org/name
+
+# Build and test the pg_donto pgrx extension end-to-end via Docker
+# (no host sudo, no host pg-dev headers).
+pgrx pg="16":
+    ./scripts/pgrx-build.sh {{pg}}
+
+# Build the Lean overlay (requires elan / Lean 4.12).
+lean:
+    cd lean && lake build
+
+# Migrate the bundled tiny genealogy SQLite into a throwaway donto root.
+migrate-genealogy: pg-up
+    sqlite3 /tmp/donto_genealogy_demo.sqlite < sql/fixtures/genealogy_seed.sql
+    cargo run -p donto-migrate -- --dsn '{{dsn}}' \
+        genealogy /tmp/donto_genealogy_demo.sqlite \
+        --root ctx:demo/genealogy
+    rm -f /tmp/donto_genealogy_demo.sqlite

@@ -3,7 +3,19 @@ name: ci
 on:
   push:
     branches: [main]
+    paths-ignore:
+      - 'crates/pg_donto/**'
+      - 'lean/**'
+      - 'docs/**'
+      - '*.md'
+      - 'LICENSE-*'
   pull_request:
+    paths-ignore:
+      - 'crates/pg_donto/**'
+      - 'lean/**'
+      - 'docs/**'
+      - '*.md'
+      - 'LICENSE-*'
 
 jobs:
   test:

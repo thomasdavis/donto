@@ -6,6 +6,17 @@ This crate is **not** a workspace member of the top-level `Cargo.toml` —
 pgrx requires Postgres dev headers and a one-time `cargo pgrx init` step
 that breaks ordinary workspace builds. Build it explicitly.
 
+## Easy path: Docker (no host sudo, no host pg-dev headers)
+
+```bash
+./scripts/pgrx-build.sh           # default: pg16
+./scripts/pgrx-build.sh 17        # try pg17
+```
+
+This builds an image with the right Postgres dev headers, runs
+`cargo pgrx package`, and exercises the `#[pg_test]` suite. CI uses
+the same image (`.github/workflows/ext.yml`).
+
 ## Prerequisites
 
 - Postgres 13–17 with development headers (`libpq-dev`, `postgresql-server-dev-16`

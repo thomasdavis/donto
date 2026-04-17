@@ -6,11 +6,13 @@ on:
     paths:
       - 'crates/pg_donto/**'
       - 'sql/migrations/**'
+      - 'scripts/pgrx-build.sh'
       - '.github/workflows/ext.yml'
   pull_request:
     paths:
       - 'crates/pg_donto/**'
       - 'sql/migrations/**'
+      - 'scripts/pgrx-build.sh'
       - '.github/workflows/ext.yml'
 
 jobs:
@@ -18,45 +20,26 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        pg: [pg14, pg15, pg16, pg17]
+        pg: [14, 15, 16, 17]
       fail-fast: false
 
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
 
-      - name: Cache cargo
-        uses: actions/cache@v4
+      - name: Build pgrx image
+        uses: docker/build-push-action@v6
         with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            crates/pg_donto/target
-          key: ${{ runner.os }}-pgrx-${{ matrix.pg }}-${{ hashFiles('crates/pg_donto/Cargo.toml') }}
+          context: .
+          file: crates/pg_donto/Dockerfile
+          build-args: |
+            PG_VERSION=${{ matrix.pg }}
+          tags: donto-pgrx-pg${{ matrix.pg }}
+          load: true
+          cache-from: type=gha,scope=pgrx-${{ matrix.pg }}
+          cache-to: type=gha,scope=pgrx-${{ matrix.pg }},mode=max
 
-      - name: Install Postgres dev headers
-        run: |
-          sudo sh -c 'echo "deb https://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" > /etc/apt/sources.list.d/pgdg.list'
-          curl -fsSL https://www.postgresql.org/media/keys/ACCC4CF8.asc | sudo gpg --dearmor -o /usr/share/keyrings/pgdg.gpg
-          sudo apt-get update
-          PG_VER="${PG_FEAT#pg}"
-          sudo apt-get install -y postgresql-${PG_VER} postgresql-server-dev-${PG_VER} libpq-dev
-        env:
-          PG_FEAT: ${{ matrix.pg }}
-
-      - name: Install cargo-pgrx
-        run: cargo install --locked cargo-pgrx --version 0.12.7
-
-      - name: pgrx init
-        run: cargo pgrx init --${{ matrix.pg }} $(which pg_config)
-        working-directory: crates/pg_donto
-
-      - name: Build extension
-        run: cargo pgrx package --features ${{ matrix.pg }} --no-default-features
-        working-directory: crates/pg_donto
-
-      - name: Run pg_test suite
-        run: cargo pgrx test ${{ matrix.pg }} --features ${{ matrix.pg }} --no-default-features
-        working-directory: crates/pg_donto
+      - name: Run pgrx test suite
+        run: docker run --rm donto-pgrx-pg${{ matrix.pg }}

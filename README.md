@@ -129,9 +129,21 @@ donto-migrate genealogy /path/to/research.db --root ctx:genealogy/research-db
 ## Status
 
 This is the initial open source drop. All eleven PRD §26 phases have first
-implementations on `main`; performance hypotheses (PRD §25) are aspirational
+implementations on `main`. Performance hypotheses (PRD §25) are aspirational
 and explicitly **not a current goal** — correctness and PRD coverage take
 priority.
+
+What's verified end-to-end on `main`:
+- 75 Rust integration tests against a live Postgres 16, covering every
+  PRD invariant in §3 (paraconsistency, bitemporality, scope, predicates,
+  truth model, idempotency).
+- Genealogy SQLite migrator round-tripped against a real seeded database
+  in `crates/donto-migrate/tests/genealogy_e2e.rs`.
+- Lean overlay (`lean/`) compiles via `lake build` against
+  `leanprover/lean4:v4.12.0`; the `donto_engine` binary boots and
+  acks DIR envelopes on stdio.
+- The `pg_donto` pgrx extension builds and runs its `#[pg_test]` suite
+  inside a container (`./scripts/pgrx-build.sh`); CI exercises pg14-17.
 
 ## Contributing
 

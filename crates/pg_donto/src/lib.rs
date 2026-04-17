@@ -89,6 +89,11 @@ extension_sql_file!(
     name = "0011_observability",
     requires = ["0001_core", "0002_flags", "0006_predicate", "0008_shape", "0009_rule"]
 );
+extension_sql_file!(
+    "../../../sql/migrations/0012_match_scope_fix.sql",
+    name = "0012_match_scope_fix",
+    requires = ["0003_functions", "0005_presets"]
+);
 
 // ---------------------------------------------------------------------------
 // Rust-implemented helpers. These shadow the plpgsql versions of the same
