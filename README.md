@@ -126,6 +126,29 @@ donto ingest export.json --format property-graph
 donto-migrate genealogy /path/to/research.db --root ctx:genealogy/research-db
 ```
 
+## Status
+
+This is the initial open source drop. All eleven PRD §26 phases have first
+implementations on `main`; performance hypotheses (PRD §25) are aspirational
+and explicitly **not a current goal** — correctness and PRD coverage take
+priority.
+
+## Contributing
+
+See [`CONTRIBUTING.md`](CONTRIBUTING.md), [`CLAUDE.md`](CLAUDE.md) for the
+working contract that AI agents and humans share, and
+[`CODE_OF_CONDUCT.md`](CODE_OF_CONDUCT.md).
+
+## Security
+
+See [`SECURITY.md`](SECURITY.md). Please report vulnerabilities privately.
+
 ## License
 
-Apache-2.0 (extension, sidecar). MIT for client libraries.
+Dual licensed under either of:
+- Apache License 2.0 ([`LICENSE-APACHE`](LICENSE-APACHE))
+- MIT License ([`LICENSE-MIT`](LICENSE-MIT))
+
+at your option. Unless you explicitly state otherwise, any contribution
+intentionally submitted for inclusion in this work shall be dual-licensed
+as above, without any additional terms or conditions.

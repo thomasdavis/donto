@@ -1,5 +1,6 @@
-comment = 'donto: bitemporal paraconsistent quad store'
+comment = 'donto: bitemporal paraconsistent quad store with maturity ladder'
 default_version = '0.1.0'
+module_pathname = '$libdir/pg_donto'
 relocatable = false
 schema = public
 requires = 'btree_gist, pgcrypto'

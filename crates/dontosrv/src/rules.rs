@@ -49,8 +49,10 @@ pub async fn derive(
         }
     }
 
-    // Ensure derivation context.
-    if let Err(e) = state.client.ensure_context(&req.into, "derivation", "curated", None).await {
+    // Ensure derivation context. Derivation outputs come from rule code,
+    // not user-typed input, so they live in permissive mode — predicate
+    // registration is the curator's job, not the rule's.
+    if let Err(e) = state.client.ensure_context(&req.into, "derivation", "permissive", None).await {
         return Json(json!({"error": format!("context create: {e}")})).into_response();
     }
 

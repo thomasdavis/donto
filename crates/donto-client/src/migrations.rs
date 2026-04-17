@@ -32,36 +32,51 @@ fn sha256_of(s: &str) -> Vec<u8> {
 pub async fn apply_migrations(pool: &Pool) -> Result<()> {
     let mut client = pool.get().await?;
 
-    // The ledger table itself lives inside migration 0004. We bootstrap by
-    // running migrations 1..=4 unconditionally (they are all `if not exists`
-    // shaped), then consult the ledger for the rest.
-    for (name, sql) in MIGRATIONS.iter().take(4) {
-        tracing::info!(name, "applying bootstrap migration");
-        let tx = client.transaction().await?;
-        tx.batch_execute(sql).await?;
-        tx.commit().await?;
-    }
+    // Detect first-time install: the ledger table only exists after 0004 has
+    // run at least once. On first install we run every migration in order;
+    // on subsequent runs we consult the ledger for *every* migration so that
+    // later overrides (e.g. 0006_predicate redefining donto_assert) are not
+    // clobbered by re-running an earlier migration.
+    let ledger_exists: bool = client
+        .query_one(
+            "select to_regclass('public.donto_migration') is not null",
+            &[],
+        )
+        .await?
+        .get(0);
 
-    for (name, sql) in MIGRATIONS.iter().skip(4) {
+    for (name, sql) in MIGRATIONS.iter() {
         let hash = sha256_of(sql);
-        let already = client
-            .query_opt(
+
+        if ledger_exists {
+            let already = client.query_opt(
                 "select 1 from donto_migration where name = $1 and sha256 = $2",
                 &[&name, &hash],
-            )
-            .await?;
-        if already.is_some() {
-            tracing::debug!(name, "skipping migration (already applied)");
-            continue;
+            ).await?;
+            if already.is_some() {
+                tracing::debug!(name, "skipping migration (already applied)");
+                continue;
+            }
         }
+
         tracing::info!(name, "applying migration");
         let tx = client.transaction().await?;
         tx.batch_execute(sql).await?;
-        tx.execute(
-            "insert into donto_migration (name, sha256) values ($1, $2)
-             on conflict (name) do update set sha256 = excluded.sha256, applied_at = now()",
-            &[&name, &hash],
-        ).await?;
+
+        // After 0004 has run, the ledger table exists and every subsequent
+        // migration (and 0004 itself) is recorded. Migrations 0001..=0003 on
+        // first install are recorded by the seed inside 0004 itself.
+        let ledger_should_exist = ledger_exists || MIGRATIONS.iter()
+            .position(|(n, _)| *n == *name)
+            .map_or(false, |i| i >= 3); // 0004 is index 3
+        if ledger_should_exist {
+            tx.execute(
+                "insert into donto_migration (name, sha256) values ($1, $2)
+                 on conflict (name) do update set sha256 = excluded.sha256, applied_at = now()",
+                &[&name, &hash],
+            ).await?;
+        }
+
         tx.commit().await?;
     }
     Ok(())

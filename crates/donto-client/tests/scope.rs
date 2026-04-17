@@ -14,7 +14,7 @@ async fn descendants_are_included_by_default() {
     let root  = format!("{prefix}root");
     let child = format!("{prefix}child");
     let grand = format!("{prefix}grand");
-    client.ensure_context(&root,  "custom", "curated",    None).await.unwrap();
+    client.ensure_context(&root,  "custom", "permissive", None).await.unwrap();
     client.ensure_context(&child, "custom", "permissive", Some(&root)).await.unwrap();
     client.ensure_context(&grand, "custom", "permissive", Some(&child)).await.unwrap();
 
@@ -41,7 +41,7 @@ async fn exclude_wins_over_include() {
 
     let root  = format!("{prefix}root");
     let child = format!("{prefix}child");
-    client.ensure_context(&root,  "custom", "curated",    None).await.unwrap();
+    client.ensure_context(&root,  "custom", "permissive", None).await.unwrap();
     client.ensure_context(&child, "custom", "permissive", Some(&root)).await.unwrap();
 
     client.assert(&StatementInput::new("ex:s", "ex:p", Object::iri("ex:root"))
@@ -66,7 +66,7 @@ async fn ancestors_opt_in() {
 
     let root  = format!("{prefix}root");
     let child = format!("{prefix}child");
-    client.ensure_context(&root,  "custom", "curated",    None).await.unwrap();
+    client.ensure_context(&root,  "custom", "permissive", None).await.unwrap();
     client.ensure_context(&child, "custom", "permissive", Some(&root)).await.unwrap();
 
     client.assert(&StatementInput::new("ex:s", "ex:p", Object::iri("ex:root"))

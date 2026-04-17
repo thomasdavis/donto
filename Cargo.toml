@@ -8,6 +8,12 @@ members = [
     "crates/donto-ingest",
     "crates/donto-migrate",
 ]
+# `crates/pg_donto` is the pgrx-based Postgres extension. It is intentionally
+# *not* a workspace member because pgrx requires Postgres dev headers and a
+# pgrx-cli step that breaks ordinary `cargo build`. Build it explicitly:
+#   cd crates/pg_donto && cargo pgrx package
+# CI runs the extension build in its own job (.github/workflows/ext.yml).
+exclude = ["crates/pg_donto"]
 
 [workspace.package]
 version = "0.0.1"

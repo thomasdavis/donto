@@ -67,3 +67,25 @@ macro_rules! pg_or_skip {
         }
     };
 }
+
+/// Build a unique test tag — uses a UUID so tests run in parallel without
+/// stomping on each other.
+pub fn tag(name: &str) -> String {
+    format!("test:{name}:{}", uuid::Uuid::new_v4().simple())
+}
+
+/// Helper: build a unique permissive context for a single-context test.
+pub async fn ctx(client: &DontoClient, name: &str) -> String {
+    let prefix = tag(name);
+    let ctx = format!("{prefix}/ctx");
+    client.ensure_context(&ctx, "custom", "permissive", None).await.expect("ensure_context");
+    ctx
+}
+
+/// Helper: build a unique CURATED context for a single-context test.
+pub async fn curated_ctx(client: &DontoClient, name: &str) -> String {
+    let prefix = tag(name);
+    let ctx = format!("{prefix}/curated");
+    client.ensure_context(&ctx, "custom", "curated", None).await.expect("ensure_context");
+    ctx
+}
