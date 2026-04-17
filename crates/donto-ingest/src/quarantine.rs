@@ -10,14 +10,33 @@ pub fn quarantine_iri(source: &str) -> String {
 }
 
 fn sanitize(s: &str) -> String {
-    s.chars().map(|c| if c.is_alphanumeric() || c == '-' || c == '_' { c } else { '_' }).collect()
+    s.chars()
+        .map(|c| {
+            if c.is_alphanumeric() || c == '-' || c == '_' {
+                c
+            } else {
+                '_'
+            }
+        })
+        .collect()
 }
 
-pub async fn route(client: &DontoClient, source: &str, stmts: Vec<StatementInput>) -> Result<usize> {
+pub async fn route(
+    client: &DontoClient,
+    source: &str,
+    stmts: Vec<StatementInput>,
+) -> Result<usize> {
     let qctx = quarantine_iri(source);
-    client.ensure_context(&qctx, "quarantine", "permissive", None).await?;
+    client
+        .ensure_context(&qctx, "quarantine", "permissive", None)
+        .await?;
     let mut rerouted = Vec::with_capacity(stmts.len());
-    for s in stmts { rerouted.push(StatementInput { context: qctx.clone(), ..s }); }
+    for s in stmts {
+        rerouted.push(StatementInput {
+            context: qctx.clone(),
+            ..s
+        });
+    }
     let n = client.assert_batch(&rerouted).await?;
     Ok(n)
 }

@@ -5,6 +5,10 @@
 //! `postgres://donto:donto@127.0.0.1:55432/donto`). Tests that cannot connect
 //! are skipped via `pg_or_skip!`.
 
+// Each integration-test binary only pulls in the helpers it actually uses;
+// clippy flags the rest as dead. Suppress at module level.
+#![allow(dead_code)]
+
 use deadpool_postgres::Pool;
 use donto_client::DontoClient;
 use std::sync::OnceLock;
@@ -21,7 +25,10 @@ pub async fn connect() -> Option<DontoClient> {
     let dsn = dsn();
     let client = match DontoClient::from_dsn(&dsn) {
         Ok(c) => c,
-        Err(e) => { eprintln!("test: cannot build client: {e}"); return None; }
+        Err(e) => {
+            eprintln!("test: cannot build client: {e}");
+            return None;
+        }
     };
 
     // Probe.
@@ -51,11 +58,15 @@ pub async fn cleanup_prefix(client: &DontoClient, prefix: &str) {
     c.execute(
         "delete from donto_statement where context like $1",
         &[&format!("{prefix}%")],
-    ).await.ok();
+    )
+    .await
+    .ok();
     c.execute(
         "delete from donto_context where iri like $1",
         &[&format!("{prefix}%")],
-    ).await.ok();
+    )
+    .await
+    .ok();
 }
 
 #[macro_export]
@@ -63,7 +74,10 @@ macro_rules! pg_or_skip {
     ($client:expr) => {
         match $client {
             Some(c) => c,
-            None => { eprintln!("skipping: postgres not available"); return; }
+            None => {
+                eprintln!("skipping: postgres not available");
+                return;
+            }
         }
     };
 }
@@ -78,7 +92,10 @@ pub fn tag(name: &str) -> String {
 pub async fn ctx(client: &DontoClient, name: &str) -> String {
     let prefix = tag(name);
     let ctx = format!("{prefix}/ctx");
-    client.ensure_context(&ctx, "custom", "permissive", None).await.expect("ensure_context");
+    client
+        .ensure_context(&ctx, "custom", "permissive", None)
+        .await
+        .expect("ensure_context");
     ctx
 }
 
@@ -86,6 +103,9 @@ pub async fn ctx(client: &DontoClient, name: &str) -> String {
 pub async fn curated_ctx(client: &DontoClient, name: &str) -> String {
     let prefix = tag(name);
     let ctx = format!("{prefix}/curated");
-    client.ensure_context(&ctx, "custom", "curated", None).await.expect("ensure_context");
+    client
+        .ensure_context(&ctx, "custom", "curated", None)
+        .await
+        .expect("ensure_context");
     ctx
 }

@@ -8,14 +8,14 @@
 
 #![warn(missing_debug_implementations, rust_2018_idioms)]
 
+pub mod client;
 pub mod error;
+pub mod migrations;
 pub mod model;
 pub mod scope;
-pub mod migrations;
-pub mod client;
 
+pub use client::DontoClient;
 pub use error::{Error, Result};
+pub use migrations::apply_migrations;
 pub use model::{Literal, Object, Polarity, Statement, StatementInput};
 pub use scope::ContextScope;
-pub use client::DontoClient;
-pub use migrations::apply_migrations;

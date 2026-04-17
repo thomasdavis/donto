@@ -17,17 +17,30 @@ async fn maturity_levels_0_through_4_round_trip() {
     let ctx = common::ctx(&c, "mat_round_trip").await;
 
     for level in 0u8..=4 {
-        c.assert(&StatementInput::new(
-            format!("ex:s/{level}"), "ex:p", Object::iri("ex:o"),
-        ).with_context(&ctx).with_maturity(level)).await.unwrap();
+        c.assert(
+            &StatementInput::new(format!("ex:s/{level}"), "ex:p", Object::iri("ex:o"))
+                .with_context(&ctx)
+                .with_maturity(level),
+        )
+        .await
+        .unwrap();
     }
 
     let scope = ContextScope::just(&ctx);
     for level in 0u8..=4 {
-        let rows = c.match_pattern(
-            Some(&format!("ex:s/{level}")), Some("ex:p"), None,
-            Some(&scope), Some(Polarity::Asserted), 0, None, None,
-        ).await.unwrap();
+        let rows = c
+            .match_pattern(
+                Some(&format!("ex:s/{level}")),
+                Some("ex:p"),
+                None,
+                Some(&scope),
+                Some(Polarity::Asserted),
+                0,
+                None,
+                None,
+            )
+            .await
+            .unwrap();
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].maturity, level);
     }
@@ -39,19 +52,36 @@ async fn min_maturity_filter_rejects_lower() {
     let ctx = common::ctx(&c, "mat_filter").await;
 
     for level in 0u8..=4 {
-        c.assert(&StatementInput::new(
-            format!("ex:s/{level}"), "ex:p", Object::iri("ex:o"),
-        ).with_context(&ctx).with_maturity(level)).await.unwrap();
+        c.assert(
+            &StatementInput::new(format!("ex:s/{level}"), "ex:p", Object::iri("ex:o"))
+                .with_context(&ctx)
+                .with_maturity(level),
+        )
+        .await
+        .unwrap();
     }
 
     let scope = ContextScope::just(&ctx);
     for floor in 0u8..=4 {
-        let n = c.match_pattern(None, Some("ex:p"), None,
-            Some(&scope), Some(Polarity::Asserted), floor, None, None,
-        ).await.unwrap().len();
+        let n = c
+            .match_pattern(
+                None,
+                Some("ex:p"),
+                None,
+                Some(&scope),
+                Some(Polarity::Asserted),
+                floor,
+                None,
+                None,
+            )
+            .await
+            .unwrap()
+            .len();
         let expected = (5u8 - floor) as usize;
-        assert_eq!(n, expected,
-            "min_maturity={floor} must return {expected} rows, got {n}");
+        assert_eq!(
+            n, expected,
+            "min_maturity={floor} must return {expected} rows, got {n}"
+        );
     }
 }
 
@@ -59,10 +89,14 @@ async fn min_maturity_filter_rejects_lower() {
 async fn same_subject_different_maturity_in_different_contexts() {
     let c = pg_or_skip!(common::connect().await);
     let prefix = common::tag("mat_per_ctx");
-    let raw    = format!("{prefix}/raw");
+    let raw = format!("{prefix}/raw");
     let curated = format!("{prefix}/curated");
-    c.ensure_context(&raw,     "source",   "permissive", None).await.unwrap();
-    c.ensure_context(&curated, "snapshot", "curated",    None).await.unwrap();
+    c.ensure_context(&raw, "source", "permissive", None)
+        .await
+        .unwrap();
+    c.ensure_context(&curated, "snapshot", "curated", None)
+        .await
+        .unwrap();
 
     // Same content, different maturity per context. Curated context requires
     // the predicate be registered.
@@ -70,21 +104,46 @@ async fn same_subject_different_maturity_in_different_contexts() {
     conn.execute(
         "select donto_register_predicate('ex:fact', 'fact', null, null, null, null, null, null)",
         &[],
-    ).await.unwrap();
+    )
+    .await
+    .unwrap();
 
-    c.assert(&StatementInput::new("ex:e","ex:fact",Object::iri("ex:v"))
-        .with_context(&raw).with_maturity(0)).await.unwrap();
-    c.assert(&StatementInput::new("ex:e","ex:fact",Object::iri("ex:v"))
-        .with_context(&curated).with_maturity(3)).await.unwrap();
+    c.assert(
+        &StatementInput::new("ex:e", "ex:fact", Object::iri("ex:v"))
+            .with_context(&raw)
+            .with_maturity(0),
+    )
+    .await
+    .unwrap();
+    c.assert(
+        &StatementInput::new("ex:e", "ex:fact", Object::iri("ex:v"))
+            .with_context(&curated)
+            .with_maturity(3),
+    )
+    .await
+    .unwrap();
 
     let mut sc = ContextScope::just(&raw);
     sc.include.push(curated.clone());
-    let rows = c.match_pattern(Some("ex:e"), Some("ex:fact"), None,
-        Some(&sc), Some(Polarity::Asserted), 0, None, None).await.unwrap();
+    let rows = c
+        .match_pattern(
+            Some("ex:e"),
+            Some("ex:fact"),
+            None,
+            Some(&sc),
+            Some(Polarity::Asserted),
+            0,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
     assert_eq!(rows.len(), 2);
 
-    let by_ctx: std::collections::HashMap<&str, u8> = rows.iter()
-        .map(|r| (r.context.as_str(), r.maturity)).collect();
+    let by_ctx: std::collections::HashMap<&str, u8> = rows
+        .iter()
+        .map(|r| (r.context.as_str(), r.maturity))
+        .collect();
     assert_eq!(by_ctx[raw.as_str()], 0);
     assert_eq!(by_ctx[curated.as_str()], 3);
 }
@@ -95,18 +154,23 @@ async fn flag_packing_is_dense_and_lossless() {
     let c = pg_or_skip!(common::connect().await);
     let conn = c.pool().get().await.unwrap();
 
-    for pol in ["asserted","negated","absent","unknown"] {
+    for pol in ["asserted", "negated", "absent", "unknown"] {
         for mat in 0i32..=4 {
-            let f: i16 = conn.query_one(
-                "select donto_pack_flags($1, $2)",
-                &[&pol, &mat],
-            ).await.unwrap().get(0);
-            let polarity_back: String = conn.query_one(
-                "select donto_polarity($1)", &[&f],
-            ).await.unwrap().get(0);
-            let maturity_back: i32 = conn.query_one(
-                "select donto_maturity($1)", &[&f],
-            ).await.unwrap().get(0);
+            let f: i16 = conn
+                .query_one("select donto_pack_flags($1, $2)", &[&pol, &mat])
+                .await
+                .unwrap()
+                .get(0);
+            let polarity_back: String = conn
+                .query_one("select donto_polarity($1)", &[&f])
+                .await
+                .unwrap()
+                .get(0);
+            let maturity_back: i32 = conn
+                .query_one("select donto_maturity($1)", &[&f])
+                .await
+                .unwrap()
+                .get(0);
             assert_eq!(polarity_back, pol);
             assert_eq!(maturity_back, mat);
         }

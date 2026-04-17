@@ -24,10 +24,17 @@ pub struct Pipeline<'a> {
 
 impl<'a> Pipeline<'a> {
     pub fn new(client: &'a DontoClient, default_context: impl Into<String>) -> Self {
-        Self { client, default_context: default_context.into(), batch_size: 1000 }
+        Self {
+            client,
+            default_context: default_context.into(),
+            batch_size: 1000,
+        }
     }
 
-    pub fn batch_size(mut self, n: usize) -> Self { self.batch_size = n; self }
+    pub fn batch_size(mut self, n: usize) -> Self {
+        self.batch_size = n;
+        self
+    }
 
     pub async fn run<I>(&self, source: &str, format: &str, iter: I) -> Result<IngestReport>
     where

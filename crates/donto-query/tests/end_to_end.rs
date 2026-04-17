@@ -10,30 +10,53 @@ fn dsn() -> String {
 
 async fn setup() -> Option<(DontoClient, String)> {
     let c = DontoClient::from_dsn(&dsn()).ok()?;
-    c.pool().get().await.ok()?;
+    let _ = c.pool().get().await.ok()?;
     c.migrate().await.ok()?;
     let prefix = format!("test:e2e_q:{}", uuid::Uuid::new_v4().simple());
     let ctx = format!("{prefix}/ctx");
-    c.ensure_context(&ctx, "custom", "permissive", None).await.ok()?;
+    c.ensure_context(&ctx, "custom", "permissive", None)
+        .await
+        .ok()?;
     // Cleanup on entry just in case prefix collides.
     let conn = c.pool().get().await.ok()?;
-    conn.execute("delete from donto_statement where context like $1", &[&format!("{prefix}%")]).await.ok();
+    conn.execute(
+        "delete from donto_statement where context like $1",
+        &[&format!("{prefix}%")],
+    )
+    .await
+    .ok();
     Some((c, ctx))
 }
 
 #[tokio::test]
 async fn dontoql_basic_pattern_returns_rows() {
-    let Some((c, ctx)) = setup().await else { eprintln!("skip"); return; };
+    let Some((c, ctx)) = setup().await else {
+        eprintln!("skip");
+        return;
+    };
 
-    c.assert(&StatementInput::new("ex:alice", "ex:knows", Object::iri("ex:bob")).with_context(&ctx)).await.unwrap();
-    c.assert(&StatementInput::new("ex:alice", "ex:knows", Object::iri("ex:carol")).with_context(&ctx)).await.unwrap();
-    c.assert(&StatementInput::new("ex:bob",   "ex:knows", Object::iri("ex:dave")).with_context(&ctx)).await.unwrap();
+    c.assert(
+        &StatementInput::new("ex:alice", "ex:knows", Object::iri("ex:bob")).with_context(&ctx),
+    )
+    .await
+    .unwrap();
+    c.assert(
+        &StatementInput::new("ex:alice", "ex:knows", Object::iri("ex:carol")).with_context(&ctx),
+    )
+    .await
+    .unwrap();
+    c.assert(&StatementInput::new("ex:bob", "ex:knows", Object::iri("ex:dave")).with_context(&ctx))
+        .await
+        .unwrap();
 
-    let mut q = parse_dontoql(r#"
+    let mut q = parse_dontoql(
+        r#"
         MATCH ?x ex:knows ?y
         POLARITY asserted
         PROJECT ?x, ?y
-    "#).unwrap();
+    "#,
+    )
+    .unwrap();
     // Inject scope to isolate the test from other contexts.
     q.scope = Some(donto_client::ContextScope::just(&ctx));
 
@@ -46,15 +69,38 @@ async fn dontoql_basic_pattern_returns_rows() {
 
 #[tokio::test]
 async fn dontoql_join_on_shared_var() {
-    let Some((c, ctx)) = setup().await else { eprintln!("skip"); return; };
-    c.assert(&StatementInput::new("ex:alice", "ex:knows", Object::iri("ex:bob")).with_context(&ctx)).await.unwrap();
-    c.assert(&StatementInput::new("ex:bob",   "ex:knows", Object::iri("ex:carol")).with_context(&ctx)).await.unwrap();
-    c.assert(&StatementInput::new("ex:carol", "ex:age",   Object::lit(donto_client::Literal::integer(40))).with_context(&ctx)).await.unwrap();
+    let Some((c, ctx)) = setup().await else {
+        eprintln!("skip");
+        return;
+    };
+    c.assert(
+        &StatementInput::new("ex:alice", "ex:knows", Object::iri("ex:bob")).with_context(&ctx),
+    )
+    .await
+    .unwrap();
+    c.assert(
+        &StatementInput::new("ex:bob", "ex:knows", Object::iri("ex:carol")).with_context(&ctx),
+    )
+    .await
+    .unwrap();
+    c.assert(
+        &StatementInput::new(
+            "ex:carol",
+            "ex:age",
+            Object::lit(donto_client::Literal::integer(40)),
+        )
+        .with_context(&ctx),
+    )
+    .await
+    .unwrap();
 
-    let mut q = parse_dontoql(r#"
+    let mut q = parse_dontoql(
+        r#"
         MATCH ?a ex:knows ?b, ?b ex:knows ?c, ?c ex:age ?n
         PROJECT ?a, ?n
-    "#).unwrap();
+    "#,
+    )
+    .unwrap();
     q.scope = Some(donto_client::ContextScope::just(&ctx));
     let rows = evaluate(&c, &q).await.unwrap();
     assert_eq!(rows.len(), 1);
@@ -63,14 +109,28 @@ async fn dontoql_join_on_shared_var() {
 
 #[tokio::test]
 async fn sparql_basic_select_round_trips() {
-    let Some((c, ctx)) = setup().await else { eprintln!("skip"); return; };
-    c.assert(&StatementInput::new("http://example.org/alice", "http://example.org/knows",
-        Object::iri("http://example.org/bob")).with_context(&ctx)).await.unwrap();
+    let Some((c, ctx)) = setup().await else {
+        eprintln!("skip");
+        return;
+    };
+    c.assert(
+        &StatementInput::new(
+            "http://example.org/alice",
+            "http://example.org/knows",
+            Object::iri("http://example.org/bob"),
+        )
+        .with_context(&ctx),
+    )
+    .await
+    .unwrap();
 
-    let mut q = parse_sparql(r#"
+    let mut q = parse_sparql(
+        r#"
         PREFIX ex: <http://example.org/>
         SELECT ?x ?y WHERE { ?x ex:knows ?y . }
-    "#).unwrap();
+    "#,
+    )
+    .unwrap();
     q.scope = Some(donto_client::ContextScope::just(&ctx));
     q.polarity = Some(Polarity::Asserted);
     let rows = evaluate(&c, &q).await.unwrap();
@@ -81,15 +141,39 @@ async fn sparql_basic_select_round_trips() {
 
 #[tokio::test]
 async fn dontoql_filter_neq_drops_rows() {
-    let Some((c, ctx)) = setup().await else { eprintln!("skip"); return; };
-    c.assert(&StatementInput::new("ex:a", "ex:name", Object::lit(donto_client::Literal::string("Alice"))).with_context(&ctx)).await.unwrap();
-    c.assert(&StatementInput::new("ex:a", "ex:name", Object::lit(donto_client::Literal::string("Mallory"))).with_context(&ctx)).await.unwrap();
+    let Some((c, ctx)) = setup().await else {
+        eprintln!("skip");
+        return;
+    };
+    c.assert(
+        &StatementInput::new(
+            "ex:a",
+            "ex:name",
+            Object::lit(donto_client::Literal::string("Alice")),
+        )
+        .with_context(&ctx),
+    )
+    .await
+    .unwrap();
+    c.assert(
+        &StatementInput::new(
+            "ex:a",
+            "ex:name",
+            Object::lit(donto_client::Literal::string("Mallory")),
+        )
+        .with_context(&ctx),
+    )
+    .await
+    .unwrap();
 
-    let mut q = parse_dontoql(r#"
+    let mut q = parse_dontoql(
+        r#"
         MATCH ?s ex:name ?n
         FILTER ?n != "Mallory"
         PROJECT ?n
-    "#).unwrap();
+    "#,
+    )
+    .unwrap();
     q.scope = Some(donto_client::ContextScope::just(&ctx));
     let rows = evaluate(&c, &q).await.unwrap();
     assert_eq!(rows.len(), 1);
@@ -97,17 +181,27 @@ async fn dontoql_filter_neq_drops_rows() {
 
 #[tokio::test]
 async fn dontoql_limit_offset() {
-    let Some((c, ctx)) = setup().await else { eprintln!("skip"); return; };
+    let Some((c, ctx)) = setup().await else {
+        eprintln!("skip");
+        return;
+    };
     for i in 0..5 {
-        c.assert(&StatementInput::new(format!("ex:s{i}"), "ex:p", Object::iri(format!("ex:o{i}")))
-            .with_context(&ctx)).await.unwrap();
+        c.assert(
+            &StatementInput::new(format!("ex:s{i}"), "ex:p", Object::iri(format!("ex:o{i}")))
+                .with_context(&ctx),
+        )
+        .await
+        .unwrap();
     }
-    let mut q = parse_dontoql(r#"
+    let mut q = parse_dontoql(
+        r#"
         MATCH ?s ex:p ?o
         PROJECT ?s
         LIMIT 2
         OFFSET 1
-    "#).unwrap();
+    "#,
+    )
+    .unwrap();
     q.scope = Some(donto_client::ContextScope::just(&ctx));
     let rows = evaluate(&c, &q).await.unwrap();
     assert_eq!(rows.len(), 2);

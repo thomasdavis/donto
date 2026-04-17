@@ -86,8 +86,12 @@ pub enum Object {
 }
 
 impl Object {
-    pub fn iri(s: impl Into<String>) -> Self { Object::Iri(s.into()) }
-    pub fn lit(l: Literal) -> Self { Object::Literal(l) }
+    pub fn iri(s: impl Into<String>) -> Self {
+        Object::Iri(s.into())
+    }
+    pub fn lit(l: Literal) -> Self {
+        Object::Literal(l)
+    }
 }
 
 /// Input for [`crate::DontoClient::assert`]. Carries every field a caller
@@ -105,11 +109,7 @@ pub struct StatementInput {
 }
 
 impl StatementInput {
-    pub fn new(
-        subject: impl Into<String>,
-        predicate: impl Into<String>,
-        object: Object,
-    ) -> Self {
+    pub fn new(subject: impl Into<String>, predicate: impl Into<String>, object: Object) -> Self {
         Self {
             subject: subject.into(),
             predicate: predicate.into(),
@@ -126,10 +126,18 @@ impl StatementInput {
         self.context = ctx.into();
         self
     }
-    pub fn with_polarity(mut self, p: Polarity) -> Self { self.polarity = p; self }
-    pub fn with_maturity(mut self, m: u8) -> Self { self.maturity = m; self }
+    pub fn with_polarity(mut self, p: Polarity) -> Self {
+        self.polarity = p;
+        self
+    }
+    pub fn with_maturity(mut self, m: u8) -> Self {
+        self.maturity = m;
+        self
+    }
     pub fn with_valid(mut self, lo: Option<NaiveDate>, hi: Option<NaiveDate>) -> Self {
-        self.valid_lo = lo; self.valid_hi = hi; self
+        self.valid_lo = lo;
+        self.valid_hi = hi;
+        self
     }
 }
 

@@ -13,7 +13,11 @@ mod genealogy;
 #[derive(Parser, Debug)]
 #[command(version, about = "donto migrators")]
 struct Cli {
-    #[arg(long, env = "DONTO_DSN", default_value = "postgres://donto:donto@127.0.0.1:55432/donto")]
+    #[arg(
+        long,
+        env = "DONTO_DSN",
+        default_value = "postgres://donto:donto@127.0.0.1:55432/donto"
+    )]
     dsn: String,
     #[command(subcommand)]
     cmd: Cmd,
@@ -41,7 +45,11 @@ async fn main() -> Result<()> {
     client.migrate().await?;
 
     match cli.cmd {
-        Cmd::Genealogy { sqlite, root, dry_run } => {
+        Cmd::Genealogy {
+            sqlite,
+            root,
+            dry_run,
+        } => {
             let report = genealogy::migrate(&client, &sqlite, &root, dry_run).await?;
             println!("{}", serde_json::to_string_pretty(&report)?);
         }

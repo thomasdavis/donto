@@ -33,11 +33,23 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # pgrx needs a non-root user (it manages a PG instance under $HOME).
 RUN useradd -m -s /bin/bash builder \
     && echo "builder ALL=(ALL) NOPASSWD: ALL" > /etc/sudoers.d/builder
+
+# `cargo pgrx install` writes the .control + .sql + .so into the system
+# PG install dirs. The builder user needs write access so we don't have
+# to sprinkle `sudo` through the CMD. These are ephemeral container dirs
+# so loosening perms is fine.
+RUN chown -R builder:builder \
+      /usr/share/postgresql/${PG_VERSION}/extension \
+      /usr/lib/postgresql/${PG_VERSION}/lib
+
 USER builder
 WORKDIR /home/builder
 
 ENV CARGO_HOME=/home/builder/.cargo
 ENV PATH="/home/builder/.cargo/bin:${PATH}"
+# pgrx-tests reads $USER to name its test pg role; the base rust:slim
+# image doesn't set it, so wire it explicitly.
+ENV USER=builder
 
 RUN cargo install --locked cargo-pgrx --version 0.12.7
 

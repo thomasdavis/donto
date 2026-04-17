@@ -10,15 +10,29 @@ use serde::{Deserialize, Serialize};
 pub enum Term {
     Var(String),
     Iri(String),
-    Literal { v: serde_json::Value, dt: String, lang: Option<String> },
+    Literal {
+        v: serde_json::Value,
+        dt: String,
+        lang: Option<String>,
+    },
 }
 
 impl Term {
-    pub fn var(name: impl Into<String>) -> Self { Term::Var(name.into()) }
-    pub fn iri(s: impl Into<String>) -> Self { Term::Iri(s.into()) }
-    pub fn is_var(&self) -> bool { matches!(self, Term::Var(_)) }
+    pub fn var(name: impl Into<String>) -> Self {
+        Term::Var(name.into())
+    }
+    pub fn iri(s: impl Into<String>) -> Self {
+        Term::Iri(s.into())
+    }
+    pub fn is_var(&self) -> bool {
+        matches!(self, Term::Var(_))
+    }
     pub fn as_var(&self) -> Option<&str> {
-        if let Term::Var(n) = self { Some(n) } else { None }
+        if let Term::Var(n) = self {
+            Some(n)
+        } else {
+            None
+        }
     }
 }
 
@@ -45,7 +59,7 @@ pub enum IdentityMode {
 pub enum Filter {
     Eq(Term, Term),
     Neq(Term, Term),
-    Bound(String),     // BOUND(?x)
+    Bound(String), // BOUND(?x)
     Lt(Term, Term),
     Le(Term, Term),
     Gt(Term, Term),
@@ -61,7 +75,7 @@ pub struct Query {
     pub polarity: Option<Polarity>,
     pub min_maturity: u8,
     pub identity: IdentityMode,
-    pub project: Vec<String>,         // empty = all bound vars
+    pub project: Vec<String>, // empty = all bound vars
     pub limit: Option<u64>,
     pub offset: Option<u64>,
 }

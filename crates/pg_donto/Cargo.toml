@@ -11,6 +11,13 @@ publish     = false
 [lib]
 crate-type  = ["cdylib", "rlib"]
 
+# pgrx 0.12 emits SQL by linking a small embed binary that dumps the
+# schema descriptors compiled into the cdylib. Without this target the
+# `cargo pgrx schema` step (run by `package`) fails to find the binary.
+[[bin]]
+name = "pgrx_embed_pg_donto"
+path = "src/bin/pgrx_embed.rs"
+
 [features]
 default = ["pg16"]
 pg13  = ["pgrx/pg13",  "pgrx-tests/pg13"]

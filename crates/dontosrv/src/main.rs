@@ -7,7 +7,11 @@ use std::sync::Arc;
 #[derive(Parser, Debug)]
 #[command(version, about = "donto sidecar (dontosrv)")]
 struct Args {
-    #[arg(long, env = "DONTO_DSN", default_value = "postgres://donto:donto@127.0.0.1:55432/donto")]
+    #[arg(
+        long,
+        env = "DONTO_DSN",
+        default_value = "postgres://donto:donto@127.0.0.1:55432/donto"
+    )]
     dsn: String,
     #[arg(long, default_value = "127.0.0.1:7878")]
     bind: String,
@@ -16,8 +20,10 @@ struct Args {
 #[tokio::main]
 async fn main() -> Result<()> {
     tracing_subscriber::fmt()
-        .with_env_filter(tracing_subscriber::EnvFilter::try_from_default_env()
-            .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")))
+        .with_env_filter(
+            tracing_subscriber::EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
+        )
         .init();
     let args = Args::parse();
     let client = DontoClient::from_dsn(&args.dsn)?;

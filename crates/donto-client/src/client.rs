@@ -33,15 +33,21 @@ impl DontoClient {
         });
         cfg.port = pg_cfg.get_ports().first().copied();
         cfg.user = pg_cfg.get_user().map(str::to_owned);
-        cfg.password = pg_cfg.get_password().map(|p| String::from_utf8_lossy(p).into_owned());
+        cfg.password = pg_cfg
+            .get_password()
+            .map(|p| String::from_utf8_lossy(p).into_owned());
         cfg.dbname = pg_cfg.get_dbname().map(str::to_owned);
-        cfg.manager = Some(ManagerConfig { recycling_method: RecyclingMethod::Fast });
+        cfg.manager = Some(ManagerConfig {
+            recycling_method: RecyclingMethod::Fast,
+        });
 
         let pool = cfg.create_pool(Some(Runtime::Tokio1), NoTls)?;
         Ok(Self { pool })
     }
 
-    pub fn pool(&self) -> &Pool { &self.pool }
+    pub fn pool(&self) -> &Pool {
+        &self.pool
+    }
 
     /// Apply all embedded migrations (idempotent).
     pub async fn migrate(&self) -> Result<()> {
@@ -60,7 +66,8 @@ impl DontoClient {
         c.execute(
             "select donto_ensure_context($1, $2, $3, $4)",
             &[&iri, &kind, &mode, &parent],
-        ).await?;
+        )
+        .await?;
         Ok(())
     }
 
@@ -68,25 +75,27 @@ impl DontoClient {
     /// the same content returns the existing id.
     pub async fn assert(&self, s: &StatementInput) -> Result<Uuid> {
         let (object_iri, object_lit): (Option<&str>, Option<Json>) = match &s.object {
-            Object::Iri(i)  => (Some(i.as_str()), None),
+            Object::Iri(i) => (Some(i.as_str()), None),
             Object::Literal(l) => (None, Some(serde_json::to_value(l)?)),
         };
 
         let c = self.pool.get().await?;
-        let row = c.query_one(
-            "select donto_assert($1, $2, $3, $4, $5, $6, $7, $8, $9, null)",
-            &[
-                &s.subject,
-                &s.predicate,
-                &object_iri,
-                &object_lit,
-                &s.context,
-                &s.polarity.as_str(),
-                &(s.maturity as i32),
-                &s.valid_lo,
-                &s.valid_hi,
-            ],
-        ).await?;
+        let row = c
+            .query_one(
+                "select donto_assert($1, $2, $3, $4, $5, $6, $7, $8, $9, null)",
+                &[
+                    &s.subject,
+                    &s.predicate,
+                    &object_iri,
+                    &object_lit,
+                    &s.context,
+                    &s.polarity.as_str(),
+                    &(s.maturity as i32),
+                    &s.valid_lo,
+                    &s.valid_hi,
+                ],
+            )
+            .await?;
         Ok(row.get::<_, Uuid>(0))
     }
 
@@ -95,10 +104,9 @@ impl DontoClient {
         let payload: Vec<Json> = stmts.iter().map(stmt_to_json).collect();
         let arr = Json::Array(payload);
         let c = self.pool.get().await?;
-        let row = c.query_one(
-            "select donto_assert_batch($1::jsonb, null)",
-            &[&arr],
-        ).await?;
+        let row = c
+            .query_one("select donto_assert_batch($1::jsonb, null)", &[&arr])
+            .await?;
         Ok(row.get::<_, i32>(0) as usize)
     }
 
@@ -106,10 +114,9 @@ impl DontoClient {
     /// was actually closed.
     pub async fn retract(&self, statement_id: Uuid) -> Result<bool> {
         let c = self.pool.get().await?;
-        let row = c.query_one(
-            "select donto_retract($1, null)",
-            &[&statement_id],
-        ).await?;
+        let row = c
+            .query_one("select donto_retract($1, null)", &[&statement_id])
+            .await?;
         Ok(row.get::<_, bool>(0))
     }
 
@@ -131,10 +138,19 @@ impl DontoClient {
         let polarity_str: Option<&str> = new_polarity.map(Polarity::as_str);
 
         let c = self.pool.get().await?;
-        let row = c.query_one(
-            "select donto_correct($1, $2, $3, $4, $5, $6, null)",
-            &[&statement_id, &new_subject, &new_predicate, &new_iri, &new_lit, &polarity_str],
-        ).await?;
+        let row = c
+            .query_one(
+                "select donto_correct($1, $2, $3, $4, $5, $6, null)",
+                &[
+                    &statement_id,
+                    &new_subject,
+                    &new_predicate,
+                    &new_iri,
+                    &new_lit,
+                    &polarity_str,
+                ],
+            )
+            .await?;
         Ok(row.get::<_, Uuid>(0))
     }
 
@@ -159,17 +175,19 @@ impl DontoClient {
             &subject,
             &predicate,
             &object_iri,
-            &Option::<Json>::None,         // object_lit pattern not exposed in Phase 0
+            &Option::<Json>::None, // object_lit pattern not exposed in Phase 0
             &scope_json,
             &polarity_str,
             &(min_maturity as i32),
             &as_of_tx,
             &as_of_valid,
         ];
-        let rows = c.query(
-            "select * from donto_match($1, $2, $3, $4, $5, $6, $7, $8, $9)",
-            &params,
-        ).await?;
+        let rows = c
+            .query(
+                "select * from donto_match($1, $2, $3, $4, $5, $6, $7, $8, $9)",
+                &params,
+            )
+            .await?;
         rows.into_iter().map(row_to_statement).collect()
     }
 
@@ -177,43 +195,62 @@ impl DontoClient {
     pub async fn resolve_scope(&self, scope: &ContextScope) -> Result<Vec<String>> {
         let c = self.pool.get().await?;
         let scope_json = scope.to_json();
-        let rows = c.query(
-            "select context_iri from donto_resolve_scope($1::jsonb)",
-            &[&scope_json],
-        ).await?;
+        let rows = c
+            .query(
+                "select context_iri from donto_resolve_scope($1::jsonb)",
+                &[&scope_json],
+            )
+            .await?;
         Ok(rows.into_iter().map(|r| r.get::<_, String>(0)).collect())
     }
 }
 
 fn stmt_to_json(s: &StatementInput) -> Json {
     let (object_iri, object_lit): (Option<String>, Option<Json>) = match &s.object {
-        Object::Iri(i)  => (Some(i.clone()), None),
-        Object::Literal(l) => (None, Some(serde_json::to_value(l).expect("literal serialization"))),
+        Object::Iri(i) => (Some(i.clone()), None),
+        Object::Literal(l) => (
+            None,
+            Some(serde_json::to_value(l).expect("literal serialization")),
+        ),
     };
     let mut obj = serde_json::Map::new();
     obj.insert("subject".into(), Json::String(s.subject.clone()));
     obj.insert("predicate".into(), Json::String(s.predicate.clone()));
-    if let Some(i) = object_iri { obj.insert("object_iri".into(), Json::String(i)); }
-    if let Some(l) = object_lit { obj.insert("object_lit".into(), l); }
+    if let Some(i) = object_iri {
+        obj.insert("object_iri".into(), Json::String(i));
+    }
+    if let Some(l) = object_lit {
+        obj.insert("object_lit".into(), l);
+    }
     obj.insert("context".into(), Json::String(s.context.clone()));
     obj.insert("polarity".into(), Json::String(s.polarity.as_str().into()));
     obj.insert("maturity".into(), Json::Number((s.maturity as i64).into()));
     if let Some(lo) = s.valid_lo {
-        obj.insert("valid_lo".into(), Json::String(lo.format("%Y-%m-%d").to_string()));
+        obj.insert(
+            "valid_lo".into(),
+            Json::String(lo.format("%Y-%m-%d").to_string()),
+        );
     }
     if let Some(hi) = s.valid_hi {
-        obj.insert("valid_hi".into(), Json::String(hi.format("%Y-%m-%d").to_string()));
+        obj.insert(
+            "valid_hi".into(),
+            Json::String(hi.format("%Y-%m-%d").to_string()),
+        );
     }
     Json::Object(obj)
 }
 
 fn row_to_statement(row: Row) -> Result<Statement> {
     let object_iri: Option<String> = row.try_get("object_iri")?;
-    let object_lit: Option<Json>   = row.try_get("object_lit")?;
+    let object_lit: Option<Json> = row.try_get("object_lit")?;
     let object = match (object_iri, object_lit) {
         (Some(i), None) => Object::Iri(i),
         (None, Some(l)) => Object::Literal(serde_json::from_value::<Literal>(l)?),
-        _ => return Err(Error::Invalid("statement row has neither/both object kinds".into())),
+        _ => {
+            return Err(Error::Invalid(
+                "statement row has neither/both object kinds".into(),
+            ))
+        }
     };
     let polarity_str: String = row.try_get("polarity")?;
     let polarity = Polarity::parse(&polarity_str)

@@ -15,5 +15,8 @@ Cargo.lock.bak
 # OS
 .DS_Store
 
+# Claude Code session state (not part of the project)
+.claude/
+
 # Postgres data dirs (if anyone runs PG locally)
 pgdata/

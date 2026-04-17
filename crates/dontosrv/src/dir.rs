@@ -4,7 +4,7 @@
 //! is Phase 5 (when the Lean encoder lands and we need wire stability).
 //! The directives below cover what Phase 4-7 actually emit and accept.
 
-use axum::{Json, response::IntoResponse};
+use axum::{response::IntoResponse, Json};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
@@ -14,18 +14,66 @@ pub const DIR_VERSION_MAJOR: u32 = 0;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum Directive {
-    DeclarePredicate { iri: String, label: Option<String>, canonical_of: Option<String> },
-    DeclareContext   { iri: String, kind: String, parent: Option<String>, mode: String },
-    DeclareShape     { iri: String, focus: String, body: serde_json::Value, severity: String },
-    DeclareRule      { iri: String, pattern: String, output_ctx: String, body: serde_json::Value },
-    AssertBatch      { context: String, statements: Vec<DirStatement> },
-    Retract          { statement_id: uuid::Uuid },
-    Correct          { statement_id: uuid::Uuid, new: DirStatement },
-    ValidateRequest  { shape_iri: String, scope: serde_json::Value },
-    ValidateResponse { shape_iri: String, focus_count: u64, violations: Vec<DirViolation>, certificate: Option<serde_json::Value> },
-    DeriveRequest    { rule_iri: String, scope: serde_json::Value, into: String },
-    DeriveResponse   { rule_iri: String, into: String, emitted: u64, certificate: Option<serde_json::Value> },
-    Certificate      { kind: String, subject_stmt: uuid::Uuid, body: serde_json::Value },
+    DeclarePredicate {
+        iri: String,
+        label: Option<String>,
+        canonical_of: Option<String>,
+    },
+    DeclareContext {
+        iri: String,
+        kind: String,
+        parent: Option<String>,
+        mode: String,
+    },
+    DeclareShape {
+        iri: String,
+        focus: String,
+        body: serde_json::Value,
+        severity: String,
+    },
+    DeclareRule {
+        iri: String,
+        pattern: String,
+        output_ctx: String,
+        body: serde_json::Value,
+    },
+    AssertBatch {
+        context: String,
+        statements: Vec<DirStatement>,
+    },
+    Retract {
+        statement_id: uuid::Uuid,
+    },
+    Correct {
+        statement_id: uuid::Uuid,
+        new: DirStatement,
+    },
+    ValidateRequest {
+        shape_iri: String,
+        scope: serde_json::Value,
+    },
+    ValidateResponse {
+        shape_iri: String,
+        focus_count: u64,
+        violations: Vec<DirViolation>,
+        certificate: Option<serde_json::Value>,
+    },
+    DeriveRequest {
+        rule_iri: String,
+        scope: serde_json::Value,
+        into: String,
+    },
+    DeriveResponse {
+        rule_iri: String,
+        into: String,
+        emitted: u64,
+        certificate: Option<serde_json::Value>,
+    },
+    Certificate {
+        kind: String,
+        subject_stmt: uuid::Uuid,
+        body: serde_json::Value,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -65,26 +113,32 @@ pub async fn handle(Json(env): Json<DirEnvelope>) -> impl IntoResponse {
             "error": "dir version mismatch",
             "expected_major": DIR_VERSION_MAJOR,
             "got": env.version,
-        })).into_response();
+        }))
+        .into_response();
     }
     // Phase 4: echo + recognize. Real handlers in Phase 5+.
-    let recognized: Vec<&'static str> = env.directives.iter().map(|d| match d {
-        Directive::DeclarePredicate { .. } => "declare_predicate",
-        Directive::DeclareContext   { .. } => "declare_context",
-        Directive::DeclareShape     { .. } => "declare_shape",
-        Directive::DeclareRule      { .. } => "declare_rule",
-        Directive::AssertBatch      { .. } => "assert_batch",
-        Directive::Retract          { .. } => "retract",
-        Directive::Correct          { .. } => "correct",
-        Directive::ValidateRequest  { .. } => "validate_request",
-        Directive::ValidateResponse { .. } => "validate_response",
-        Directive::DeriveRequest    { .. } => "derive_request",
-        Directive::DeriveResponse   { .. } => "derive_response",
-        Directive::Certificate      { .. } => "certificate",
-    }).collect();
+    let recognized: Vec<&'static str> = env
+        .directives
+        .iter()
+        .map(|d| match d {
+            Directive::DeclarePredicate { .. } => "declare_predicate",
+            Directive::DeclareContext { .. } => "declare_context",
+            Directive::DeclareShape { .. } => "declare_shape",
+            Directive::DeclareRule { .. } => "declare_rule",
+            Directive::AssertBatch { .. } => "assert_batch",
+            Directive::Retract { .. } => "retract",
+            Directive::Correct { .. } => "correct",
+            Directive::ValidateRequest { .. } => "validate_request",
+            Directive::ValidateResponse { .. } => "validate_response",
+            Directive::DeriveRequest { .. } => "derive_request",
+            Directive::DeriveResponse { .. } => "derive_response",
+            Directive::Certificate { .. } => "certificate",
+        })
+        .collect();
     Json(json!({
         "version": DIR_VERSION,
         "recognized": recognized,
         "ack": env.directives.len(),
-    })).into_response()
+    }))
+    .into_response()
 }

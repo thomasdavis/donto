@@ -14,7 +14,9 @@ pub struct ContextScope {
     pub include_ancestors: bool,
 }
 
-fn default_true() -> bool { true }
+fn default_true() -> bool {
+    true
+}
 
 impl ContextScope {
     /// Single-context inclusion with descendants.
@@ -42,8 +44,14 @@ impl ContextScope {
         self
     }
 
-    pub fn with_ancestors(mut self) -> Self { self.include_ancestors = true; self }
-    pub fn without_descendants(mut self) -> Self { self.include_descendants = false; self }
+    pub fn with_ancestors(mut self) -> Self {
+        self.include_ancestors = true;
+        self
+    }
+    pub fn without_descendants(mut self) -> Self {
+        self.include_descendants = false;
+        self
+    }
 
     pub fn to_json(&self) -> serde_json::Value {
         json!({
@@ -56,5 +64,7 @@ impl ContextScope {
 }
 
 impl Default for ContextScope {
-    fn default() -> Self { Self::anywhere() }
+    fn default() -> Self {
+        Self::anywhere()
+    }
 }

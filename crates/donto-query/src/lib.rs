@@ -14,10 +14,10 @@
 
 pub mod algebra;
 pub mod dontoql;
-pub mod sparql;
 pub mod evaluator;
+pub mod sparql;
 
 pub use algebra::*;
 pub use dontoql::parse_dontoql;
-pub use sparql::parse_sparql;
 pub use evaluator::{evaluate, Bindings, EvalRow};
+pub use sparql::parse_sparql;

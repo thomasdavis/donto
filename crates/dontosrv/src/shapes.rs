@@ -11,7 +11,7 @@
 //! Reports are persisted in `donto_shape_report` so reads can consult the
 //! cache without re-running.
 
-use axum::{Json, extract::State, response::IntoResponse};
+use axum::{extract::State, response::IntoResponse, Json};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::sync::Arc;
@@ -29,7 +29,7 @@ pub struct ValidateResp {
     pub shape_iri: String,
     pub focus_count: u64,
     pub violations: Vec<Violation>,
-    pub source: &'static str,   // "builtin" | "cached" | "lean"
+    pub source: &'static str, // "builtin" | "cached" | "lean"
 }
 
 #[derive(Debug, Serialize)]
@@ -48,18 +48,22 @@ pub async fn validate(
     // Cache check.
     if let Ok(c) = pool.get().await {
         let scope_fp = scope_fingerprint(&req.scope);
-        if let Ok(Some(row)) = c.query_opt(
-            "select report from donto_shape_report
+        if let Ok(Some(row)) = c
+            .query_opt(
+                "select report from donto_shape_report
              where shape_iri = $1 and scope_fingerprint = $2
              order by evaluated_at desc limit 1",
-            &[&req.shape_iri, &scope_fp],
-        ).await {
+                &[&req.shape_iri, &scope_fp],
+            )
+            .await
+        {
             let report: serde_json::Value = row.get(0);
             return Json(json!({
                 "shape_iri": req.shape_iri,
                 "source": "cached",
                 "report": report,
-            })).into_response();
+            }))
+            .into_response();
         }
     }
 
@@ -82,13 +86,15 @@ pub async fn validate(
                 "error": "sidecar_unavailable",
                 "shape_iri": req.shape_iri,
                 "detail": "Lean shape engine not yet wired (Phase 5+)",
-            })).into_response();
+            }))
+            .into_response();
         }
         _ => {
             return Json(json!({
                 "error": "unknown_shape_iri",
                 "shape_iri": req.shape_iri,
-            })).into_response();
+            }))
+            .into_response();
         }
     };
 
@@ -116,17 +122,31 @@ pub async fn validate(
 fn scope_fingerprint(scope: &serde_json::Value) -> Vec<u8> {
     use sha2::Digest;
     let bytes = serde_json::to_vec(scope).unwrap_or_default();
-    let mut h = sha2::Sha256::new(); h.update(&bytes); h.finalize().to_vec()
+    let mut h = sha2::Sha256::new();
+    h.update(&bytes);
+    h.finalize().to_vec()
 }
 
-async fn shape_functional(state: &AppState, predicate: &str, scope: &serde_json::Value) -> ValidateResp {
+async fn shape_functional(
+    state: &AppState,
+    predicate: &str,
+    scope: &serde_json::Value,
+) -> ValidateResp {
     let pool = state.client.pool();
     let c = match pool.get().await {
         Ok(c) => c,
-        Err(_) => return ValidateResp { shape_iri: format!("builtin:functional/{predicate}"), focus_count: 0, violations: vec![], source: "builtin" },
+        Err(_) => {
+            return ValidateResp {
+                shape_iri: format!("builtin:functional/{predicate}"),
+                focus_count: 0,
+                violations: vec![],
+                source: "builtin",
+            }
+        }
     };
-    let rows = c.query(
-        "with scope_ctx as (select context_iri from donto_resolve_scope($1::jsonb)),
+    let rows = c
+        .query(
+            "with scope_ctx as (select context_iri from donto_resolve_scope($1::jsonb)),
               scoped as (
                 select s.subject, s.statement_id, s.object_iri, s.object_lit
                 from donto_statement s
@@ -141,8 +161,10 @@ async fn shape_functional(state: &AppState, predicate: &str, scope: &serde_json:
                 from scoped group by subject
               )
          select subject, ids from counts where objs > 1",
-        &[scope, &predicate],
-    ).await.unwrap_or_default();
+            &[scope, &predicate],
+        )
+        .await
+        .unwrap_or_default();
 
     let mut violations = Vec::new();
     let mut focus_count = 0u64;
@@ -156,17 +178,35 @@ async fn shape_functional(state: &AppState, predicate: &str, scope: &serde_json:
             evidence: ids,
         });
     }
-    ValidateResp { shape_iri: format!("builtin:functional/{predicate}"), focus_count, violations, source: "builtin" }
+    ValidateResp {
+        shape_iri: format!("builtin:functional/{predicate}"),
+        focus_count,
+        violations,
+        source: "builtin",
+    }
 }
 
-async fn shape_datatype(state: &AppState, predicate: &str, datatype: &str, scope: &serde_json::Value) -> ValidateResp {
+async fn shape_datatype(
+    state: &AppState,
+    predicate: &str,
+    datatype: &str,
+    scope: &serde_json::Value,
+) -> ValidateResp {
     let pool = state.client.pool();
     let c = match pool.get().await {
         Ok(c) => c,
-        Err(_) => return ValidateResp { shape_iri: format!("builtin:datatype/{predicate}/{datatype}"), focus_count: 0, violations: vec![], source: "builtin" },
+        Err(_) => {
+            return ValidateResp {
+                shape_iri: format!("builtin:datatype/{predicate}/{datatype}"),
+                focus_count: 0,
+                violations: vec![],
+                source: "builtin",
+            }
+        }
     };
-    let rows = c.query(
-        "with scope_ctx as (select context_iri from donto_resolve_scope($1::jsonb))
+    let rows = c
+        .query(
+            "with scope_ctx as (select context_iri from donto_resolve_scope($1::jsonb))
          select s.subject, s.statement_id, s.object_lit
          from donto_statement s
          where s.predicate = $2
@@ -174,8 +214,10 @@ async fn shape_datatype(state: &AppState, predicate: &str, datatype: &str, scope
            and s.context in (select context_iri from scope_ctx)
            and donto_polarity(s.flags) = 'asserted'
            and (s.object_lit is null or coalesce(s.object_lit ->> 'dt', '') <> $3)",
-        &[scope, &predicate, &datatype],
-    ).await.unwrap_or_default();
+            &[scope, &predicate, &datatype],
+        )
+        .await
+        .unwrap_or_default();
     let mut violations = Vec::new();
     for r in &rows {
         violations.push(Violation {
@@ -184,5 +226,10 @@ async fn shape_datatype(state: &AppState, predicate: &str, datatype: &str, scope
             evidence: vec![r.get(1)],
         });
     }
-    ValidateResp { shape_iri: format!("builtin:datatype/{predicate}/{datatype}"), focus_count: violations.len() as u64, violations, source: "builtin" }
+    ValidateResp {
+        shape_iri: format!("builtin:datatype/{predicate}/{datatype}"),
+        focus_count: violations.len() as u64,
+        violations,
+        source: "builtin",
+    }
 }

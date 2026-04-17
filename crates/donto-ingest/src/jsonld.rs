@@ -42,14 +42,26 @@ pub fn parse_path(path: &Path, default_context: &str) -> Result<Vec<StatementInp
     Ok(out)
 }
 
-fn parse_value(v: &J, default_ctx: &str, parent_ctx: &Ctx, out: &mut Vec<StatementInput>) -> Result<()> {
+fn parse_value(
+    v: &J,
+    default_ctx: &str,
+    parent_ctx: &Ctx,
+    out: &mut Vec<StatementInput>,
+) -> Result<()> {
     match v {
         J::Object(map) => {
-            let mut ctx = Ctx { prefixes: parent_ctx.prefixes.clone(), base: parent_ctx.base.clone() };
-            if let Some(c) = map.get("@context") { absorb_context(c, &mut ctx); }
+            let mut ctx = Ctx {
+                prefixes: parent_ctx.prefixes.clone(),
+                base: parent_ctx.base.clone(),
+            };
+            if let Some(c) = map.get("@context") {
+                absorb_context(c, &mut ctx);
+            }
             if let Some(g) = map.get("@graph") {
                 if let J::Array(arr) = g {
-                    for entry in arr { parse_subject(entry, default_ctx, &ctx, out)?; }
+                    for entry in arr {
+                        parse_subject(entry, default_ctx, &ctx, out)?;
+                    }
                 } else {
                     parse_subject(g, default_ctx, &ctx, out)?;
                 }
@@ -57,7 +69,11 @@ fn parse_value(v: &J, default_ctx: &str, parent_ctx: &Ctx, out: &mut Vec<Stateme
                 parse_subject(v, default_ctx, &ctx, out)?;
             }
         }
-        J::Array(arr) => for entry in arr { parse_value(entry, default_ctx, parent_ctx, out)?; },
+        J::Array(arr) => {
+            for entry in arr {
+                parse_value(entry, default_ctx, parent_ctx, out)?;
+            }
+        }
         _ => return Err(anyhow!("jsonld: top must be object or array")),
     }
     Ok(())
@@ -66,33 +82,70 @@ fn parse_value(v: &J, default_ctx: &str, parent_ctx: &Ctx, out: &mut Vec<Stateme
 fn absorb_context(c: &J, ctx: &mut Ctx) {
     if let J::Object(m) = c {
         for (k, v) in m {
-            if k == "@base" { if let Some(s) = v.as_str() { ctx.base = Some(s.into()); } continue; }
-            if let Some(s) = v.as_str() { ctx.prefixes.insert(k.clone(), s.into()); }
+            if k == "@base" {
+                if let Some(s) = v.as_str() {
+                    ctx.base = Some(s.into());
+                }
+                continue;
+            }
+            if let Some(s) = v.as_str() {
+                ctx.prefixes.insert(k.clone(), s.into());
+            }
         }
     }
 }
 
 fn parse_subject(v: &J, default_ctx: &str, ctx: &Ctx, out: &mut Vec<StatementInput>) -> Result<()> {
-    let map = v.as_object().ok_or_else(|| anyhow!("jsonld: subject must be object"))?;
-    let subject = map.get("@id").and_then(|x| x.as_str())
-        .map(|s| ctx.expand(s)).unwrap_or_else(|| format!("_:b{}", uuid::Uuid::new_v4().simple()));
-    let resolved_subject = ctx.base.as_deref().map(|b| if subject.starts_with("_:") { subject.clone() } else { format!("{b}{subject}") }).unwrap_or(subject);
+    let map = v
+        .as_object()
+        .ok_or_else(|| anyhow!("jsonld: subject must be object"))?;
+    let subject = map
+        .get("@id")
+        .and_then(|x| x.as_str())
+        .map(|s| ctx.expand(s))
+        .unwrap_or_else(|| format!("_:b{}", uuid::Uuid::new_v4().simple()));
+    let resolved_subject = ctx
+        .base
+        .as_deref()
+        .map(|b| {
+            if subject.starts_with("_:") {
+                subject.clone()
+            } else {
+                format!("{b}{subject}")
+            }
+        })
+        .unwrap_or(subject);
 
     if let Some(t) = map.get("@type") {
         match t {
-            J::String(s) => emit(out, &resolved_subject,
-                "rdf:type", Object::iri(ctx.expand(s)), default_ctx),
-            J::Array(arr) => for tt in arr {
-                if let Some(s) = tt.as_str() {
-                    emit(out, &resolved_subject, "rdf:type", Object::iri(ctx.expand(s)), default_ctx);
+            J::String(s) => emit(
+                out,
+                &resolved_subject,
+                "rdf:type",
+                Object::iri(ctx.expand(s)),
+                default_ctx,
+            ),
+            J::Array(arr) => {
+                for tt in arr {
+                    if let Some(s) = tt.as_str() {
+                        emit(
+                            out,
+                            &resolved_subject,
+                            "rdf:type",
+                            Object::iri(ctx.expand(s)),
+                            default_ctx,
+                        );
+                    }
                 }
-            },
+            }
             _ => {}
         }
     }
 
     for (k, val) in map {
-        if k.starts_with('@') { continue; }
+        if k.starts_with('@') {
+            continue;
+        }
         let predicate = ctx.expand(k);
         emit_value(out, &resolved_subject, &predicate, val, default_ctx, ctx)?;
     }
@@ -108,37 +161,91 @@ fn emit_value(
     ctx: &Ctx,
 ) -> Result<()> {
     match v {
-        J::String(s)  => emit(out, subject, predicate, Object::lit(Literal::string(s)), default_ctx),
-        J::Number(n)  => {
-            let lit = if let Some(i) = n.as_i64() { Literal::integer(i) }
-                      else { Literal { v: J::Number(n.clone()), dt: "xsd:decimal".into(), lang: None } };
+        J::String(s) => emit(
+            out,
+            subject,
+            predicate,
+            Object::lit(Literal::string(s)),
+            default_ctx,
+        ),
+        J::Number(n) => {
+            let lit = if let Some(i) = n.as_i64() {
+                Literal::integer(i)
+            } else {
+                Literal {
+                    v: J::Number(n.clone()),
+                    dt: "xsd:decimal".into(),
+                    lang: None,
+                }
+            };
             emit(out, subject, predicate, Object::lit(lit), default_ctx);
         }
-        J::Bool(b)    => emit(out, subject, predicate, Object::lit(Literal {
-            v: J::Bool(*b), dt: "xsd:boolean".into(), lang: None }), default_ctx),
-        J::Object(m)  => {
+        J::Bool(b) => emit(
+            out,
+            subject,
+            predicate,
+            Object::lit(Literal {
+                v: J::Bool(*b),
+                dt: "xsd:boolean".into(),
+                lang: None,
+            }),
+            default_ctx,
+        ),
+        J::Object(m) => {
             if let Some(id) = m.get("@id").and_then(|x| x.as_str()) {
-                emit(out, subject, predicate, Object::iri(ctx.expand(id)), default_ctx);
+                emit(
+                    out,
+                    subject,
+                    predicate,
+                    Object::iri(ctx.expand(id)),
+                    default_ctx,
+                );
             } else if let Some(val) = m.get("@value") {
-                let dt = m.get("@type").and_then(|x| x.as_str()).map(|s| ctx.expand(s)).unwrap_or("xsd:string".into());
-                let lang = m.get("@language").and_then(|x| x.as_str()).map(String::from);
-                emit(out, subject, predicate, Object::lit(Literal { v: val.clone(), dt, lang }), default_ctx);
+                let dt = m
+                    .get("@type")
+                    .and_then(|x| x.as_str())
+                    .map(|s| ctx.expand(s))
+                    .unwrap_or("xsd:string".into());
+                let lang = m
+                    .get("@language")
+                    .and_then(|x| x.as_str())
+                    .map(String::from);
+                emit(
+                    out,
+                    subject,
+                    predicate,
+                    Object::lit(Literal {
+                        v: val.clone(),
+                        dt,
+                        lang,
+                    }),
+                    default_ctx,
+                );
             } else {
                 // nested subject: recurse to extract its triples and link via blank node id.
                 let bid = format!("_:b{}", uuid::Uuid::new_v4().simple());
                 let mut sub = m.clone();
-                sub.entry("@id".to_string()).or_insert_with(|| J::String(bid.clone()));
+                sub.entry("@id".to_string())
+                    .or_insert_with(|| J::String(bid.clone()));
                 let nested = J::Object(sub);
                 parse_subject(&nested, default_ctx, ctx, out)?;
                 emit(out, subject, predicate, Object::iri(bid), default_ctx);
             }
         }
-        J::Array(arr) => for x in arr { emit_value(out, subject, predicate, x, default_ctx, ctx)?; },
+        J::Array(arr) => {
+            for x in arr {
+                emit_value(out, subject, predicate, x, default_ctx, ctx)?;
+            }
+        }
         J::Null => {}
     }
     Ok(())
 }
 
 fn emit(out: &mut Vec<StatementInput>, s: &str, p: &str, o: Object, ctx: &str) {
-    out.push(StatementInput::new(s, p, o).with_context(ctx).with_polarity(Polarity::Asserted));
+    out.push(
+        StatementInput::new(s, p, o)
+            .with_context(ctx)
+            .with_polarity(Polarity::Asserted),
+    );
 }

@@ -21,19 +21,31 @@ pub fn parse_reader<R: BufRead>(reader: R, default_context: &str) -> Result<Vec<
         let s = match t.subject {
             Subject::NamedNode(n) => n.iri.to_string(),
             Subject::BlankNode(b) => format!("_:{}", b.id),
-            Subject::Triple(_)    => { err = Some("RDF-star unsupported".into()); return Ok(()); }
+            Subject::Triple(_) => {
+                err = Some("RDF-star unsupported".into());
+                return Ok(());
+            }
         };
         let p = t.predicate.iri.to_string();
         let o = match t.object {
             Term::NamedNode(n) => Object::Iri(n.iri.to_string()),
             Term::BlankNode(b) => Object::Iri(format!("_:{}", b.id)),
-            Term::Literal(l)   => Object::Literal(crate::nquads::literal_from_rio(&l)),
-            Term::Triple(_)    => { err = Some("RDF-star unsupported".into()); return Ok(()); }
+            Term::Literal(l) => Object::Literal(crate::nquads::literal_from_rio(&l)),
+            Term::Triple(_) => {
+                err = Some("RDF-star unsupported".into());
+                return Ok(());
+            }
         };
-        out.push(StatementInput::new(s, p, o)
-            .with_context(default_context).with_polarity(Polarity::Asserted));
+        out.push(
+            StatementInput::new(s, p, o)
+                .with_context(default_context)
+                .with_polarity(Polarity::Asserted),
+        );
         Ok(())
-    }).map_err(|e| anyhow!("rdf/xml: {e}"))?;
-    if let Some(e) = err { return Err(anyhow!(e)); }
+    })
+    .map_err(|e| anyhow!("rdf/xml: {e}"))?;
+    if let Some(e) = err {
+        return Err(anyhow!(e));
+    }
     Ok(out)
 }

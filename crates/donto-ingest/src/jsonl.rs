@@ -45,19 +45,27 @@ pub fn parse_reader<R: BufRead>(reader: R, default_context: &str) -> Result<Vec<
     for (lineno, line) in reader.lines().enumerate() {
         let line = line?;
         let line = line.trim();
-        if line.is_empty() || line.starts_with('#') { continue; }
-        let row: Row = serde_json::from_str(line)
-            .map_err(|e| anyhow!("jsonl line {}: {e}", lineno + 1))?;
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        let row: Row =
+            serde_json::from_str(line).map_err(|e| anyhow!("jsonl line {}: {e}", lineno + 1))?;
         let object = match row.o {
             ObjForm::Iri { iri } => Object::iri(iri),
-            ObjForm::Lit(l)      => Object::lit(l),
+            ObjForm::Lit(l) => Object::lit(l),
         };
-        let pol = row.pol.as_deref().and_then(Polarity::parse).unwrap_or(Polarity::Asserted);
-        out.push(StatementInput::new(row.s, row.p, object)
-            .with_context(row.c.unwrap_or_else(|| default_context.into()))
-            .with_polarity(pol)
-            .with_maturity(row.maturity.unwrap_or(0))
-            .with_valid(row.valid_lo, row.valid_hi));
+        let pol = row
+            .pol
+            .as_deref()
+            .and_then(Polarity::parse)
+            .unwrap_or(Polarity::Asserted);
+        out.push(
+            StatementInput::new(row.s, row.p, object)
+                .with_context(row.c.unwrap_or_else(|| default_context.into()))
+                .with_polarity(pol)
+                .with_maturity(row.maturity.unwrap_or(0))
+                .with_valid(row.valid_lo, row.valid_hi),
+        );
     }
     Ok(out)
 }

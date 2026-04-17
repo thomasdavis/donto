@@ -1,0 +1,5 @@
+# donto cargo config. Empty by intent — the workspace root Cargo.toml
+# carries everything (resolver, profiles, deps).
+#
+# Reserved for future per-target config (e.g. linker overrides for cross
+# builds) without churning Cargo.toml.

@@ -17,14 +17,14 @@
 
 #![warn(missing_debug_implementations, rust_2018_idioms)]
 
-pub mod nquads;
-pub mod turtle;
-pub mod rdfxml;
-pub mod jsonld;
 pub mod csv;
 pub mod jsonl;
+pub mod jsonld;
+pub mod nquads;
+pub mod pipeline;
 pub mod property_graph;
 pub mod quarantine;
-pub mod pipeline;
+pub mod rdfxml;
+pub mod turtle;
 
 pub use pipeline::{IngestReport, Pipeline};

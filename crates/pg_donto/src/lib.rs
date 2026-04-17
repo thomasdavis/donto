@@ -137,16 +137,24 @@ fn donto_maturity_rs(flags: i16) -> i32 {
     ((flags >> 2) & 0b111) as i32
 }
 
-/// Component / version triples.
+/// Component / version triples. Returned as a SETOF record so SQL can
+/// `select * from donto_version_rs()` and treat it like a table.
 #[pg_extern(immutable, parallel_safe)]
-fn donto_version_rs() -> Vec<(String, String, String)> {
-    vec![
-        ("schema".to_string(),     env!("CARGO_PKG_VERSION").to_string(), "pgrx-packaged".to_string()),
-        ("atom".to_string(),       "1".to_string(),                       "physical row + sparse overlays".to_string()),
-        ("truth".to_string(),      "1".to_string(),                       "polarity asserted/negated/absent/unknown".to_string()),
-        ("bitemporal".to_string(), "1".to_string(),                       "valid_time + tx_time".to_string()),
-        ("contexts".to_string(),   "1".to_string(),                       "forest, kind, mode".to_string()),
-    ]
+fn donto_version_rs() -> TableIterator<
+    'static,
+    (
+        name!(component, String),
+        name!(version, String),
+        name!(notes, String),
+    ),
+> {
+    TableIterator::new(vec![
+        ("schema".into(),     env!("CARGO_PKG_VERSION").into(), "pgrx-packaged".into()),
+        ("atom".into(),       "1".into(),                       "physical row + sparse overlays".into()),
+        ("truth".into(),      "1".into(),                       "polarity asserted/negated/absent/unknown".into()),
+        ("bitemporal".into(), "1".into(),                       "valid_time + tx_time".into()),
+        ("contexts".into(),   "1".into(),                       "forest, kind, mode".into()),
+    ])
 }
 
 // ---------------------------------------------------------------------------
@@ -155,7 +163,6 @@ fn donto_version_rs() -> Vec<(String, String, String)> {
 
 #[pg_guard]
 extern "C" fn _PG_init() {
-    pgrx::pg_sys::submodules::*;
     // Future: register custom GUCs, planner hooks, etc.
 }
 
