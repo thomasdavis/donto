@@ -52,6 +52,11 @@ DONTO_TEST_DSN=postgres://donto:donto@127.0.0.1:55432/donto cargo test --workspa
 
 Tests self-skip if Postgres is unreachable; they don't false-pass.
 
+Optional compiler cache: `cargo install sccache --locked` (or install the
+prebuilt binary) then `export RUSTC_WRAPPER=sccache`. The repo does not
+hard-wire sccache in `.cargo/config.toml` so contributors without it
+still build; CI installs it via `mozilla-actions/sccache-action`.
+
 ## What to do (and not do)
 
 - **Do** read PRD.md before touching `donto_statement`, contexts, polarity,
