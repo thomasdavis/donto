@@ -1,0 +1,26 @@
+[package]
+name        = "donto-migrate"
+version     = { workspace = true }
+edition     = { workspace = true }
+rust-version = { workspace = true }
+license     = { workspace = true }
+description = "Migrators from external stores to donto (SQLite genealogy, Apache AGE, Neo4j)"
+repository  = { workspace = true }
+
+[[bin]]
+name = "donto-migrate"
+path = "src/main.rs"
+
+[dependencies]
+donto-client = { path = "../donto-client" }
+donto-ingest = { path = "../donto-ingest" }
+tokio        = { workspace = true }
+anyhow       = { workspace = true }
+clap         = { workspace = true }
+tracing      = { workspace = true }
+tracing-subscriber = { workspace = true }
+serde        = { workspace = true }
+serde_json   = { workspace = true }
+chrono       = { workspace = true }
+rusqlite     = { workspace = true }
+uuid         = { workspace = true }

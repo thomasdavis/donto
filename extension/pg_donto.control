@@ -1,0 +1,6 @@
+comment = 'donto: bitemporal paraconsistent quad store'
+default_version = '0.1.0'
+relocatable = false
+schema = public
+requires = 'btree_gist, pgcrypto'
+superuser = false

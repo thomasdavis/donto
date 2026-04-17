@@ -13,11 +13,14 @@ path = "src/main.rs"
 
 [dependencies]
 donto-client      = { path = "../donto-client" }
+donto-query       = { path = "../donto-query" }
+donto-ingest      = { path = "../donto-ingest" }
 tokio             = { workspace = true }
 clap              = { workspace = true }
 anyhow            = { workspace = true }
 tracing           = { workspace = true }
 tracing-subscriber = { workspace = true }
+serde             = { workspace = true }
 serde_json        = { workspace = true }
 chrono            = { workspace = true }
 uuid              = { workspace = true }
