@@ -26,3 +26,5 @@ chrono            = { workspace = true }
 uuid              = { workspace = true }
 rio_api           = { workspace = true }
 rio_turtle        = { workspace = true }
+clap_mangen       = "0.2"
+clap_complete     = "4"
