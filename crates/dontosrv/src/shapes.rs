@@ -139,13 +139,32 @@ async fn forward_to_lean(state: &AppState, req: &ValidateReq) -> axum::response:
         Ok(c) => c,
         Err(e) => return Json(json!({"error": e.to_string()})).into_response(),
     };
+    // Resolve the scope client-side so the planner sees a concrete text[] array
+    // and can use the (context) btree index. Inlining donto_resolve_scope into
+    // the query forces a hash join over the whole statement table because the
+    // function is opaque to the planner.
+    let resolved: Vec<String> = match conn.query(
+        "select context_iri from donto_resolve_scope($1::jsonb)",
+        &[&req.scope],
+    ).await {
+        Ok(rs) => rs.into_iter().map(|r| r.get::<_, String>(0)).collect(),
+        Err(e) => return Json(json!({"error": format!("scope resolution: {e}")})).into_response(),
+    };
+    if resolved.is_empty() {
+        return Json(json!({
+            "shape_iri": req.shape_iri,
+            "source":    "lean",
+            "report":    {"focus_count":0,"violations":[]},
+        })).into_response();
+    }
     let rows = match conn.query(
         "select s.statement_id, s.subject, s.predicate, s.object_iri, s.object_lit, s.context,
                 donto_polarity(s.flags), donto_maturity(s.flags),
                 lower(s.valid_time), upper(s.valid_time)
-           from donto_statement s, donto_resolve_scope($1::jsonb) sc
-          where s.context = sc.context_iri and upper(s.tx_time) is null",
-        &[&req.scope],
+           from donto_statement s
+          where s.context = any($1::text[])
+            and upper(s.tx_time) is null",
+        &[&resolved.as_slice()],
     ).await {
         Ok(r)  => r,
         Err(e) => return Json(json!({"error": format!("scope resolution: {e}")})).into_response(),
@@ -177,7 +196,6 @@ async fn forward_to_lean(state: &AppState, req: &ValidateReq) -> axum::response:
         "scope":     req.scope,
         "statements": stmts,
     });
-
     match lean.send(envelope).await {
         Ok(v) => Json(json!({
             "shape_iri": req.shape_iri,
