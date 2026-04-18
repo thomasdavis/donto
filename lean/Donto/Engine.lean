@@ -108,6 +108,9 @@ def lookupShape (iri : String) : Option Donto.Shapes.Shape :=
     | _          => none
   else if iri == "lean:builtin/parent-child-age-gap" then
     some Donto.Shapes.StdLib.parentChildAgeGap
+  else if iri.startsWith "lean:role/fit/" then
+    -- lean:role/fit/<job-iri>; everything after the prefix is the job IRI.
+    some (Donto.Shapes.StdLib.roleFit (iri.drop "lean:role/fit/".length))
   else
     none
 

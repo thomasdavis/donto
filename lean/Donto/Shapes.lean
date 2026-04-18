@@ -140,5 +140,63 @@ def parentChildAgeGap : Shape :=
         focusCount := parentEdges.length
         violations := violations } }
 
+/-- Role-fit shape (resume demo).
+
+    Given a target job IRI and a list of statements containing both the
+    candidate(s) and the job, compute the missing required skills and
+    surface each as a violation. A clean report (no violations) is a
+    *constructive proof* that the candidate covers every requirement. -/
+def roleFit (jobIri : IRI) : Shape :=
+  { iri := s!"lean:role/fit/{jobIri}"
+    label := some s!"RoleFit({jobIri})"
+    severity := .warning
+    evaluate := fun stmts =>
+      let asserted := stmts.filter (·.polarity == .asserted)
+      let candidates : List IRI :=
+        (asserted.filter (fun s =>
+          s.predicate == "rdf:type" &&
+          (match s.object with | .iri "ex:Candidate" => true | _ => false))).map (·.subject)
+      let candidates := candidates.eraseDups
+      let required : List IRI :=
+        (asserted.filter (fun s =>
+          s.subject == jobIri && s.predicate == "ex:requiresSkill")).filterMap fun s =>
+            match s.object with | .iri i => some i | _ => none
+      let minYears : Option Int :=
+        (asserted.find? (fun s =>
+          s.subject == jobIri && s.predicate == "ex:minYears"))
+        |>.bind fun s => match s.object with
+          | .lit v _ _ => v.toInt?
+          | _ => none
+      let candidateSkills (c : IRI) : List IRI :=
+        (asserted.filter (fun s =>
+          s.subject == c && s.predicate == "ex:hasSkill")).filterMap fun s =>
+            match s.object with | .iri i => some i | _ => none
+      let candidateYears (c : IRI) : Option Int :=
+        (asserted.find? (fun s =>
+          s.subject == c && s.predicate == "ex:yearsOfExperience"))
+        |>.bind fun s => match s.object with
+          | .lit v _ _ => v.toInt?
+          | _ => none
+      let allViolations : List Violation := candidates.bind fun cand =>
+        let skills := candidateSkills cand
+        let missing := required.filter (fun r => !skills.contains r)
+        let missingViols : List Violation := missing.map fun skill =>
+          { focus := cand
+            reason := s!"missing required skill {skill} for {jobIri}"
+            evidence := [] }
+        let yearsViols : List Violation :=
+          match minYears, candidateYears cand with
+          | some mn, some cy =>
+              if cy < mn then
+                [{ focus := cand
+                   reason := s!"{cand} has {cy} years, {jobIri} requires {mn}"
+                   evidence := [] }]
+              else []
+          | _, _ => []
+        missingViols ++ yearsViols
+      { shapeIri := s!"lean:role/fit/{jobIri}"
+        focusCount := candidates.length * required.length
+        violations := allViolations } }
+
 end StdLib
 end Donto.Shapes

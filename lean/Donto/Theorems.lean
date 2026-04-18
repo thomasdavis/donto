@@ -230,4 +230,40 @@ theorem step_membership_one_direction
   have hc : (c == c) = true := beq_self_eq_true c
   simp [ha, hc]
 
+-- ---------------------------------------------------------------------------
+-- Role-fit (resume demo) — the shape itself is sound by construction.
+-- ---------------------------------------------------------------------------
+
+/-- An empty input set yields an empty role-fit report — there are no
+    candidates to score. Closes the trivial corner case so the
+    interpretation of "no violations = perfect fit" is sound. -/
+theorem roleFit_empty (jobIri : IRI) :
+    ((Donto.Shapes.StdLib.roleFit jobIri).evaluate []).violations = [] := by
+  unfold Donto.Shapes.StdLib.roleFit
+  simp
+
+/-- A worked instance: a tiny in-Lean fixture where the candidate holds
+    every required skill and meets the years bar. The role-fit shape
+    emits no violations — a kernel-checked, constructive proof of fit
+    for that exact input. -/
+example :
+    let fixture : List Statement := [
+      { id := some "1", subject := "ex:thomas", predicate := "rdf:type",
+        object := .iri "ex:Candidate", context := "ctx:demo" },
+      { id := some "2", subject := "ex:thomas", predicate := "ex:hasSkill",
+        object := .iri "ex:skill/typescript", context := "ctx:demo" },
+      { id := some "3", subject := "ex:thomas", predicate := "ex:hasSkill",
+        object := .iri "ex:skill/postgresql", context := "ctx:demo" },
+      { id := some "4", subject := "ex:thomas", predicate := "ex:yearsOfExperience",
+        object := .lit "15" "xsd:integer" none, context := "ctx:demo" },
+      { id := some "5", subject := "ex:job/x", predicate := "ex:requiresSkill",
+        object := .iri "ex:skill/typescript", context := "ctx:demo" },
+      { id := some "6", subject := "ex:job/x", predicate := "ex:requiresSkill",
+        object := .iri "ex:skill/postgresql", context := "ctx:demo" },
+      { id := some "7", subject := "ex:job/x", predicate := "ex:minYears",
+        object := .lit "5" "xsd:integer" none, context := "ctx:demo" }
+    ]
+    ((Donto.Shapes.StdLib.roleFit "ex:job/x").evaluate fixture).violations = [] := by
+  rfl
+
 end Donto.Theorems
