@@ -5,6 +5,7 @@
 
 pub mod certificates;
 pub mod dir;
+pub mod lean;
 pub mod rules;
 pub mod shapes;
 
@@ -21,6 +22,10 @@ use std::sync::Arc;
 #[derive(Clone, Debug)]
 pub struct AppState {
     pub client: DontoClient,
+    /// Optional Lean engine. `None` means the binary wasn't configured;
+    /// `lean:` shape IRIs return `sidecar_unavailable` in that case
+    /// (PRD §15 sidecar contract).
+    pub lean:   Option<lean::LeanClient>,
 }
 
 pub fn router(state: Arc<AppState>) -> Router {

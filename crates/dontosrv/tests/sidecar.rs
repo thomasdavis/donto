@@ -22,7 +22,7 @@ async fn bootstrap() -> Option<(Arc<dontosrv::AppState>, String)> {
     c.ensure_context(&ctx, "custom", "permissive", None)
         .await
         .ok()?;
-    let state = Arc::new(dontosrv::AppState { client: c });
+    let state = Arc::new(dontosrv::AppState { client: c, lean: None });
     Some((state, ctx))
 }
 

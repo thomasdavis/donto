@@ -40,3 +40,27 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   are aspirational; correctness and PRD coverage take priority. See
   [PRD §26 follow-ons](PRD.md#follow-ons) for what the v1 ladder
   intentionally defers.
+
+### Lean overlay (Phase 5+ first pass)
+- `lean/Donto/Theorems.lean` — kernel-checked propositions about the
+  data model: polarity totality, asserted-vs-negated distinctness,
+  retraction preserves identity, snapshot membership monotonicity,
+  scope-exclude-wins, maturity bounded.
+- `lean/Donto/Engine.lean` + `lean/Main.lean` — `donto_engine` is now a
+  real DIR sidecar: line-delimited JSON over stdio, dispatch on
+  `validate_request`, banner-then-loop main.
+- `lean/Donto/Shapes.lean` — `parentChildAgeGap` shape (PRD §16
+  example), authored in Lean and runnable via the engine.
+- `crates/dontosrv/src/lean.rs` — `LeanClient`: long-lived child
+  process, mutex-serialised requests, per-request timeout, fail-fast
+  on a dead pipe (PRD §15 sidecar contract).
+- dontosrv learns `--lean-engine PATH` (env: `DONTO_LEAN_ENGINE`) and
+  forwards `lean:` shape IRIs to it. Without the flag, `lean:` IRIs
+  return `sidecar_unavailable`; `builtin:` shapes still work.
+- New integration test (`crates/dontosrv/tests/lean_engine.rs`) spawns
+  the real Lean binary and verifies a violation is detected by Lean
+  code, not Rust.
+- `docs/LEAN-OVERLAY.md` documents what the Lean side proves and how
+  to author/wire/run a custom shape.
+- CI: `.github/workflows/lean.yml` builds Lean + runs the lean_engine
+  integration tests against a real Postgres.

@@ -77,5 +77,68 @@ def datatype (predicate : IRI) (dt : IRI) : Shape :=
         focusCount := matching.length
         violations := violations } }
 
+/-- Genealogy domain shape (PRD §16): a parent must be at least 12 years
+    older than their child and at most 80 years older.
+
+    Looks for `ex:parentOf` edges between subjects. Each edge's parent and
+    child must each carry an `ex:birthYear` integer literal somewhere in
+    `stmts`. The shape flags edges where the gap is unreasonable, where
+    either birth year is missing, or where the child is older than the
+    parent.
+
+    This is intentionally a *Lean-authored* shape (in contrast to the
+    builtin shapes mirrored in Rust) so we can demonstrate the boundary
+    end-to-end: dontosrv ships the relevant statements, the Lean engine
+    runs the constraint, the report comes back with violations. -/
+def parentChildAgeGap : Shape :=
+  { iri := "lean:builtin/parent-child-age-gap"
+    label := some "ParentChildAgeGap"
+    severity := .violation
+    evaluate := fun stmts =>
+      -- Index birth years by subject. We accept either an integer literal
+      -- or a numeric-looking string literal; non-numeric content means the
+      -- shape can't decide and we record a violation.
+      let births : List (IRI × Int) := stmts.filterMap fun s =>
+        if s.predicate == "ex:birthYear" && s.polarity == .asserted then
+          match s.object with
+          | .lit v _ _ => v.toInt? |>.map (fun n => (s.subject, n))
+          | _          => none
+        else none
+      let lookupBirth (iri : IRI) : Option Int :=
+        (births.find? (fun p => p.fst == iri)).map (·.snd)
+      let parentEdges := stmts.filter (fun s =>
+        s.predicate == "ex:parentOf" && s.polarity == .asserted)
+      let violations : List Violation := parentEdges.filterMap fun edge =>
+        let child := match edge.object with | .iri i => i | _ => ""
+        if child.isEmpty then
+          some { focus := edge.subject
+                 reason := "ex:parentOf object is not an IRI"
+                 evidence := [edge.id.getD ""] }
+        else
+          match lookupBirth edge.subject, lookupBirth child with
+          | none, _ =>
+              some { focus := edge.subject
+                     reason := s!"parent {edge.subject} has no ex:birthYear"
+                     evidence := [edge.id.getD ""] }
+          | _, none =>
+              some { focus := child
+                     reason := s!"child {child} has no ex:birthYear"
+                     evidence := [edge.id.getD ""] }
+          | some pYear, some cYear =>
+              let gap := cYear - pYear
+              if gap < 12 then
+                some { focus := edge.subject
+                       reason := s!"parent {edge.subject} ({pYear}) is only {gap}y older than child {child} ({cYear}); minimum 12"
+                       evidence := [edge.id.getD ""] }
+              else if gap > 80 then
+                some { focus := edge.subject
+                       reason := s!"parent {edge.subject} ({pYear}) is {gap}y older than child {child} ({cYear}); maximum 80"
+                       evidence := [edge.id.getD ""] }
+              else
+                none
+      { shapeIri := "lean:builtin/parent-child-age-gap"
+        focusCount := parentEdges.length
+        violations := violations } }
+
 end StdLib
 end Donto.Shapes

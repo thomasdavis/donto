@@ -8,3 +8,4 @@ import Donto.Shapes
 import Donto.Rules
 import Donto.Certificate
 import Donto.Engine
+import Donto.Theorems

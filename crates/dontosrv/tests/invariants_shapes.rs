@@ -28,7 +28,7 @@ async fn boot() -> Option<(Arc<dontosrv::AppState>, String)> {
     c.ensure_context(&ctx, "custom", "permissive", None)
         .await
         .ok()?;
-    Some((Arc::new(dontosrv::AppState { client: c }), ctx))
+    Some((Arc::new(dontosrv::AppState { client: c, lean: None }), ctx))
 }
 
 async fn validate(state: Arc<dontosrv::AppState>, shape: &str, ctx: &str) -> Value {

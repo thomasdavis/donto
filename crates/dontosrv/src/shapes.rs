@@ -82,12 +82,7 @@ pub async fn validate(
             shape_datatype(&state, &pred, &dt, &req.scope).await
         }
         s if s.starts_with("lean:") => {
-            return Json(json!({
-                "error": "sidecar_unavailable",
-                "shape_iri": req.shape_iri,
-                "detail": "Lean shape engine not yet wired (Phase 5+)",
-            }))
-            .into_response();
+            return forward_to_lean(&state, &req).await;
         }
         _ => {
             return Json(json!({
@@ -125,6 +120,76 @@ fn scope_fingerprint(scope: &serde_json::Value) -> Vec<u8> {
     let mut h = sha2::Sha256::new();
     h.update(&bytes);
     h.finalize().to_vec()
+}
+
+/// Forward a `lean:` shape request to the engine. We ship every statement
+/// in the resolved scope as the input set — the Lean shape evaluates
+/// against that snapshot. (Future: page in slices for very large scopes.)
+async fn forward_to_lean(state: &AppState, req: &ValidateReq) -> axum::response::Response {
+    let Some(lean) = &state.lean else {
+        return Json(json!({
+            "error": "sidecar_unavailable",
+            "shape_iri": req.shape_iri,
+            "detail": "Lean engine not configured (start dontosrv with --lean-engine /path/to/donto_engine)",
+        })).into_response();
+    };
+
+    let pool = state.client.pool();
+    let conn = match pool.get().await {
+        Ok(c) => c,
+        Err(e) => return Json(json!({"error": e.to_string()})).into_response(),
+    };
+    let rows = match conn.query(
+        "select s.statement_id, s.subject, s.predicate, s.object_iri, s.object_lit, s.context,
+                donto_polarity(s.flags), donto_maturity(s.flags),
+                lower(s.valid_time), upper(s.valid_time)
+           from donto_statement s, donto_resolve_scope($1::jsonb) sc
+          where s.context = sc.context_iri and upper(s.tx_time) is null",
+        &[&req.scope],
+    ).await {
+        Ok(r)  => r,
+        Err(e) => return Json(json!({"error": format!("scope resolution: {e}")})).into_response(),
+    };
+
+    let stmts: Vec<serde_json::Value> = rows.iter().map(|r| {
+        let id: uuid::Uuid = r.get(0);
+        let subject:   String = r.get(1);
+        let predicate: String = r.get(2);
+        let object_iri: Option<String> = r.get(3);
+        let object_lit: Option<serde_json::Value> = r.get(4);
+        let context:   String = r.get(5);
+        let polarity:  String = r.get(6);
+        let mut o = serde_json::Map::new();
+        o.insert("id".into(), serde_json::Value::String(id.to_string()));
+        o.insert("subject".into(), serde_json::Value::String(subject));
+        o.insert("predicate".into(), serde_json::Value::String(predicate));
+        o.insert("context".into(), serde_json::Value::String(context));
+        o.insert("polarity".into(), serde_json::Value::String(polarity));
+        if let Some(i) = object_iri { o.insert("object_iri".into(), serde_json::Value::String(i)); }
+        if let Some(l) = object_lit { o.insert("object_lit".into(), l); }
+        serde_json::Value::Object(o)
+    }).collect();
+
+    let envelope = json!({
+        "version": "0.1.0-json",
+        "kind":    "validate_request",
+        "shape_iri": req.shape_iri,
+        "scope":     req.scope,
+        "statements": stmts,
+    });
+
+    match lean.send(envelope).await {
+        Ok(v) => Json(json!({
+            "shape_iri": req.shape_iri,
+            "source":    "lean",
+            "report":    v,
+        })).into_response(),
+        Err(e) => Json(json!({
+            "error": "sidecar_unavailable",
+            "shape_iri": req.shape_iri,
+            "detail": e.to_string(),
+        })).into_response(),
+    }
 }
 
 async fn shape_functional(

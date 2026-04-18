@@ -164,6 +164,24 @@ The violations stay visible. The data isn't deleted or rejected. Shapes
 are **annotations**, not constraints — donto's job is to record what
 the world said, not to police it.
 
+For domain-specific constraints, write the shape in Lean — the optional
+`donto_engine` sidecar runs Lean shapes against the same HTTP endpoint:
+
+```bash
+# A shape that says: a parent must be 12-80 years older than their child.
+curl -X POST localhost:7878/shapes/validate -H 'content-type: application/json' \
+  -d '{"shape_iri":"lean:builtin/parent-child-age-gap",
+       "scope":{"include":["ctx:src/census1900"]}}'
+# {"source":"lean",
+#  "report":{"violations":[{"focus":"ex:alice_young",
+#                           "reason":"parent ex:alice_young (1899) is only 5y older than child ex:bob (1904); minimum 12",
+#                           "evidence":["<uuid>"]}]}}
+```
+
+Note `"source":"lean"`. That report came from a real Lean process. See
+[`docs/LEAN-OVERLAY.md`](docs/LEAN-OVERLAY.md) for what the Lean side
+proves about the data model and how to author your own shapes.
+
 ### 6. Derive new facts that carry lineage and a certificate
 
 You have parent edges. You want ancestors. Run the bundled transitive
@@ -288,6 +306,8 @@ LLM extractor pipelines), and CSV with a column-mapping file.
   scope, snapshot, and reason under hypothesis.
 - [`docs/OPERATOR-GUIDE.md`](docs/OPERATOR-GUIDE.md) — sizing, backup,
   observability, sidecar topology, capacity tuning.
+- [`docs/LEAN-OVERLAY.md`](docs/LEAN-OVERLAY.md) — what the Lean side
+  *proves* about the data model and how to wire / author Lean shapes.
 - [`docs/PHASE-0.md`](docs/PHASE-0.md) — phase plans.
 
 ## Project layout

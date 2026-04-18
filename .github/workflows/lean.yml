@@ -5,15 +5,41 @@ on:
     branches: [main]
     paths:
       - 'lean/**'
+      - 'crates/dontosrv/src/lean.rs'
+      - 'crates/dontosrv/src/shapes.rs'
+      - 'crates/dontosrv/tests/lean_engine.rs'
       - '.github/workflows/lean.yml'
   pull_request:
     paths:
       - 'lean/**'
+      - 'crates/dontosrv/src/lean.rs'
+      - 'crates/dontosrv/src/shapes.rs'
+      - 'crates/dontosrv/tests/lean_engine.rs'
       - '.github/workflows/lean.yml'
 
 jobs:
   lake-build:
     runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: donto
+          POSTGRES_PASSWORD: donto
+          POSTGRES_DB: donto
+        ports:
+          - 55432:5432
+        options: >-
+          --health-cmd "pg_isready -U donto -d donto"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      DONTO_TEST_DSN: postgres://donto:donto@127.0.0.1:55432/donto
+      RUST_BACKTRACE: 1
+
     steps:
       - uses: actions/checkout@v4
 
@@ -23,18 +49,37 @@ jobs:
             sh -s -- -y --default-toolchain $(cat lean/lean-toolchain)
           echo "$HOME/.elan/bin" >> $GITHUB_PATH
 
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
       - name: Cache lake build
         uses: actions/cache@v4
         with:
           path: lean/.lake
           key: ${{ runner.os }}-lake-${{ hashFiles('lean/lean-toolchain', 'lean/lakefile.lean', 'lean/**/*.lean') }}
 
-      - name: lake build
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-lean-${{ hashFiles('**/Cargo.lock', '**/Cargo.toml') }}
+
+      - name: lake build (Donto + theorems + donto_engine)
         run: |
           cd lean
           lake build
 
-      - name: Smoke test donto_engine
+      - name: Smoke test donto_engine over stdio
         run: |
-          cd lean
-          echo "" | ./.lake/build/bin/donto_engine
+          echo '{"version":"0.1.0-json","kind":"ping"}' | \
+            lean/.lake/build/bin/donto_engine | tee /tmp/lean-smoke.txt
+          grep -q '"kind":"ready"' /tmp/lean-smoke.txt
+          grep -q '"kind":"pong"'  /tmp/lean-smoke.txt
+
+      - name: dontosrv ↔ Lean integration tests
+        env:
+          DONTO_LEAN_ENGINE: ${{ github.workspace }}/lean/.lake/build/bin/donto_engine
+        run: cargo test -p dontosrv --test lean_engine -- --test-threads=1
