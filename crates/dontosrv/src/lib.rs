@@ -5,6 +5,7 @@
 
 pub mod certificates;
 pub mod dir;
+pub mod history;
 pub mod lean;
 pub mod rules;
 pub mod shapes;
@@ -39,7 +40,33 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/rules/derive", post(rules::derive))
         .route("/certificates/attach", post(certificates::attach))
         .route("/certificates/verify/:stmt", post(certificates::verify))
+        .route("/subjects", get(history::list_subjects))
+        .route("/history/:subject", get(history::handle))
+        .layer(axum::middleware::from_fn(cors))
         .with_state(state)
+}
+
+/// Permissive CORS so the Next.js dev server (apps/faces, port 3000) can hit
+/// dontosrv (port 7878) during development. Faces is read-only and surfaces
+/// only what dontosrv chooses to expose.
+async fn cors(
+    req: axum::http::Request<axum::body::Body>,
+    next: axum::middleware::Next,
+) -> axum::response::Response {
+    if req.method() == axum::http::Method::OPTIONS {
+        let mut resp = axum::response::Response::new(axum::body::Body::empty());
+        cors_headers(resp.headers_mut());
+        return resp;
+    }
+    let mut resp = next.run(req).await;
+    cors_headers(resp.headers_mut());
+    resp
+}
+
+fn cors_headers(headers: &mut axum::http::HeaderMap) {
+    headers.insert("access-control-allow-origin",  "*".parse().unwrap());
+    headers.insert("access-control-allow-methods", "GET, POST, OPTIONS".parse().unwrap());
+    headers.insert("access-control-allow-headers", "content-type".parse().unwrap());
 }
 
 async fn health() -> &'static str {

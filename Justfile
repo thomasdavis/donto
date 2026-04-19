@@ -54,3 +54,14 @@ migrate-genealogy: pg-up
         genealogy /tmp/donto_genealogy_demo.sqlite \
         --root ctx:demo/genealogy
     rm -f /tmp/donto_genealogy_demo.sqlite
+
+# Ingest the Brooks exoneration fixture (the donto-faces default demo).
+ingest-brooks: pg-up
+    docker exec -i donto-pg psql -U donto -d donto -v ON_ERROR_STOP=1 -At \
+        < sql/fixtures/exoneration_brooks.sql >/dev/null
+    @echo "ingested ex:darnell-brooks"
+
+# Run the donto-faces visualisation app (Next.js) + dontosrv together.
+faces: ingest-brooks
+    cargo run -p dontosrv --quiet -- --dsn '{{dsn}}' --bind 127.0.0.1:7878 &
+    pnpm --filter '@donto/faces' dev

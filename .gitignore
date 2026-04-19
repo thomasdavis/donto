@@ -20,3 +20,10 @@ Cargo.lock.bak
 
 # Postgres data dirs (if anyone runs PG locally)
 pgdata/
+
+# Node / Next.js / Turborepo
+node_modules/
+.next/
+.turbo/
+*.tsbuildinfo
+.vercel

@@ -312,18 +312,29 @@ LLM extractor pipelines), and CSV with a column-mapping file.
 
 ## Project layout
 
+This is a monorepo. The Rust workspace and the TypeScript / Turborepo
+workspace coexist at the root.
+
 ```
-PRD.md                  Source of truth for the design.
-sql/migrations/         Schema and SQL functions. SQL is canonical.
-crates/donto-client/    Typed Rust wrapper over the SQL surface.
-crates/donto-cli/       `donto` command — ingest, match, query, retract.
-crates/donto-query/     DontoQL parser, SPARQL subset, evaluator.
-crates/donto-ingest/    All ingestion formats.
-crates/donto-migrate/   Migrators from external stores.
-crates/dontosrv/        HTTP sidecar (SPARQL, DontoQL, shapes, rules, certs).
-crates/pg_donto/        pgrx Postgres extension.
-lean/                   Lean overlay (Core, IR, Shapes, Rules, Certs).
-docs/                   User and operator guides.
+PRD.md                       Source of truth for the engine design.
+PRD-faces.md                 PRD for the visualisation app.
+sql/migrations/              Schema and SQL functions. SQL is canonical.
+sql/fixtures/                Demo data (genealogy, resume, exoneration).
+crates/donto-client/         Typed Rust wrapper over the SQL surface.
+crates/donto-cli/            `donto` CLI — ingest, match, query, retract.
+crates/donto-query/          DontoQL parser, SPARQL subset, evaluator.
+crates/donto-ingest/         Ingestion formats.
+crates/donto-migrate/        Migrators from external stores.
+crates/dontosrv/             HTTP sidecar (SPARQL, DontoQL, shapes, rules,
+                             certificates, /history, /subjects, CORS).
+crates/pg_donto/             pgrx Postgres extension.
+lean/                        Lean overlay (Core, IR, Shapes, Rules, Certs,
+                             Theorems).
+apps/faces/                  Next.js 15 visualisation app — three lenses
+                             (Stratigraph, Rashomon Hall, Probe).
+packages/donto-client/       TypeScript bindings for the dontosrv HTTP API.
+docs/                        User, operator, and Lean guides.
+turbo.json · pnpm-workspace.yaml · package.json   Turborepo wiring.
 ```
 
 ## Status and roadmap
