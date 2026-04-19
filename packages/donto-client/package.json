@@ -9,7 +9,8 @@
     ".":         "./src/index.ts",
     "./history": "./src/history.ts",
     "./shapes":  "./src/shapes.ts",
-    "./ingest":  "./src/ingest.ts"
+    "./ingest":  "./src/ingest.ts",
+    "./react":   "./src/react.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit",
