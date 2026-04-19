@@ -225,6 +225,7 @@ export function FacesShell({ dontosrvUrl }: Props) {
     <div className="h-screen flex flex-col">
       <header className="flex items-center gap-3 px-4 py-2 border-b border-rule bg-panel flex-wrap">
         <h1 className="text-accent text-sm tracking-wider m-0">donto · faces</h1>
+        <a href="/explore" className="text-muted text-xs hover:text-accent">explore →</a>
         <span className="text-muted text-[11px]">→ {client.baseUrl}</span>
         <select
           className="bg-paper border border-rule text-ink px-2 py-1 text-xs min-w-[280px]"

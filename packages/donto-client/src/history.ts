@@ -51,12 +51,47 @@ export function distinctContexts(rows: Statement[]): string[] {
   return out;
 }
 
-/** Render the object of a statement as a flat string (IRI or literal value). */
+/** Render the object of a statement as a flat string (IRI or literal value).
+ *
+ *  donto's `object_lit` column is JSONB and *should* always be
+ *  `{v, dt, lang}` — but real deployments (the genealogy migrator at
+ *  least) include rows where the column was stored as a JSON-encoded text
+ *  string, or even a bare value. This guard normalises all three shapes
+ *  and never throws or returns undefined.
+ */
 export function renderObject(s: Statement): string {
   if (s.object_iri) return s.object_iri;
-  if (s.object_lit) {
-    const v = s.object_lit.v;
-    return typeof v === "string" ? v : JSON.stringify(v);
+  const lit = normaliseLiteral(s.object_lit);
+  if (!lit) return "";
+  const v = lit.v;
+  if (v == null) return "";
+  if (typeof v === "string") return v;
+  if (typeof v === "number" || typeof v === "boolean") return String(v);
+  try { return JSON.stringify(v); } catch { return String(v); }
+}
+
+/** Coerce raw `object_lit` to `{v, dt, lang}` regardless of how it was stored. */
+export function normaliseLiteral(
+  raw: unknown,
+): { v: unknown; dt: string; lang: string | null } | null {
+  if (raw == null) return null;
+  if (typeof raw === "string") {
+    if (raw.startsWith("{") || raw.startsWith("[")) {
+      try {
+        const p = JSON.parse(raw) as { v?: unknown; dt?: unknown; lang?: unknown };
+        return {
+          v:    p.v ?? raw,
+          dt:   typeof p.dt === "string" ? p.dt : "xsd:string",
+          lang: typeof p.lang === "string" ? p.lang : null,
+        };
+      } catch { /* fall through to bare-string */ }
+    }
+    return { v: raw, dt: "xsd:string", lang: null };
   }
-  return "";
+  const o = raw as { v?: unknown; dt?: unknown; lang?: unknown };
+  return {
+    v:    o.v ?? "",
+    dt:   typeof o.dt === "string" ? o.dt : "xsd:string",
+    lang: typeof o.lang === "string" ? o.lang : null,
+  };
 }
