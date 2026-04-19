@@ -232,25 +232,68 @@ pub async fn search(
     let limit = p.limit.unwrap_or(25).clamp(1, 100);
     let needle = format!("%{q}%");
 
-    // Distinct (subject, best label) pairs via rdfs:label / ex:label / ex:name.
+    // Union three sources of hits, distinct on subject:
+    //   1. label-like literal match (rdfs:label / ex:label / ex:name / name /
+    //      label / title — predicate registry is user-folksonomy so we cast a
+    //      wide net)
+    //   2. subject-IRI substring match (so a query of "ajax davis" finds
+    //      ex:ajax-davis-actor even before any name statement exists)
+    //   3. any literal object that matches ilike (cheap fallback; lets a
+    //      search for e.g. "IMDb" find subjects cited by IMDb even when the
+    //      label statement isn't there yet).
     let rows = match conn.query(
-        "with hits as (
+        "with label_hits as (
              select distinct on (subject)
                     subject,
                     object_lit ->> 'v' as label
                from donto_statement
-              where predicate in ('rdfs:label','ex:label','ex:name')
+              where predicate in (
+                      'rdfs:label','ex:label','ex:name','name','label','title'
+                    )
                 and object_lit is not null
                 and (object_lit ->> 'v') ilike $1
                 and upper(tx_time) is null
               order by subject, length(object_lit ->> 'v') asc
               limit 200
+         ),
+         iri_hits as (
+             select distinct subject, null::text as label
+               from donto_statement
+              where replace(replace(lower(subject), ':', ' '), '-', ' ')
+                      ilike replace(replace(lower($1), ':', ' '), '-', ' ')
+                and upper(tx_time) is null
+              limit 200
+         ),
+         lit_hits as (
+             select distinct subject, null::text as label
+               from donto_statement
+              where object_lit is not null
+                and (object_lit ->> 'v') ilike $1
+                and upper(tx_time) is null
+              limit 200
+         ),
+         hits as (
+             select subject, label from label_hits
+             union
+             select subject, label from iri_hits
+             union
+             select subject, label from lit_hits
          )
-         select h.subject, h.label,
+         select h.subject,
+                (select object_lit ->> 'v'
+                   from donto_statement s
+                  where s.subject = h.subject
+                    and s.predicate in (
+                          'rdfs:label','ex:label','ex:name','name','label','title'
+                        )
+                    and s.object_lit is not null
+                    and upper(s.tx_time) is null
+                  order by length(s.object_lit ->> 'v') asc
+                  limit 1) as label,
                 (select count(*)::bigint from donto_statement s
-                  where s.subject = h.subject) as row_count
-           from hits h
-          order by row_count desc
+                  where s.subject = h.subject and upper(s.tx_time) is null) as row_count
+           from (select distinct subject, max(label) as label from hits group by subject) h
+          order by row_count desc, h.subject
           limit $2",
         &[&needle, &limit],
     ).await {
