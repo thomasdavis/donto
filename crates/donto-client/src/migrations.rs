@@ -58,6 +58,10 @@ pub const MIGRATIONS: &[(&str, &str)] = &[
         "0012_match_scope_fix",
         include_str!("../../../sql/migrations/0012_match_scope_fix.sql"),
     ),
+    (
+        "0013_search_trgm",
+        include_str!("../../../sql/migrations/0013_search_trgm.sql"),
+    ),
 ];
 
 fn sha256_of(s: &str) -> Vec<u8> {

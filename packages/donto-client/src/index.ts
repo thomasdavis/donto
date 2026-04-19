@@ -43,20 +43,50 @@ export interface Statement {
 }
 
 export interface HistoryResponse {
-  subject: string;
-  count:   number;
+  subject:   string;
+  count:     number;
+  total:     number;
+  truncated: boolean;
+  limit:     number;
+  filters: {
+    context:   string | null;
+    predicate: string | null;
+    from:      string | null;
+    to:        string | null;
+    include_retracted: boolean;
+  };
   rows:    Statement[];
+}
+
+export interface HistoryQuery {
+  limit?:     number;
+  context?:   string;
+  predicate?: string;
+  from?:      string; // ISO date
+  to?:        string; // ISO date
+  include_retracted?: boolean;
 }
 
 export interface SubjectsResponse {
   subjects: { subject: string; count: number }[];
 }
 
+export interface SearchMatch {
+  subject: string;
+  label:   string | null;
+  count:   number;
+}
+export interface SearchResponse {
+  q: string;
+  matches: SearchMatch[];
+}
+
 export interface DontoClient {
   /** Base URL the client points at. */
   readonly baseUrl: string;
-  history(subject: string): Promise<HistoryResponse>;
+  history(subject: string, q?: HistoryQuery): Promise<HistoryResponse>;
   subjects(): Promise<SubjectsResponse>;
+  search(q: string, limit?: number): Promise<SearchResponse>;
   health(): Promise<boolean>;
   version(): Promise<{ service: string; version: string; dir: string }>;
 }
@@ -72,8 +102,26 @@ export function donto(baseUrl: string): DontoClient {
   }
   return {
     baseUrl: trimmed,
-    history: (s) => get<HistoryResponse>(`/history/${encodeURIComponent(s)}`),
+    history: (s, q) => {
+      const params = new URLSearchParams();
+      if (q?.limit != null)     params.set("limit", String(q.limit));
+      if (q?.context)           params.set("context", q.context);
+      if (q?.predicate)         params.set("predicate", q.predicate);
+      if (q?.from)              params.set("from", q.from);
+      if (q?.to)                params.set("to", q.to);
+      if (q?.include_retracted != null)
+        params.set("include_retracted", String(q.include_retracted));
+      const qs = params.toString();
+      return get<HistoryResponse>(
+        `/history/${encodeURIComponent(s)}` + (qs ? `?${qs}` : "")
+      );
+    },
     subjects: () => get<SubjectsResponse>(`/subjects`),
+    search:   (q, limit) => {
+      const url = `/search?q=${encodeURIComponent(q)}` +
+                  (limit ? `&limit=${limit}` : "");
+      return get<SearchResponse>(url);
+    },
     health:   async () => {
       const r = await fetch(`${trimmed}/health`);
       return r.ok && (await r.text()) === "ok";
