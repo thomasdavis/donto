@@ -81,12 +81,40 @@ export interface SearchResponse {
   matches: SearchMatch[];
 }
 
+export interface AuditEntry {
+  at:     string;
+  actor:  string | null;
+  action: string;
+  detail: unknown;
+}
+export interface CertificateInfo {
+  kind:        string;
+  rule_iri:    string | null;
+  inputs:      string[];
+  body:        unknown;
+  signature:   string | null;
+  produced_at: string;
+  verified_at: string | null;
+  verifier:    string | null;
+  verified_ok: boolean | null;
+}
+export interface StatementDetail {
+  statement:   Statement;
+  lineage:     { sources: Statement[]; derived: Statement[] };
+  audit:       AuditEntry[];
+  certificate: CertificateInfo | null;
+  siblings:    Statement[];
+}
+
 export interface DontoClient {
   /** Base URL the client points at. */
   readonly baseUrl: string;
   history(subject: string, q?: HistoryQuery): Promise<HistoryResponse>;
   subjects(): Promise<SubjectsResponse>;
   search(q: string, limit?: number): Promise<SearchResponse>;
+  /** Everything about one statement: lineage (both directions),
+   *  audit log, certificate, sibling statements. */
+  statement(id: string): Promise<StatementDetail>;
   health(): Promise<boolean>;
   version(): Promise<{ service: string; version: string; dir: string }>;
 }
@@ -122,6 +150,7 @@ export function donto(baseUrl: string): DontoClient {
                   (limit ? `&limit=${limit}` : "");
       return get<SearchResponse>(url);
     },
+    statement: (id) => get<StatementDetail>(`/statement/${encodeURIComponent(id)}`),
     health:   async () => {
       const r = await fetch(`${trimmed}/health`);
       return r.ok && (await r.text()) === "ok";

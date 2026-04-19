@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   donto,
   type DontoClient,
@@ -13,7 +13,9 @@ import { Stratigraph } from "./Stratigraph";
 import { Rashomon } from "./Rashomon";
 import { Probe } from "./Probe";
 import { RowStream } from "./RowStream";
+import { StatementDetail } from "./StatementDetail";
 import { makeColorMap } from "@/lib/colors";
+import { useUrlState } from "@/lib/url-state";
 
 interface Props { dontosrvUrl: string; }
 
@@ -28,12 +30,42 @@ function fmtClock(t: number): string {
     "." + String(d.getMilliseconds()).padStart(3, "0");
 }
 
-export function FacesShell({ dontosrvUrl }: Props) {
+// URL params: ?subject=<iri>&ctx=<context>&pred=<predicate>&sel=<uuid>
+const URL_DEFAULTS = { subject: "", ctx: "", pred: "", sel: "" };
+
+export function FacesShell(props: Props) {
+  return (
+    <Suspense fallback={<div className="p-6 text-muted text-xs">loading…</div>}>
+      <FacesInner {...props} />
+    </Suspense>
+  );
+}
+
+function FacesInner({ dontosrvUrl }: Props) {
   const client = useMemo<DontoClient>(() => donto(dontosrvUrl), [dontosrvUrl]);
   const colorOf = useRef(makeColorMap()).current;
 
+  const [urlParams, setUrlParams] = useUrlState(URL_DEFAULTS);
+
   const [subjects, setSubjects] = useState<SubjectsResponse["subjects"]>([]);
-  const [subject, setSubject] = useState<string | null>(null);
+  // subject is URL-backed. Null until /health + first /subjects probe.
+  const urlSubject = urlParams.subject || null;
+  const [subject, setSubjectLocal] = useState<string | null>(urlSubject);
+  // Push subject changes to URL whenever they happen.
+  const setSubject = useCallback((s: string | null) => {
+    setSubjectLocal(s);
+    setUrlParams({ subject: s ?? "", sel: "" });
+  }, [setUrlParams]);
+  // Reconcile URL → local when the URL changes (back/forward).
+  useEffect(() => {
+    if (urlSubject !== subject) setSubjectLocal(urlSubject);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [urlSubject]);
+  // Selected statement (for the detail drawer).
+  const selected = urlParams.sel || null;
+  const setSelected = useCallback((id: string | null) => {
+    setUrlParams({ sel: id ?? "" });
+  }, [setUrlParams]);
   const [rows,    setRows]    = useState<Statement[]>([]);
   const [total,   setTotal]   = useState(0);
   const [truncated, setTruncated] = useState(false);
@@ -47,9 +79,11 @@ export function FacesShell({ dontosrvUrl }: Props) {
   const [searchHits, setSearchHits] = useState<SearchMatch[]>([]);
   const [searchOpen, setSearchOpen] = useState(false);
   const [searching,  setSearching]  = useState(false);
-  // Server-side filters.
-  const [filterContext,   setFilterContext]   = useState<string>("");
-  const [filterPredicate, setFilterPredicate] = useState<string>("");
+  // Server-side filters — URL-backed so a filtered view is shareable.
+  const filterContext   = urlParams.ctx  ?? "";
+  const filterPredicate = urlParams.pred ?? "";
+  const setFilterContext   = useCallback((c: string) => setUrlParams({ ctx:  c }), [setUrlParams]);
+  const setFilterPredicate = useCallback((p: string) => setUrlParams({ pred: p }), [setUrlParams]);
   const [limit,           setLimit]           = useState<number>(2000);
 
   const logEvent = useCallback((kind: LogEvent["kind"], msg: string) => {
@@ -361,10 +395,11 @@ export function FacesShell({ dontosrvUrl }: Props) {
         </div>
         <div className="grid grid-cols-2 min-h-0">
           <Panel title="probe" legend="click anywhere · cursor = (valid_time, tx_time)">
-            <Probe rows={rows} bounds={bounds} cursor={cursor} onCursor={setCursor} colorOf={colorOf} />
+            <Probe rows={rows} bounds={bounds} cursor={cursor} onCursor={setCursor}
+                   colorOf={colorOf} onSelect={setSelected} />
           </Panel>
-          <Panel title="row stream" legend="every statement, every polarity, no resolution">
-            <RowStream rows={rows} colorOf={colorOf} />
+          <Panel title="row stream" legend="every statement, every polarity, no resolution · click a row for full detail">
+            <RowStream rows={rows} colorOf={colorOf} onSelect={setSelected} />
           </Panel>
         </div>
         <section className="border-t border-rule bg-panel text-[11px] overflow-auto px-3 py-1.5 font-mono">
@@ -384,6 +419,14 @@ export function FacesShell({ dontosrvUrl }: Props) {
           ))}
         </section>
       </main>
+
+      <StatementDetail
+        dontosrvUrl={dontosrvUrl}
+        statementId={selected}
+        onClose={() => setSelected(null)}
+        onSelect={(id) => setSelected(id)}
+        onPickSubject={(iri) => setSubject(iri)}
+      />
     </div>
   );
 }

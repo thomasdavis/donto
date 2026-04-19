@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { Suspense, useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import {
   donto,
@@ -8,52 +8,69 @@ import {
   type SearchMatch,
   type Statement,
 } from "@donto/client";
-import { distinctContexts, renderObject } from "@donto/client/history";
+import { renderObject } from "@donto/client/history";
 import { Timeline } from "./Timeline";
 import { VerticalTimeline } from "./VerticalTimeline";
+import { StatementDetail } from "./StatementDetail";
 import { fmtDate, makeColorMap } from "@/lib/colors";
+import { useUrlState } from "@/lib/url-state";
 
 interface Props { dontosrvUrl: string; }
 
+const URL_DEFAULTS = {
+  subject: "ex:darnell-brooks",
+  view:    "vertical",
+  order:   "newest",
+  ctx:     "",
+  pred:    "",
+  sel:     "",
+};
+
 /**
- * ExploreShell — the discovery half of donto-faces.
+ * ExploreShell — vertical / horizontal timeline view, sidebar, click-an-
+ * item-see-everything detail drawer. All meaningful state is mirrored to
+ * the URL so any view is shareable by copying the address bar.
  *
- * Top: a Knight Lab TimelineJS view of the current subject. Each context is
- *   a swim-lane; each statement is an event with valid_lo / valid_hi as the
- *   span (or tx_lo as a fallback for undated rows). Retracted rows get a
- *   red-tinted background.
- *
- * Sidebar: subject metadata + drill-downs you can't do from the lenses page:
- *   - The subject's labels (and *which sources* gave each).
- *   - All contexts the subject appears in, with row counts.
- *   - All predicates, frequency-sorted; click to focus the timeline.
- *   - Lineage destinations: derived statements that cite this subject.
- *   - Related subjects: things this subject's statements link out to.
+ * URL params:
+ *   ?subject=<iri>     subject IRI in scope
+ *   ?view=vertical|horizontal
+ *   ?order=newest|oldest
+ *   ?ctx=<context>     context filter
+ *   ?pred=<predicate>  predicate filter
+ *   ?sel=<uuid>        opens the StatementDetail drawer
  */
-export function ExploreShell({ dontosrvUrl }: Props) {
+export function ExploreShell(props: Props) {
+  // useSearchParams must be inside a Suspense boundary in Next 15+/16.
+  return (
+    <Suspense fallback={<div className="p-6 text-muted text-xs">loading…</div>}>
+      <ExploreInner {...props} />
+    </Suspense>
+  );
+}
+
+function ExploreInner({ dontosrvUrl }: Props) {
   const client = useMemo<DontoClient>(() => donto(dontosrvUrl), [dontosrvUrl]);
   const colorOf = useMemo(() => makeColorMap(), []);
 
-  const [subject, setSubject] = useState<string>("ex:darnell-brooks");
-  const [rows,    setRows]    = useState<Statement[]>([]);
-  const [total,   setTotal]   = useState(0);
-  const [status,  setStatus]  = useState("loading…");
+  const [params, setParams] = useUrlState(URL_DEFAULTS);
+  const subject         = params.subject || URL_DEFAULTS.subject;
+  const view            = (params.view === "horizontal" ? "horizontal" : "vertical") as "vertical" | "horizontal";
+  const newestFirst     = params.order !== "oldest";
+  const filterContext   = params.ctx ?? "";
+  const filterPredicate = params.pred ?? "";
+  const selected        = params.sel || null;
 
-  // Search box.
+  const [rows,   setRows]   = useState<Statement[]>([]);
+  const [total,  setTotal]  = useState(0);
+  const [status, setStatus] = useState("loading…");
+
+  // Search box (local state — only the picked subject hits the URL).
   const [searchQ,    setSearchQ]    = useState("");
   const [searchHits, setSearchHits] = useState<SearchMatch[]>([]);
   const [searchOpen, setSearchOpen] = useState(false);
   const [searching,  setSearching]  = useState(false);
 
-  // Filter state — the timeline shows whatever the filters select.
-  const [filterContext,   setFilterContext]   = useState("");
-  const [filterPredicate, setFilterPredicate] = useState("");
-  // View mode: vertical is default. Segmented control in the header swaps.
-  const [view,        setView]        = useState<"vertical" | "horizontal">("vertical");
-  const [newestFirst, setNewestFirst] = useState(true);
-
-  // Load subject history (full, no filters first; filtering is client-side
-  // here because the side-panel needs the totals).
+  // Load subject history.
   useEffect(() => {
     let cancelled = false;
     setStatus(`loading ${subject}…`);
@@ -94,12 +111,31 @@ export function ExploreShell({ dontosrvUrl }: Props) {
     return () => clearTimeout(handle);
   }, [searchQ, client]);
 
+  // ── State setters that flow through the URL ───────────────────────────
+  const goToSubject = useCallback((iri: string) => {
+    setParams({ subject: iri, ctx: "", pred: "", sel: "" });
+  }, [setParams]);
+  const setView = useCallback((v: "vertical" | "horizontal") => {
+    setParams({ view: v });
+  }, [setParams]);
+  const setOrder = useCallback((newest: boolean) => {
+    setParams({ order: newest ? "newest" : "oldest" });
+  }, [setParams]);
+  const setFilterContext = useCallback((c: string) => {
+    setParams({ ctx: c });
+  }, [setParams]);
+  const setFilterPredicate = useCallback((p: string) => {
+    setParams({ pred: p });
+  }, [setParams]);
+  const setSelected = useCallback((id: string | null) => {
+    setParams({ sel: id ?? "" });
+  }, [setParams]);
+
   const pickSearchHit = useCallback((m: SearchMatch) => {
-    setSubject(m.subject);
+    goToSubject(m.subject);
     setSearchQ(m.label ?? m.subject);
     setSearchOpen(false);
-    setFilterContext(""); setFilterPredicate("");
-  }, []);
+  }, [goToSubject]);
 
   // ── Derived views over the row set ─────────────────────────────────────
   const contexts = useMemo(() => {
@@ -120,12 +156,10 @@ export function ExploreShell({ dontosrvUrl }: Props) {
     );
   }, [rows]);
 
-  // Related subjects: distinct IRI objects this subject points to.
   const related = useMemo(() => {
     const counts = new Map<string, { iri: string; predicates: Set<string>; count: number }>();
     for (const r of rows) {
       if (!r.object_iri) continue;
-      // Skip blank nodes and trivial datatype IRIs.
       if (r.object_iri.startsWith("_:") || r.object_iri.startsWith("xsd:")) continue;
       const e = counts.get(r.object_iri) ?? { iri: r.object_iri, predicates: new Set(), count: 0 };
       e.predicates.add(r.predicate);
@@ -138,7 +172,6 @@ export function ExploreShell({ dontosrvUrl }: Props) {
       .slice(0, 30);
   }, [rows, subject]);
 
-  // Subject's headline label: the single most-common rdfs:label literal.
   const headlineLabel = useMemo<string | null>(() => {
     const ll = labels
       .map((r) => (r.object_lit && (r.object_lit.v as string)) || null)
@@ -149,7 +182,6 @@ export function ExploreShell({ dontosrvUrl }: Props) {
     return [...freq.entries()].sort((a, b) => b[1] - a[1])[0]![0];
   }, [labels]);
 
-  // Apply client-side filters to the rows handed to the Timeline.
   const filteredRows = useMemo(() => {
     return rows.filter((r) =>
       (!filterContext   || r.context   === filterContext) &&
@@ -176,7 +208,7 @@ export function ExploreShell({ dontosrvUrl }: Props) {
                 const v = (e.target as HTMLInputElement).value.trim();
                 if (!v) return;
                 if (searchHits.length === 1) pickSearchHit(searchHits[0]!);
-                else setSubject(v);
+                else goToSubject(v);
                 setSearchOpen(false);
               } else if (e.key === "Escape") setSearchOpen(false);
             }}
@@ -205,7 +237,6 @@ export function ExploreShell({ dontosrvUrl }: Props) {
             </div>
           )}
         </div>
-        {/* View toggle — vertical default, horizontal optional. */}
         <div className="flex border border-rule">
           <button
             type="button"
@@ -225,16 +256,21 @@ export function ExploreShell({ dontosrvUrl }: Props) {
         {view === "vertical" && (
           <button
             type="button"
-            onClick={() => setNewestFirst(!newestFirst)}
+            onClick={() => setOrder(!newestFirst)}
             className="bg-paper border border-rule text-muted hover:text-ink px-2 py-1 text-[11px]"
             title="flip chronological order"
           >{newestFirst ? "↑ newest" : "↓ oldest"}</button>
         )}
+        <button
+          type="button"
+          onClick={() => navigator.clipboard?.writeText(window.location.href)}
+          className="bg-paper border border-rule text-muted hover:text-ink px-2 py-1 text-[11px]"
+          title="copy shareable URL"
+        >🔗 copy link</button>
         <span className="text-muted text-xs ml-auto">{status}</span>
       </header>
 
       <div className="grid grid-cols-[1fr_360px] flex-1 min-h-0">
-        {/* TIMELINE — vertical default; switch to horizontal vis-timeline. */}
         <div className={view === "vertical" ? "min-h-0 overflow-hidden" : "overflow-auto"}>
           {filteredRows.length === 0
             ? <div className="p-6 text-muted text-sm">
@@ -248,15 +284,16 @@ export function ExploreShell({ dontosrvUrl }: Props) {
                   subjectIri={subject}
                   subjectLabel={headlineLabel ?? undefined}
                   newestFirst={newestFirst}
+                  onSelect={setSelected}
                 />
               : <Timeline
                   rows={filteredRows}
                   subjectIri={subject}
                   subjectLabel={headlineLabel ?? undefined}
+                  onSelect={setSelected}
                 />}
         </div>
 
-        {/* SIDEBAR */}
         <aside className="border-l border-rule bg-panel overflow-auto p-4 space-y-5 text-xs">
           <Section title="subject">
             <div className="text-ink text-[13px]">{headlineLabel ?? "(unlabelled)"}</div>
@@ -270,13 +307,16 @@ export function ExploreShell({ dontosrvUrl }: Props) {
             <Section title={`labels · ${labels.length}`}>
               <div className="space-y-1">
                 {labels.slice(0, 12).map((r) => (
-                  <div key={r.statement_id} className="leading-tight">
+                  <button key={r.statement_id}
+                    onClick={() => setSelected(r.statement_id)}
+                    className="block text-left leading-tight w-full hover:bg-rule px-2 py-0.5"
+                  >
                     <span className="text-ink">
                       “{r.object_lit && (r.object_lit.v as string)}”
-                    </span>
-                    {" "}<span className="text-muted text-[10px]">— {r.context}</span>
+                    </span>{" "}
+                    <span className="text-muted text-[10px]">— {r.context}</span>
                     {r.tx_hi && <span className="text-retract"> · retracted</span>}
-                  </div>
+                  </button>
                 ))}
                 {labels.length > 12 && (
                   <div className="text-muted text-[10px]">… +{labels.length - 12} more</div>
@@ -333,7 +373,7 @@ export function ExploreShell({ dontosrvUrl }: Props) {
                 {related.map((r) => (
                   <li key={r.iri}>
                     <button
-                      onClick={() => { setSubject(r.iri); setSearchQ(""); }}
+                      onClick={() => goToSubject(r.iri)}
                       className="block w-full text-left px-2 py-0.5 hover:bg-rule"
                     >
                       <div className="text-ink truncate">{r.iri}</div>
@@ -362,19 +402,32 @@ export function ExploreShell({ dontosrvUrl }: Props) {
                 .sort((a, b) => Date.parse(b.tx_lo) - Date.parse(a.tx_lo))
                 .slice(0, 6)
                 .map((r) => (
-                <li key={r.statement_id} className="leading-tight">
-                  <div className="text-ink">{r.predicate}</div>
-                  <div className="text-muted truncate">{renderObject(r)}</div>
-                  <div className="text-muted text-[10px]">
-                    believed {fmtDate(Date.parse(r.tx_lo))}
-                    {r.tx_hi ? ` → ${fmtDate(Date.parse(r.tx_hi))} (retracted)` : ""}
-                  </div>
+                <li key={r.statement_id}>
+                  <button
+                    onClick={() => setSelected(r.statement_id)}
+                    className="block text-left leading-tight w-full hover:bg-rule px-2 py-0.5"
+                  >
+                    <div className="text-ink">{r.predicate}</div>
+                    <div className="text-muted truncate">{renderObject(r)}</div>
+                    <div className="text-muted text-[10px]">
+                      believed {fmtDate(Date.parse(r.tx_lo))}
+                      {r.tx_hi ? ` → ${fmtDate(Date.parse(r.tx_hi))} (retracted)` : ""}
+                    </div>
+                  </button>
                 </li>
               ))}
             </ul>
           </Section>
         </aside>
       </div>
+
+      <StatementDetail
+        dontosrvUrl={dontosrvUrl}
+        statementId={selected}
+        onClose={() => setSelected(null)}
+        onSelect={(id) => setSelected(id)}
+        onPickSubject={(iri) => goToSubject(iri)}
+      />
     </div>
   );
 }

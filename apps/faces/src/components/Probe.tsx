@@ -11,6 +11,8 @@ interface Props {
   cursor: CubePoint | null;
   onCursor: (p: CubePoint) => void;
   colorOf: (ctx: string) => string;
+  /** Called when the user clicks a statement card in the side pane. */
+  onSelect?: (statementId: string) => void;
 }
 
 /**
@@ -18,7 +20,7 @@ interface Props {
  * The right pane lists every statement that's live at that exact (valid, tx)
  * coordinate — i.e. donto_match for the chosen point of belief.
  */
-export function Probe({ rows, bounds, cursor, onCursor, colorOf }: Props) {
+export function Probe({ rows, bounds, cursor, onCursor, colorOf, onSelect }: Props) {
   const ref = useRef<HTMLDivElement>(null);
   const planeRef = useRef<SVGSVGElement>(null);
   const [size, setSize] = useState({ w: 360, h: 400 });
@@ -119,7 +121,8 @@ export function Probe({ rows, bounds, cursor, onCursor, colorOf }: Props) {
           matching.map((r) => (
             <div
               key={r.statement_id}
-              className="border-l-2 px-2.5 py-1.5 my-1.5 bg-[#181612]"
+              onClick={() => onSelect?.(r.statement_id)}
+              className="border-l-2 px-2.5 py-1.5 my-1.5 bg-[#181612] cursor-pointer hover:bg-[#222018]"
               style={{ borderLeftColor: colorOf(r.context) }}
             >
               <div>

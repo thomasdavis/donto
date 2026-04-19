@@ -267,3 +267,177 @@ pub async fn search(
 
     Json(json!({"q": q, "matches": matches})).into_response()
 }
+
+/// GET /statement/:id  — everything about one statement.
+///
+/// Returns the row itself + lineage (both directions), audit-log entries,
+/// and certificate (if attached). Used by the click-an-item detail drawer
+/// in donto-faces; also useful from a terminal.
+pub async fn statement_detail(
+    State(state): State<Arc<AppState>>,
+    Path(id_str): Path<String>,
+) -> impl IntoResponse {
+    let id = match uuid::Uuid::parse_str(&id_str) {
+        Ok(u) => u,
+        Err(_) => return Json(json!({"error": "not a uuid", "id": id_str})).into_response(),
+    };
+    let pool = state.client.pool();
+    let conn = match pool.get().await {
+        Ok(c) => c,
+        Err(e) => return Json(json!({"error": e.to_string()})).into_response(),
+    };
+
+    // 1. The statement itself.
+    let row = match conn.query_opt(
+        "select s.statement_id, s.subject, s.predicate, s.object_iri, s.object_lit,
+                s.context,
+                donto_polarity(s.flags), donto_maturity(s.flags),
+                lower(s.valid_time), upper(s.valid_time),
+                lower(s.tx_time),    upper(s.tx_time),
+                coalesce(
+                    (select array_agg(source_stmt) from donto_stmt_lineage l
+                      where l.statement_id = s.statement_id),
+                    '{}'::uuid[]) as lineage
+           from donto_statement s
+          where s.statement_id = $1",
+        &[&id],
+    ).await {
+        Ok(Some(r)) => r,
+        Ok(None)    => return Json(json!({"error": "not found", "id": id_str})).into_response(),
+        Err(e)      => return Json(json!({"error": format!("statement query: {e}")})).into_response(),
+    };
+
+    let row_json = json!({
+        "statement_id": row.get::<_, uuid::Uuid>(0),
+        "subject":      row.get::<_, String>(1),
+        "predicate":    row.get::<_, String>(2),
+        "object_iri":   row.get::<_, Option<String>>(3),
+        "object_lit":   row.get::<_, Option<Value>>(4),
+        "context":      row.get::<_, String>(5),
+        "polarity":     row.get::<_, String>(6),
+        "maturity":     row.get::<_, i32>(7),
+        "valid_lo":     row.get::<_, Option<chrono::NaiveDate>>(8),
+        "valid_hi":     row.get::<_, Option<chrono::NaiveDate>>(9),
+        "tx_lo":        row.get::<_, chrono::DateTime<chrono::Utc>>(10),
+        "tx_hi":        row.get::<_, Option<chrono::DateTime<chrono::Utc>>>(11),
+        "lineage":      row.get::<_, Vec<uuid::Uuid>>(12),
+    });
+
+    // 2. Lineage sources (full statement rows for each id this row was
+    //    derived from). Indexed lookup, fast.
+    let sources: Vec<Value> = match conn.query(
+        "select s.statement_id, s.subject, s.predicate, s.object_iri, s.object_lit,
+                s.context, donto_polarity(s.flags), donto_maturity(s.flags),
+                lower(s.valid_time), upper(s.valid_time),
+                lower(s.tx_time),    upper(s.tx_time)
+           from donto_stmt_lineage l
+           join donto_statement   s on s.statement_id = l.source_stmt
+          where l.statement_id = $1",
+        &[&id],
+    ).await {
+        Ok(rs) => rs.iter().map(brief_row).collect(),
+        Err(_) => vec![],
+    };
+
+    // 3. Reverse lineage — statements that were derived FROM this one.
+    let derived: Vec<Value> = match conn.query(
+        "select s.statement_id, s.subject, s.predicate, s.object_iri, s.object_lit,
+                s.context, donto_polarity(s.flags), donto_maturity(s.flags),
+                lower(s.valid_time), upper(s.valid_time),
+                lower(s.tx_time),    upper(s.tx_time)
+           from donto_stmt_lineage l
+           join donto_statement   s on s.statement_id = l.statement_id
+          where l.source_stmt = $1
+          limit 50",
+        &[&id],
+    ).await {
+        Ok(rs) => rs.iter().map(brief_row).collect(),
+        Err(_) => vec![],
+    };
+
+    // 4. Audit log entries for this statement.
+    let audit: Vec<Value> = match conn.query(
+        "select at, actor, action, detail
+           from donto_audit
+          where statement_id = $1
+          order by at asc",
+        &[&id],
+    ).await {
+        Ok(rs) => rs.iter().map(|r| json!({
+            "at":     r.get::<_, chrono::DateTime<chrono::Utc>>(0),
+            "actor":  r.get::<_, Option<String>>(1),
+            "action": r.get::<_, String>(2),
+            "detail": r.get::<_, Value>(3),
+        })).collect(),
+        Err(_) => vec![],
+    };
+
+    // 5. Certificate (if any).
+    let certificate = match conn.query_opt(
+        "select kind, rule_iri, inputs, body, signature, produced_at,
+                verified_at, verifier, verified_ok
+           from donto_stmt_certificate
+          where statement_id = $1",
+        &[&id],
+    ).await {
+        Ok(Some(r)) => Some(json!({
+            "kind":        r.get::<_, String>(0),
+            "rule_iri":    r.get::<_, Option<String>>(1),
+            "inputs":      r.get::<_, Vec<uuid::Uuid>>(2),
+            "body":        r.get::<_, Value>(3),
+            "signature":   r.get::<_, Option<Vec<u8>>>(4).map(hex::encode),
+            "produced_at": r.get::<_, chrono::DateTime<chrono::Utc>>(5),
+            "verified_at": r.get::<_, Option<chrono::DateTime<chrono::Utc>>>(6),
+            "verifier":    r.get::<_, Option<String>>(7),
+            "verified_ok": r.get::<_, Option<bool>>(8),
+        })),
+        _ => None,
+    };
+
+    // 6. Sibling statements: same subject + same predicate, all polarities,
+    //    all contexts. Useful for "what else has been said about this?"
+    let siblings: Vec<Value> = match conn.query(
+        "select statement_id, subject, predicate, object_iri, object_lit,
+                context, donto_polarity(flags), donto_maturity(flags),
+                lower(valid_time), upper(valid_time),
+                lower(tx_time),    upper(tx_time)
+           from donto_statement
+          where subject   = $1
+            and predicate = $2
+            and statement_id <> $3
+          order by lower(tx_time) desc
+          limit 50",
+        &[&row_json["subject"].as_str().unwrap_or(""),
+          &row_json["predicate"].as_str().unwrap_or(""),
+          &id],
+    ).await {
+        Ok(rs) => rs.iter().map(brief_row).collect(),
+        Err(_) => vec![],
+    };
+
+    Json(json!({
+        "statement":   row_json,
+        "lineage":     {"sources": sources, "derived": derived},
+        "audit":       audit,
+        "certificate": certificate,
+        "siblings":    siblings,
+    })).into_response()
+}
+
+/// Brief row encoder (no lineage column — saves a join per row).
+fn brief_row(r: &tokio_postgres::Row) -> Value {
+    json!({
+        "statement_id": r.get::<_, uuid::Uuid>(0),
+        "subject":      r.get::<_, String>(1),
+        "predicate":    r.get::<_, String>(2),
+        "object_iri":   r.get::<_, Option<String>>(3),
+        "object_lit":   r.get::<_, Option<Value>>(4),
+        "context":      r.get::<_, String>(5),
+        "polarity":     r.get::<_, String>(6),
+        "maturity":     r.get::<_, i32>(7),
+        "valid_lo":     r.get::<_, Option<chrono::NaiveDate>>(8),
+        "valid_hi":     r.get::<_, Option<chrono::NaiveDate>>(9),
+        "tx_lo":        r.get::<_, chrono::DateTime<chrono::Utc>>(10),
+        "tx_hi":        r.get::<_, Option<chrono::DateTime<chrono::Utc>>>(11),
+    })
+}

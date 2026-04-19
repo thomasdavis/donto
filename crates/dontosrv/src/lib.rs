@@ -43,6 +43,7 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/subjects", get(history::list_subjects))
         .route("/search",   get(history::search))
         .route("/history/:subject", get(history::handle))
+        .route("/statement/:id",    get(history::statement_detail))
         .layer(axum::middleware::from_fn(cors))
         .with_state(state)
 }

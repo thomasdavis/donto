@@ -15,8 +15,12 @@ const ROW_H   = 76;   // matches card height in px
 const OVERSCAN = 8;
 
 export function RowStream({
-  rows, colorOf,
-}: { rows: Statement[]; colorOf: (ctx: string) => string }) {
+  rows, colorOf, onSelect,
+}: {
+  rows: Statement[];
+  colorOf: (ctx: string) => string;
+  onSelect?: (statementId: string) => void;
+}) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [start, setStart] = useState(0);
   const [containerH, setContainerH] = useState(400);
@@ -57,11 +61,12 @@ export function RowStream({
             return (
               <div
                 key={r.statement_id}
-                className="border-l-2 px-3 py-1.5 my-2 bg-[#181612]"
+                onClick={() => onSelect?.(r.statement_id)}
+                className="border-l-2 px-3 py-1.5 my-2 bg-[#181612] cursor-pointer hover:bg-[#222018]"
                 style={{
                   height: ROW_H - 8,
                   borderLeftColor: r.tx_hi ? "#b0584c"
-                    : (r.lineage.length ? "#82a45a" : colorOf(r.context)),
+                    : ((r.lineage ?? []).length ? "#82a45a" : colorOf(r.context)),
                   opacity: r.tx_hi ? 0.6 : 1,
                   overflow: "hidden",
                 }}
@@ -76,7 +81,7 @@ export function RowStream({
                   {" · "}
                   believed {fmtDate(tlo)}
                   {thi ? ` → ${fmtDate(thi)} (retracted)` : " → present"}
-                  {r.lineage.length > 0 && <> · lineage: {r.lineage.length}</>}
+                  {(r.lineage ?? []).length > 0 && <> · lineage: {(r.lineage ?? []).length}</>}
                 </div>
               </div>
             );
