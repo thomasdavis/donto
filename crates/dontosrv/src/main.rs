@@ -13,7 +13,7 @@ struct Args {
         default_value = "postgres://donto:donto@127.0.0.1:55432/donto"
     )]
     dsn: String,
-    #[arg(long, default_value = "127.0.0.1:7878")]
+    #[arg(long, env = "DONTO_BIND", default_value = "127.0.0.1:7878")]
     bind: String,
     /// Path to the donto_engine Lean binary. Omit to disable the Lean
     /// shape backend (built-in shapes still work; `lean:` IRIs return
