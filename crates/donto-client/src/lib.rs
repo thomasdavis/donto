@@ -17,5 +17,8 @@ pub mod scope;
 pub use client::DontoClient;
 pub use error::{Error, Result};
 pub use migrations::apply_migrations;
-pub use model::{Literal, Object, Polarity, Statement, StatementInput};
+pub use model::{
+    Literal, Object, Polarity, Reaction, ReactionKind, ShapeVerdict, Statement, StatementInput,
+    TextMatch, TimeBucket,
+};
 pub use scope::ContextScope;

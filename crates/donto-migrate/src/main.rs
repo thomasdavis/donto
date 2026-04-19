@@ -9,6 +9,7 @@ use donto_client::DontoClient;
 use std::path::PathBuf;
 
 mod genealogy;
+mod relink;
 
 #[derive(Parser, Debug)]
 #[command(version, about = "donto migrators")]
@@ -35,6 +36,18 @@ enum Cmd {
         #[arg(long)]
         dry_run: bool,
     },
+    /// Additive re-link: re-walk a genealogy research.db and emit any
+    /// provenance the original `genealogy` migrator dropped (full claim
+    /// fields, documents, chunks, discrepancies, hypotheses, token_usage,
+    /// ingestion_log, persons, …) as new subjects without touching any
+    /// existing donto rows.
+    GenealogyRelink {
+        sqlite: PathBuf,
+        /// Root context IRI (must match the original migration to keep
+        /// cross-references aligned).
+        #[arg(long, default_value = "ctx:genealogy/research-db")]
+        root: String,
+    },
 }
 
 #[tokio::main]
@@ -51,6 +64,10 @@ async fn main() -> Result<()> {
             dry_run,
         } => {
             let report = genealogy::migrate(&client, &sqlite, &root, dry_run).await?;
+            println!("{}", serde_json::to_string_pretty(&report)?);
+        }
+        Cmd::GenealogyRelink { sqlite, root } => {
+            let report = relink::relink(&client, &sqlite, &root).await?;
             println!("{}", serde_json::to_string_pretty(&report)?);
         }
     }

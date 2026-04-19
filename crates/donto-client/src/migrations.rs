@@ -62,6 +62,42 @@ pub const MIGRATIONS: &[(&str, &str)] = &[
         "0013_search_trgm",
         include_str!("../../../sql/migrations/0013_search_trgm.sql"),
     ),
+    (
+        "0014_retrofit",
+        include_str!("../../../sql/migrations/0014_retrofit.sql"),
+    ),
+    (
+        "0015_shape_annotations",
+        include_str!("../../../sql/migrations/0015_shape_annotations.sql"),
+    ),
+    (
+        "0016_valid_time_buckets",
+        include_str!("../../../sql/migrations/0016_valid_time_buckets.sql"),
+    ),
+    (
+        "0017_reactions",
+        include_str!("../../../sql/migrations/0017_reactions.sql"),
+    ),
+    (
+        "0018_aggregates",
+        include_str!("../../../sql/migrations/0018_aggregates.sql"),
+    ),
+    (
+        "0019_fts",
+        include_str!("../../../sql/migrations/0019_fts.sql"),
+    ),
+    (
+        "0020_bitemporal_canonicals",
+        include_str!("../../../sql/migrations/0020_bitemporal_canonicals.sql"),
+    ),
+    (
+        "0021_same_meaning",
+        include_str!("../../../sql/migrations/0021_same_meaning.sql"),
+    ),
+    (
+        "0022_context_env",
+        include_str!("../../../sql/migrations/0022_context_env.sql"),
+    ),
 ];
 
 fn sha256_of(s: &str) -> Vec<u8> {

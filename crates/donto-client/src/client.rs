@@ -3,7 +3,10 @@
 //! Backed by `deadpool_postgres` so callers can share one pool across tasks.
 
 use crate::error::{Error, Result};
-use crate::model::{Literal, Object, Polarity, Statement, StatementInput};
+use crate::model::{
+    Literal, Object, Polarity, Reaction, ReactionKind, ShapeVerdict, Statement, StatementInput,
+    TextMatch, TimeBucket,
+};
 use crate::scope::ContextScope;
 
 use chrono::{DateTime, NaiveDate, Utc};
@@ -110,6 +113,47 @@ impl DontoClient {
         Ok(row.get::<_, i32>(0) as usize)
     }
 
+    /// Alexandria §3.4: retrofit ingest. Explicit backdated valid_time, a
+    /// required reason, and tx_time pinned to now(). The reason lands on a
+    /// side overlay so "why was this retrofitted?" is queryable.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn assert_retrofit(
+        &self,
+        s: &StatementInput,
+        reason: &str,
+        actor: Option<&str>,
+    ) -> Result<Uuid> {
+        if s.valid_lo.is_none() && s.valid_hi.is_none() {
+            return Err(Error::Invalid(
+                "assert_retrofit: at least one of valid_lo/valid_hi is required".into(),
+            ));
+        }
+        let (object_iri, object_lit): (Option<&str>, Option<Json>) = match &s.object {
+            Object::Iri(i) => (Some(i.as_str()), None),
+            Object::Literal(l) => (None, Some(serde_json::to_value(l)?)),
+        };
+        let c = self.pool.get().await?;
+        let row = c
+            .query_one(
+                "select donto_assert_retrofit($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)",
+                &[
+                    &s.subject,
+                    &s.predicate,
+                    &object_iri,
+                    &object_lit,
+                    &s.valid_lo,
+                    &s.valid_hi,
+                    &reason,
+                    &s.context,
+                    &s.polarity.as_str(),
+                    &(s.maturity as i32),
+                    &actor,
+                ],
+            )
+            .await?;
+        Ok(row.get::<_, Uuid>(0))
+    }
+
     /// Close the transaction-time of an open statement. Returns true if a row
     /// was actually closed.
     pub async fn retract(&self, statement_id: Uuid) -> Result<bool> {
@@ -189,6 +233,303 @@ impl DontoClient {
             )
             .await?;
         rows.into_iter().map(row_to_statement).collect()
+    }
+
+    /// Alexandria §3.5: attach a shape-report annotation to a statement.
+    /// Returns the annotation_id.
+    pub async fn attach_shape_report(
+        &self,
+        statement_id: Uuid,
+        shape_iri: &str,
+        verdict: ShapeVerdict,
+        context: &str,
+        detail: Option<&Json>,
+    ) -> Result<i64> {
+        let c = self.pool.get().await?;
+        let row = c
+            .query_one(
+                "select donto_attach_shape_report($1, $2, $3, $4, $5)",
+                &[
+                    &statement_id,
+                    &shape_iri,
+                    &verdict.as_str(),
+                    &context,
+                    &detail,
+                ],
+            )
+            .await?;
+        Ok(row.get::<_, i64>(0))
+    }
+
+    /// Alexandria §3.5: does a statement currently carry an annotation with
+    /// the given verdict (and optionally a specific shape)?
+    pub async fn has_shape_verdict(
+        &self,
+        statement_id: Uuid,
+        verdict: ShapeVerdict,
+        shape_iri: Option<&str>,
+    ) -> Result<bool> {
+        let c = self.pool.get().await?;
+        let row = c
+            .query_one(
+                "select donto_has_shape_verdict($1, $2, $3)",
+                &[&statement_id, &verdict.as_str(), &shape_iri],
+            )
+            .await?;
+        Ok(row.get::<_, bool>(0))
+    }
+
+    /// Alexandria §3.8: time-binned aggregation over valid_time. The
+    /// bucket interval must be pure months/years OR pure days.
+    pub async fn valid_time_buckets(
+        &self,
+        bucket_pg_interval: &str,
+        epoch: NaiveDate,
+        predicate: Option<&str>,
+        subject: Option<&str>,
+        scope: Option<&ContextScope>,
+    ) -> Result<Vec<TimeBucket>> {
+        let scope_json: Option<Json> = scope.map(|s| s.to_json());
+        let c = self.pool.get().await?;
+        let sql = "select bucket_start, bucket_end, cnt \
+             from donto_valid_time_buckets($1, $2, $3, $4, $5)";
+        let rows = c
+            .query(
+                sql,
+                &[
+                    &bucket_pg_interval,
+                    &epoch,
+                    &predicate,
+                    &subject,
+                    &scope_json,
+                ],
+            )
+            .await?;
+        rows.into_iter()
+            .map(|r| {
+                Ok(TimeBucket {
+                    bucket_start: r.try_get("bucket_start")?,
+                    bucket_end: r.try_get("bucket_end")?,
+                    count: r.try_get::<_, i64>("cnt")? as u64,
+                })
+            })
+            .collect()
+    }
+
+    /// Alexandria §3.2: attach a reaction to a statement. Returns the
+    /// reaction's own statement_id.
+    pub async fn react(
+        &self,
+        source: Uuid,
+        kind: ReactionKind,
+        object_iri: Option<&str>,
+        context: &str,
+        actor: Option<&str>,
+    ) -> Result<Uuid> {
+        let c = self.pool.get().await?;
+        let row = c
+            .query_one(
+                "select donto_react($1, $2, $3, $4, $5)",
+                &[&source, &kind.as_str(), &object_iri, &context, &actor],
+            )
+            .await?;
+        Ok(row.get::<_, Uuid>(0))
+    }
+
+    /// Alexandria §3.2: enumerate current reactions to a statement.
+    pub async fn reactions_for(&self, statement_id: Uuid) -> Result<Vec<Reaction>> {
+        let c = self.pool.get().await?;
+        let rows = c
+            .query(
+                "select reaction_id, kind, object_iri, context, polarity \
+                 from donto_reactions_for($1)",
+                &[&statement_id],
+            )
+            .await?;
+        rows.into_iter()
+            .map(|r| {
+                let kind_str: String = r.try_get("kind")?;
+                let kind = ReactionKind::parse(&kind_str)
+                    .ok_or_else(|| Error::Invalid(format!("unknown reaction kind {kind_str}")))?;
+                let polarity_str: String = r.try_get("polarity")?;
+                let polarity = Polarity::parse(&polarity_str)
+                    .ok_or_else(|| Error::Invalid(format!("unknown polarity {polarity_str}")))?;
+                Ok(Reaction {
+                    reaction_id: r.try_get("reaction_id")?,
+                    kind,
+                    object_iri: r.try_get("object_iri")?,
+                    context: r.try_get("context")?,
+                    polarity,
+                })
+            })
+            .collect()
+    }
+
+    /// Alexandria §3.3: compute endorsement weights over a scope and write
+    /// them into `into_ctx` as Level-3 derived statements. Returns the
+    /// number of weight rows emitted.
+    pub async fn compute_endorsement_weights(
+        &self,
+        scope: Option<&ContextScope>,
+        into_ctx: &str,
+        actor: Option<&str>,
+    ) -> Result<u64> {
+        let scope_json: Option<Json> = scope.map(|s| s.to_json());
+        let c = self.pool.get().await?;
+        let row = c
+            .query_one(
+                "select donto_compute_endorsement_weights($1, $2, $3)",
+                &[&scope_json, &into_ctx, &actor],
+            )
+            .await?;
+        Ok(row.get::<_, i64>(0) as u64)
+    }
+
+    /// Alexandria §3.3: ephemeral weight read — DontoQL `with weights(scope=ctx)`.
+    pub async fn weight_of(
+        &self,
+        statement_id: Uuid,
+        scope: Option<&ContextScope>,
+    ) -> Result<i64> {
+        let scope_json: Option<Json> = scope.map(|s| s.to_json());
+        let c = self.pool.get().await?;
+        let row = c
+            .query_one(
+                "select donto_weight_of($1, $2)",
+                &[&statement_id, &scope_json],
+            )
+            .await?;
+        Ok(row.get::<_, i64>(0))
+    }
+
+    /// Alexandria §3.9: websearch-style full-text search over literal
+    /// values. `query_lang` is the BCP-47 primary subtag (default "en").
+    #[allow(clippy::too_many_arguments)]
+    pub async fn match_text(
+        &self,
+        query: &str,
+        query_lang: Option<&str>,
+        scope: Option<&ContextScope>,
+        predicate: Option<&str>,
+        polarity: Option<Polarity>,
+        min_maturity: u8,
+    ) -> Result<Vec<TextMatch>> {
+        let scope_json: Option<Json> = scope.map(|s| s.to_json());
+        let polarity_str: Option<&str> = polarity.map(Polarity::as_str);
+        let lang = query_lang.unwrap_or("en");
+        let c = self.pool.get().await?;
+        let rows = c
+            .query(
+                "select statement_id, subject, predicate, object_lit, context, \
+                        polarity, maturity, score \
+                 from donto_match_text($1, $2, $3, $4, $5, $6)",
+                &[
+                    &query,
+                    &lang,
+                    &scope_json,
+                    &predicate,
+                    &polarity_str,
+                    &(min_maturity as i32),
+                ],
+            )
+            .await?;
+        rows.into_iter()
+            .map(|r| {
+                let object_lit_json: Json = r.try_get("object_lit")?;
+                let object_lit: Literal = serde_json::from_value(object_lit_json)?;
+                let polarity_s: String = r.try_get("polarity")?;
+                let polarity = Polarity::parse(&polarity_s)
+                    .ok_or_else(|| Error::Invalid(format!("unknown polarity {polarity_s}")))?;
+                let maturity: i32 = r.try_get("maturity")?;
+                Ok(TextMatch {
+                    statement_id: r.try_get("statement_id")?,
+                    subject: r.try_get("subject")?,
+                    predicate: r.try_get("predicate")?,
+                    object_lit,
+                    context: r.try_get("context")?,
+                    polarity,
+                    maturity: maturity as u8,
+                    score: r.try_get("score")?,
+                })
+            })
+            .collect()
+    }
+
+    /// Alexandria §3.6: assert that two statements share the same meaning.
+    /// Emits both directions (the predicate is symmetric).
+    pub async fn align_meaning(
+        &self,
+        stmt_a: Uuid,
+        stmt_b: Uuid,
+        context: &str,
+        actor: Option<&str>,
+    ) -> Result<()> {
+        let c = self.pool.get().await?;
+        c.execute(
+            "select donto_align_meaning($1, $2, $3, $4)",
+            &[&stmt_a, &stmt_b, &context, &actor],
+        )
+        .await?;
+        Ok(())
+    }
+
+    /// Alexandria §3.6: transitive closure of SameMeaning edges from a
+    /// statement. Includes the starting statement itself.
+    pub async fn meaning_cluster(
+        &self,
+        stmt_id: Uuid,
+        scope: Option<&ContextScope>,
+    ) -> Result<Vec<Uuid>> {
+        let scope_json: Option<Json> = scope.map(|s| s.to_json());
+        let c = self.pool.get().await?;
+        let rows = c
+            .query(
+                "select statement_id from donto_meaning_cluster($1, $2)",
+                &[&stmt_id, &scope_json],
+            )
+            .await?;
+        Ok(rows.into_iter().map(|r| r.get::<_, Uuid>(0)).collect())
+    }
+
+    /// Alexandria §3.7: set an environment key on a context.
+    pub async fn context_env_set(
+        &self,
+        context: &str,
+        key: &str,
+        value: &Json,
+        actor: Option<&str>,
+    ) -> Result<()> {
+        let c = self.pool.get().await?;
+        c.execute(
+            "select donto_context_env_set($1, $2, $3, $4)",
+            &[&context, &key, &value, &actor],
+        )
+        .await?;
+        Ok(())
+    }
+
+    /// Alexandria §3.7: read an environment key on a context (None if absent).
+    pub async fn context_env_get(&self, context: &str, key: &str) -> Result<Option<Json>> {
+        let c = self.pool.get().await?;
+        let row = c
+            .query_one(
+                "select donto_context_env_get($1, $2)",
+                &[&context, &key],
+            )
+            .await?;
+        Ok(row.get::<_, Option<Json>>(0))
+    }
+
+    /// Alexandria §3.7: contexts whose env overlay matches every required pair.
+    pub async fn contexts_with_env(&self, required: &Json) -> Result<Vec<String>> {
+        let c = self.pool.get().await?;
+        let rows = c
+            .query(
+                "select context_iri from donto_contexts_with_env($1)",
+                &[&required],
+            )
+            .await?;
+        Ok(rows.into_iter().map(|r| r.get::<_, String>(0)).collect())
     }
 
     /// Return the unique contexts visible under a scope. Useful for sanity tests.

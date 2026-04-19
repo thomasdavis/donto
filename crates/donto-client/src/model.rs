@@ -77,6 +77,73 @@ impl Literal {
     }
 }
 
+/// Alexandria §3.2: canonical reaction kinds.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ReactionKind {
+    Endorses,
+    Rejects,
+    Cites,
+    Supersedes,
+}
+
+impl ReactionKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            ReactionKind::Endorses => "endorses",
+            ReactionKind::Rejects => "rejects",
+            ReactionKind::Cites => "cites",
+            ReactionKind::Supersedes => "supersedes",
+        }
+    }
+    pub fn parse(s: &str) -> Option<Self> {
+        Some(match s {
+            "endorses" => ReactionKind::Endorses,
+            "rejects" => ReactionKind::Rejects,
+            "cites" => ReactionKind::Cites,
+            "supersedes" => ReactionKind::Supersedes,
+            _ => return None,
+        })
+    }
+}
+
+/// Alexandria §3.2: a reaction returned by `reactions_for`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Reaction {
+    pub reaction_id: Uuid,
+    pub kind: ReactionKind,
+    pub object_iri: Option<String>,
+    pub context: String,
+    pub polarity: Polarity,
+}
+
+/// Alexandria §3.5: verdict of a shape annotation attached to a statement.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ShapeVerdict {
+    Pass,
+    Warn,
+    Violate,
+}
+
+impl ShapeVerdict {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            ShapeVerdict::Pass => "pass",
+            ShapeVerdict::Warn => "warn",
+            ShapeVerdict::Violate => "violate",
+        }
+    }
+    pub fn parse(s: &str) -> Option<Self> {
+        Some(match s {
+            "pass" => ShapeVerdict::Pass,
+            "warn" => ShapeVerdict::Warn,
+            "violate" => ShapeVerdict::Violate,
+            _ => return None,
+        })
+    }
+}
+
 /// Either an IRI object or a literal object. Exactly one is set per statement.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(untagged)]
@@ -139,6 +206,27 @@ impl StatementInput {
         self.valid_hi = hi;
         self
     }
+}
+
+/// Alexandria §3.9: one match from a full-text search.
+#[derive(Debug, Clone, PartialEq)]
+pub struct TextMatch {
+    pub statement_id: Uuid,
+    pub subject: String,
+    pub predicate: String,
+    pub object_lit: Literal,
+    pub context: String,
+    pub polarity: Polarity,
+    pub maturity: u8,
+    pub score: f32,
+}
+
+/// Alexandria §3.8: one row of a `donto_valid_time_buckets` projection.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TimeBucket {
+    pub bucket_start: NaiveDate,
+    pub bucket_end: NaiveDate,
+    pub count: u64,
 }
 
 /// A row returned by [`crate::DontoClient::match_pattern`].

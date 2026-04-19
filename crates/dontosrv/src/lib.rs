@@ -6,6 +6,7 @@
 pub mod certificates;
 pub mod dir;
 pub mod history;
+pub mod ingest;
 pub mod lean;
 pub mod rules;
 pub mod shapes;
@@ -44,6 +45,10 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/search",   get(history::search))
         .route("/history/:subject", get(history::handle))
         .route("/statement/:id",    get(history::statement_detail))
+        .route("/contexts/ensure",  post(ingest::ensure_context))
+        .route("/assert",           post(ingest::assert))
+        .route("/assert/batch",     post(ingest::assert_batch))
+        .route("/retract",          post(ingest::retract))
         .layer(axum::middleware::from_fn(cors))
         .with_state(state)
 }

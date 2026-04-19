@@ -8,7 +8,8 @@
   "exports": {
     ".":         "./src/index.ts",
     "./history": "./src/history.ts",
-    "./shapes":  "./src/shapes.ts"
+    "./shapes":  "./src/shapes.ts",
+    "./ingest":  "./src/ingest.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit",
