@@ -551,8 +551,10 @@ fn parse_date(s: &str) -> Option<NaiveDate> {
     NaiveDate::parse_from_str(s, "%Y-%m-%d").ok()
         .or_else(|| NaiveDate::parse_from_str(s, "%Y/%m/%d").ok())
         .or_else(|| {
-            // Some dates are timestamps; try the date prefix.
-            if s.len() >= 10 { NaiveDate::parse_from_str(&s[..10], "%Y-%m-%d").ok() } else { None }
+            // Some dates are timestamps like "1943-01-14T00:00:00Z"; try
+            // the date prefix. `get` is UTF-8-safe: returns None if byte
+            // 10 lands mid-codepoint (e.g. Cyrillic "14 января 1943").
+            s.get(..10).and_then(|p| NaiveDate::parse_from_str(p, "%Y-%m-%d").ok())
         })
 }
 fn has_table(conn: &Connection, name: &str) -> Result<bool> {

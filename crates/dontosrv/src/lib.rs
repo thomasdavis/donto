@@ -9,6 +9,7 @@ pub mod dir;
 pub mod history;
 pub mod ingest;
 pub mod lean;
+pub mod react;
 pub mod rules;
 pub mod shapes;
 
@@ -52,6 +53,8 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/assert",           post(ingest::assert))
         .route("/assert/batch",     post(ingest::assert_batch))
         .route("/retract",          post(ingest::retract))
+        .route("/react",            post(react::react))
+        .route("/reactions/:id",    get(react::list_reactions))
         .layer(axum::middleware::from_fn(cors))
         .with_state(state)
 }
