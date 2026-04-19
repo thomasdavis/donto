@@ -36,7 +36,7 @@ pub async fn list_predicates(State(s): State<Arc<AppState>>) -> impl IntoRespons
         .query(
             "select predicate, count(*)::bigint
                from donto_statement
-              where tx_hi is null
+              where upper(tx_time) is null
               group by predicate
               order by count(*) desc
               limit 500",
@@ -93,7 +93,7 @@ pub async fn list_contexts(State(s): State<Arc<AppState>>) -> impl IntoResponse 
           left join (
                     select context, count(*)::bigint as n
                       from donto_statement
-                     where tx_hi is null
+                     where upper(tx_time) is null
                      group by context
                ) sc on sc.context = c.iri
               order by coalesce(sc.n, 0) desc, c.iri
