@@ -1,5 +1,5 @@
 /** Write-side HTTP surface: /contexts/ensure, /assert, /assert/batch, /retract. */
-import { donto, type Literal, type Polarity } from "./index.js";
+import { donto, type Literal, type Polarity } from "./index";
 
 export interface EnsureContextInput {
   iri: string;

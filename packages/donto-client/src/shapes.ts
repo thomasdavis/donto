@@ -1,5 +1,5 @@
 /** Shape validation client. */
-import { donto } from "./index.js";
+import { donto } from "./index";
 
 export interface Violation {
   focus:    string;

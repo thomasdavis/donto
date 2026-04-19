@@ -106,11 +106,31 @@ export interface StatementDetail {
   siblings:    Statement[];
 }
 
+export interface PredicateRow {
+  predicate: string;
+  count:     number;
+}
+export interface PredicatesResponse {
+  predicates: PredicateRow[];
+}
+
+export interface ContextRow {
+  context: string;
+  kind:    string;
+  mode:    string;
+  count:   number;
+}
+export interface ContextsResponse {
+  contexts: ContextRow[];
+}
+
 export interface DontoClient {
   /** Base URL the client points at. */
   readonly baseUrl: string;
   history(subject: string, q?: HistoryQuery): Promise<HistoryResponse>;
   subjects(): Promise<SubjectsResponse>;
+  predicates(): Promise<PredicatesResponse>;
+  contexts(): Promise<ContextsResponse>;
   search(q: string, limit?: number): Promise<SearchResponse>;
   /** Everything about one statement: lineage (both directions),
    *  audit log, certificate, sibling statements. */
@@ -144,7 +164,9 @@ export function donto(baseUrl: string): DontoClient {
         `/history/${encodeURIComponent(s)}` + (qs ? `?${qs}` : "")
       );
     },
-    subjects: () => get<SubjectsResponse>(`/subjects`),
+    subjects:  () => get<SubjectsResponse>(`/subjects`),
+    predicates: () => get<PredicatesResponse>(`/predicates`),
+    contexts:  () => get<ContextsResponse>(`/contexts`),
     search:   (q, limit) => {
       const url = `/search?q=${encodeURIComponent(q)}` +
                   (limit ? `&limit=${limit}` : "");

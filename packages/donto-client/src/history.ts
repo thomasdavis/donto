@@ -1,7 +1,7 @@
 /** Subject-history helpers and bitemporal cube types. */
-export type { Statement, HistoryResponse } from "./index.js";
+export type { Statement, HistoryResponse } from "./index";
 
-import type { Statement } from "./index.js";
+import type { Statement } from "./index";
 
 /**
  * A single point in donto's bitemporal cube.

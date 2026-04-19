@@ -3,6 +3,7 @@
 
 #![warn(missing_debug_implementations, rust_2018_idioms)]
 
+pub mod browse;
 pub mod certificates;
 pub mod dir;
 pub mod history;
@@ -45,6 +46,8 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/search",   get(history::search))
         .route("/history/:subject", get(history::handle))
         .route("/statement/:id",    get(history::statement_detail))
+        .route("/contexts",         get(browse::list_contexts))
+        .route("/predicates",       get(browse::list_predicates))
         .route("/contexts/ensure",  post(ingest::ensure_context))
         .route("/assert",           post(ingest::assert))
         .route("/assert/batch",     post(ingest::assert_batch))
