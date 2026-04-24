@@ -21,6 +21,9 @@ Cargo.lock.bak
 # Postgres data dirs (if anyone runs PG locally)
 pgdata/
 
+# Database backups
+backups/
+
 # Node / Next.js / Turborepo
 node_modules/
 .next/

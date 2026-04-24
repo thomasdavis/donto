@@ -244,3 +244,150 @@ pub struct Statement {
     pub tx_lo: DateTime<Utc>,
     pub tx_hi: Option<DateTime<Utc>>,
 }
+
+/// Evidence substrate: a document in the evidence layer.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Document {
+    pub document_id: Uuid,
+    pub iri: String,
+    pub media_type: String,
+    pub label: Option<String>,
+    pub source_url: Option<String>,
+    pub language: Option<String>,
+}
+
+/// Evidence substrate: a revision of a document.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DocumentRevision {
+    pub revision_id: Uuid,
+    pub document_id: Uuid,
+    pub revision_number: i32,
+    pub parser_version: Option<String>,
+}
+
+/// Evidence substrate: a span over a document revision.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Span {
+    pub span_id: Uuid,
+    pub revision_id: Uuid,
+    pub span_type: String,
+    pub start_offset: Option<i32>,
+    pub end_offset: Option<i32>,
+    pub surface_text: Option<String>,
+}
+
+/// Evidence substrate: an extraction run's provenance.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ExtractionRun {
+    pub run_id: Uuid,
+    pub model_id: Option<String>,
+    pub model_version: Option<String>,
+    pub status: String,
+    pub source_revision_id: Option<Uuid>,
+    pub context: Option<String>,
+}
+
+/// Evidence substrate: a link between a statement and evidence.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EvidenceLink {
+    pub link_id: Uuid,
+    pub statement_id: Uuid,
+    pub link_type: String,
+    pub target_document_id: Option<Uuid>,
+    pub target_revision_id: Option<Uuid>,
+    pub target_span_id: Option<Uuid>,
+    pub target_annotation_id: Option<Uuid>,
+    pub target_run_id: Option<Uuid>,
+    pub target_statement_id: Option<Uuid>,
+    pub confidence: Option<f64>,
+}
+
+/// Evidence substrate: an agent.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Agent {
+    pub agent_id: Uuid,
+    pub iri: String,
+    pub label: Option<String>,
+    pub agent_type: String,
+    pub model_id: Option<String>,
+}
+
+/// Argumentation: relation between statements.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ArgumentRelation {
+    Supports,
+    Rebuts,
+    Undercuts,
+    Endorses,
+    Supersedes,
+    Qualifies,
+    PotentiallySame,
+    SameReferent,
+    SameEvent,
+}
+
+impl ArgumentRelation {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Supports => "supports",
+            Self::Rebuts => "rebuts",
+            Self::Undercuts => "undercuts",
+            Self::Endorses => "endorses",
+            Self::Supersedes => "supersedes",
+            Self::Qualifies => "qualifies",
+            Self::PotentiallySame => "potentially_same",
+            Self::SameReferent => "same_referent",
+            Self::SameEvent => "same_event",
+        }
+    }
+    pub fn parse(s: &str) -> Option<Self> {
+        Some(match s {
+            "supports" => Self::Supports,
+            "rebuts" => Self::Rebuts,
+            "undercuts" => Self::Undercuts,
+            "endorses" => Self::Endorses,
+            "supersedes" => Self::Supersedes,
+            "qualifies" => Self::Qualifies,
+            "potentially_same" => Self::PotentiallySame,
+            "same_referent" => Self::SameReferent,
+            "same_event" => Self::SameEvent,
+            _ => return None,
+        })
+    }
+}
+
+/// Proof obligation status.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ObligationStatus {
+    Open,
+    InProgress,
+    Resolved,
+    Rejected,
+    Deferred,
+}
+
+impl ObligationStatus {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Open => "open",
+            Self::InProgress => "in_progress",
+            Self::Resolved => "resolved",
+            Self::Rejected => "rejected",
+            Self::Deferred => "deferred",
+        }
+    }
+}
+
+/// A proof obligation.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProofObligation {
+    pub obligation_id: Uuid,
+    pub statement_id: Option<Uuid>,
+    pub obligation_type: String,
+    pub status: String,
+    pub priority: i16,
+    pub context: String,
+    pub assigned_agent: Option<Uuid>,
+}

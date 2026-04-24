@@ -94,6 +94,111 @@ extension_sql_file!(
     name = "0012_match_scope_fix",
     requires = ["0003_functions", "0005_presets"]
 );
+extension_sql_file!(
+    "../../../sql/migrations/0013_search_trgm.sql",
+    name = "0013_search_trgm",
+    requires = ["0001_core"]
+);
+extension_sql_file!(
+    "../../../sql/migrations/0014_retrofit.sql",
+    name = "0014_retrofit",
+    requires = ["0001_core", "0003_functions"]
+);
+extension_sql_file!(
+    "../../../sql/migrations/0015_shape_annotations.sql",
+    name = "0015_shape_annotations",
+    requires = ["0001_core", "0003_functions"]
+);
+extension_sql_file!(
+    "../../../sql/migrations/0016_valid_time_buckets.sql",
+    name = "0016_valid_time_buckets",
+    requires = ["0001_core", "0003_functions", "0005_presets"]
+);
+extension_sql_file!(
+    "../../../sql/migrations/0017_reactions.sql",
+    name = "0017_reactions",
+    requires = ["0001_core", "0003_functions", "0006_predicate"]
+);
+extension_sql_file!(
+    "../../../sql/migrations/0018_aggregates.sql",
+    name = "0018_aggregates",
+    requires = ["0001_core", "0003_functions"]
+);
+extension_sql_file!(
+    "../../../sql/migrations/0019_fts.sql",
+    name = "0019_fts",
+    requires = ["0001_core"]
+);
+extension_sql_file!(
+    "../../../sql/migrations/0020_bitemporal_canonicals.sql",
+    name = "0020_bitemporal_canonicals",
+    requires = ["0006_predicate"]
+);
+extension_sql_file!(
+    "../../../sql/migrations/0021_same_meaning.sql",
+    name = "0021_same_meaning",
+    requires = ["0001_core", "0006_predicate", "0003_functions"]
+);
+extension_sql_file!(
+    "../../../sql/migrations/0022_context_env.sql",
+    name = "0022_context_env",
+    requires = ["0001_core", "0003_functions"]
+);
+extension_sql_file!(
+    "../../../sql/migrations/0023_documents.sql",
+    name = "0023_documents",
+    requires = ["0001_core"]
+);
+extension_sql_file!(
+    "../../../sql/migrations/0024_document_revisions.sql",
+    name = "0024_document_revisions",
+    requires = ["0023_documents"]
+);
+extension_sql_file!(
+    "../../../sql/migrations/0025_spans.sql",
+    name = "0025_spans",
+    requires = ["0024_document_revisions", "0013_search_trgm"]
+);
+extension_sql_file!(
+    "../../../sql/migrations/0026_annotations.sql",
+    name = "0026_annotations",
+    requires = ["0025_spans"]
+);
+extension_sql_file!(
+    "../../../sql/migrations/0027_annotation_edges.sql",
+    name = "0027_annotation_edges",
+    requires = ["0026_annotations"]
+);
+extension_sql_file!(
+    "../../../sql/migrations/0028_extraction_runs.sql",
+    name = "0028_extraction_runs",
+    requires = ["0024_document_revisions", "0001_core", "0003_functions", "0026_annotations"]
+);
+extension_sql_file!(
+    "../../../sql/migrations/0029_evidence_links.sql",
+    name = "0029_evidence_links",
+    requires = ["0001_core", "0023_documents", "0024_document_revisions", "0025_spans", "0026_annotations", "0028_extraction_runs"]
+);
+extension_sql_file!(
+    "../../../sql/migrations/0030_agents.sql",
+    name = "0030_agents",
+    requires = ["0001_core", "0003_functions"]
+);
+extension_sql_file!(
+    "../../../sql/migrations/0031_arguments.sql",
+    name = "0031_arguments",
+    requires = ["0001_core", "0003_functions", "0030_agents"]
+);
+extension_sql_file!(
+    "../../../sql/migrations/0032_proof_obligations.sql",
+    name = "0032_proof_obligations",
+    requires = ["0001_core", "0003_functions", "0030_agents"]
+);
+extension_sql_file!(
+    "../../../sql/migrations/0033_vectors.sql",
+    name = "0033_vectors",
+    requires = ["0001_core"]
+);
 
 // ---------------------------------------------------------------------------
 // Rust-implemented helpers. These shadow the plpgsql versions of the same

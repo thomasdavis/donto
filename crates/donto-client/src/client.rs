@@ -544,6 +544,247 @@ impl DontoClient {
             .await?;
         Ok(rows.into_iter().map(|r| r.get::<_, String>(0)).collect())
     }
+
+    // --- Evidence substrate: documents ---
+
+    pub async fn ensure_document(
+        &self,
+        iri: &str,
+        media_type: &str,
+        label: Option<&str>,
+        source_url: Option<&str>,
+        language: Option<&str>,
+    ) -> Result<Uuid> {
+        let c = self.pool.get().await?;
+        let row = c
+            .query_one(
+                "select donto_ensure_document($1, $2, $3, $4, $5)",
+                &[&iri, &media_type, &label, &source_url, &language],
+            )
+            .await?;
+        Ok(row.get::<_, Uuid>(0))
+    }
+
+    pub async fn add_revision(
+        &self,
+        document_id: Uuid,
+        body: Option<&str>,
+        body_bytes: Option<&[u8]>,
+        parser_version: Option<&str>,
+    ) -> Result<Uuid> {
+        let c = self.pool.get().await?;
+        let row = c
+            .query_one(
+                "select donto_add_revision($1, $2, $3, $4)",
+                &[&document_id, &body, &body_bytes, &parser_version],
+            )
+            .await?;
+        Ok(row.get::<_, Uuid>(0))
+    }
+
+    // --- Evidence substrate: spans ---
+
+    pub async fn create_char_span(
+        &self,
+        revision_id: Uuid,
+        start: i32,
+        end: i32,
+        surface_text: Option<&str>,
+    ) -> Result<Uuid> {
+        let c = self.pool.get().await?;
+        let row = c
+            .query_one(
+                "select donto_create_char_span($1, $2, $3, $4)",
+                &[&revision_id, &start, &end, &surface_text],
+            )
+            .await?;
+        Ok(row.get::<_, Uuid>(0))
+    }
+
+    // --- Evidence substrate: extraction runs ---
+
+    pub async fn start_extraction(
+        &self,
+        model_id: Option<&str>,
+        model_version: Option<&str>,
+        source_revision_id: Option<Uuid>,
+        context: Option<&str>,
+    ) -> Result<Uuid> {
+        let c = self.pool.get().await?;
+        let row = c
+            .query_one(
+                "select donto_start_extraction($1, $2, $3, $4)",
+                &[&model_id, &model_version, &source_revision_id, &context],
+            )
+            .await?;
+        Ok(row.get::<_, Uuid>(0))
+    }
+
+    pub async fn complete_extraction(
+        &self,
+        run_id: Uuid,
+        status: &str,
+        statements_emitted: Option<i64>,
+        annotations_emitted: Option<i64>,
+    ) -> Result<()> {
+        let c = self.pool.get().await?;
+        c.execute(
+            "select donto_complete_extraction($1, $2, $3, $4)",
+            &[&run_id, &status, &statements_emitted, &annotations_emitted],
+        )
+        .await?;
+        Ok(())
+    }
+
+    // --- Evidence substrate: evidence links ---
+
+    pub async fn link_evidence_span(
+        &self,
+        statement_id: Uuid,
+        span_id: Uuid,
+        link_type: &str,
+        confidence: Option<f64>,
+        context: Option<&str>,
+    ) -> Result<Uuid> {
+        let c = self.pool.get().await?;
+        let row = c
+            .query_one(
+                "select donto_link_evidence_span($1, $2, $3, $4, $5)",
+                &[&statement_id, &span_id, &link_type, &confidence, &context],
+            )
+            .await?;
+        Ok(row.get::<_, Uuid>(0))
+    }
+
+    pub async fn link_evidence_run(
+        &self,
+        statement_id: Uuid,
+        run_id: Uuid,
+        link_type: &str,
+        context: Option<&str>,
+    ) -> Result<Uuid> {
+        let c = self.pool.get().await?;
+        let row = c
+            .query_one(
+                "select donto_link_evidence_run($1, $2, $3, $4)",
+                &[&statement_id, &run_id, &link_type, &context],
+            )
+            .await?;
+        Ok(row.get::<_, Uuid>(0))
+    }
+
+    // --- Evidence substrate: agents ---
+
+    pub async fn ensure_agent(
+        &self,
+        iri: &str,
+        agent_type: &str,
+        label: Option<&str>,
+        model_id: Option<&str>,
+    ) -> Result<Uuid> {
+        let c = self.pool.get().await?;
+        let row = c
+            .query_one(
+                "select donto_ensure_agent($1, $2, $3, $4)",
+                &[&iri, &agent_type, &label, &model_id],
+            )
+            .await?;
+        Ok(row.get::<_, Uuid>(0))
+    }
+
+    pub async fn bind_agent_context(
+        &self,
+        agent_id: Uuid,
+        context: &str,
+        role: &str,
+    ) -> Result<()> {
+        let c = self.pool.get().await?;
+        c.execute(
+            "select donto_bind_agent_context($1, $2, $3)",
+            &[&agent_id, &context, &role],
+        )
+        .await?;
+        Ok(())
+    }
+
+    // --- Evidence substrate: arguments ---
+
+    pub async fn assert_argument(
+        &self,
+        source: Uuid,
+        target: Uuid,
+        relation: &str,
+        context: &str,
+        strength: Option<f64>,
+        agent_id: Option<Uuid>,
+        evidence: Option<&Json>,
+    ) -> Result<Uuid> {
+        let c = self.pool.get().await?;
+        let row = c
+            .query_one(
+                "select donto_assert_argument($1, $2, $3, $4, $5, $6, $7)",
+                &[&source, &target, &relation, &context, &strength, &agent_id, &evidence],
+            )
+            .await?;
+        Ok(row.get::<_, Uuid>(0))
+    }
+
+    // --- Evidence substrate: proof obligations ---
+
+    pub async fn emit_obligation(
+        &self,
+        statement_id: Uuid,
+        obligation_type: &str,
+        context: &str,
+        priority: i16,
+        detail: Option<&Json>,
+        assigned_agent: Option<Uuid>,
+    ) -> Result<Uuid> {
+        let c = self.pool.get().await?;
+        let row = c
+            .query_one(
+                "select donto_emit_obligation($1, $2, $3, $4, $5, $6)",
+                &[&statement_id, &obligation_type, &context, &priority, &detail, &assigned_agent],
+            )
+            .await?;
+        Ok(row.get::<_, Uuid>(0))
+    }
+
+    pub async fn resolve_obligation(
+        &self,
+        obligation_id: Uuid,
+        resolved_by: Option<Uuid>,
+        status: &str,
+    ) -> Result<bool> {
+        let c = self.pool.get().await?;
+        let row = c
+            .query_one(
+                "select donto_resolve_obligation($1, $2, $3)",
+                &[&obligation_id, &resolved_by, &status],
+            )
+            .await?;
+        Ok(row.get::<_, bool>(0))
+    }
+
+    // --- Evidence substrate: vectors ---
+
+    pub async fn store_vector(
+        &self,
+        subject_type: &str,
+        subject_id: Uuid,
+        model_id: &str,
+        model_version: Option<&str>,
+        embedding: &[f32],
+    ) -> Result<Uuid> {
+        let c = self.pool.get().await?;
+        let row = c
+            .query_one(
+                "select donto_store_vector($1, $2, $3, $4, $5)",
+                &[&subject_type, &subject_id, &model_id, &model_version, &embedding],
+            )
+            .await?;
+        Ok(row.get::<_, Uuid>(0))
+    }
 }
 
 fn stmt_to_json(s: &StatementInput) -> Json {

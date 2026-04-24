@@ -74,6 +74,69 @@ pub enum Directive {
         subject_stmt: uuid::Uuid,
         body: serde_json::Value,
     },
+    IngestDocument {
+        iri: String,
+        media_type: String,
+        label: Option<String>,
+        source_url: Option<String>,
+        language: Option<String>,
+    },
+    IngestRevision {
+        document_iri: String,
+        body: Option<String>,
+        parser_version: Option<String>,
+    },
+    CreateSpan {
+        revision_id: uuid::Uuid,
+        span_type: String,
+        start_offset: Option<i32>,
+        end_offset: Option<i32>,
+        surface_text: Option<String>,
+    },
+    CreateAnnotation {
+        span_id: uuid::Uuid,
+        space_iri: String,
+        feature: String,
+        value: Option<String>,
+        confidence: Option<f64>,
+    },
+    StartExtraction {
+        model_id: Option<String>,
+        source_revision_id: Option<uuid::Uuid>,
+        context: Option<String>,
+    },
+    CompleteExtraction {
+        run_id: uuid::Uuid,
+        status: String,
+    },
+    LinkEvidence {
+        statement_id: uuid::Uuid,
+        link_type: String,
+        target: serde_json::Value,
+    },
+    RegisterAgent {
+        iri: String,
+        agent_type: String,
+        label: Option<String>,
+        model_id: Option<String>,
+    },
+    AssertArgument {
+        source: uuid::Uuid,
+        target: uuid::Uuid,
+        relation: String,
+        context: String,
+        strength: Option<f64>,
+    },
+    EmitObligation {
+        statement_id: uuid::Uuid,
+        obligation_type: String,
+        context: String,
+        priority: Option<i16>,
+    },
+    ResolveObligation {
+        obligation_id: uuid::Uuid,
+        status: String,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -133,6 +196,17 @@ pub async fn handle(Json(env): Json<DirEnvelope>) -> impl IntoResponse {
             Directive::DeriveRequest { .. } => "derive_request",
             Directive::DeriveResponse { .. } => "derive_response",
             Directive::Certificate { .. } => "certificate",
+            Directive::IngestDocument { .. } => "ingest_document",
+            Directive::IngestRevision { .. } => "ingest_revision",
+            Directive::CreateSpan { .. } => "create_span",
+            Directive::CreateAnnotation { .. } => "create_annotation",
+            Directive::StartExtraction { .. } => "start_extraction",
+            Directive::CompleteExtraction { .. } => "complete_extraction",
+            Directive::LinkEvidence { .. } => "link_evidence",
+            Directive::RegisterAgent { .. } => "register_agent",
+            Directive::AssertArgument { .. } => "assert_argument",
+            Directive::EmitObligation { .. } => "emit_obligation",
+            Directive::ResolveObligation { .. } => "resolve_obligation",
         })
         .collect();
     Json(json!({

@@ -3,12 +3,17 @@
 
 #![warn(missing_debug_implementations, rust_2018_idioms)]
 
+pub mod agents;
+pub mod arguments;
 pub mod browse;
 pub mod certificates;
 pub mod dir;
+pub mod documents;
+pub mod evidence;
 pub mod history;
 pub mod ingest;
 pub mod lean;
+pub mod obligations;
 pub mod react;
 pub mod rules;
 pub mod shapes;
@@ -55,6 +60,20 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/retract",          post(ingest::retract))
         .route("/react",            post(react::react))
         .route("/reactions/:id",    get(react::list_reactions))
+        // Evidence substrate
+        .route("/documents/register",     post(documents::register))
+        .route("/documents/revision",     post(documents::add_revision))
+        .route("/evidence/link/span",     post(evidence::link_span))
+        .route("/evidence/:stmt",         get(evidence::evidence_for))
+        .route("/agents/register",        post(agents::register))
+        .route("/agents/bind",            post(agents::bind_context))
+        .route("/arguments/assert",       post(arguments::assert_argument))
+        .route("/arguments/:stmt",        get(arguments::arguments_for))
+        .route("/arguments/frontier",     get(arguments::contradiction_frontier))
+        .route("/obligations/emit",       post(obligations::emit))
+        .route("/obligations/resolve",    post(obligations::resolve))
+        .route("/obligations/open",       post(obligations::list_open))
+        .route("/obligations/summary",    get(obligations::summary))
         .layer(axum::middleware::from_fn(cors))
         .with_state(state)
 }

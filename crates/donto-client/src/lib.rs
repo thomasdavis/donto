@@ -18,7 +18,8 @@ pub use client::DontoClient;
 pub use error::{Error, Result};
 pub use migrations::apply_migrations;
 pub use model::{
-    Literal, Object, Polarity, Reaction, ReactionKind, ShapeVerdict, Statement, StatementInput,
-    TextMatch, TimeBucket,
+    Agent, ArgumentRelation, Document, DocumentRevision, EvidenceLink, ExtractionRun, Literal,
+    Object, ObligationStatus, Polarity, ProofObligation, Reaction, ReactionKind, ShapeVerdict,
+    Span, Statement, StatementInput, TextMatch, TimeBucket,
 };
 pub use scope::ContextScope;

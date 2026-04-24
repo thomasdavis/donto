@@ -8,4 +8,12 @@ import Donto.Shapes
 import Donto.Rules
 import Donto.Certificate
 import Donto.Engine
+import Donto.Scope
+import Donto.Correction
+import Donto.SameMeaning
+import Donto.Hypothesis
+import Donto.Canonicals
+import Donto.Evidence
+import Donto.Argumentation
+import Donto.Obligations
 import Donto.Theorems
