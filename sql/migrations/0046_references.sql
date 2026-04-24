@@ -18,8 +18,7 @@ create table if not exists donto_reference (
     section_id      uuid references donto_document_section(section_id),
     span_id         uuid references donto_span(span_id),
     metadata        jsonb not null default '{}'::jsonb,
-    constraint donto_reference_has_target
-        check (cited_doc is not null or cited_iri is not null)
+    -- cited_doc or cited_iri may both be null for unresolved bibliographic entries
 );
 
 create index if not exists donto_reference_citing_idx
