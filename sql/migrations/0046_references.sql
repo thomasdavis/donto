@@ -17,7 +17,7 @@ create table if not exists donto_reference (
     venue           text,
     section_id      uuid references donto_document_section(section_id),
     span_id         uuid references donto_span(span_id),
-    metadata        jsonb not null default '{}'::jsonb,
+    metadata        jsonb not null default '{}'::jsonb
     -- cited_doc or cited_iri may both be null for unresolved bibliographic entries
 );
 
