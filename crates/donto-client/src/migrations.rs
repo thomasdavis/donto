@@ -110,6 +110,15 @@ pub const MIGRATIONS: &[(&str, &str)] = &[
     ("0032_proof_obligations", include_str!("../../../sql/migrations/0032_proof_obligations.sql")),
     ("0033_vectors", include_str!("../../../sql/migrations/0033_vectors.sql")),
     ("0034_claim_card", include_str!("../../../sql/migrations/0034_claim_card.sql")),
+    ("0035_document_sections", include_str!("../../../sql/migrations/0035_document_sections.sql")),
+    ("0036_mentions", include_str!("../../../sql/migrations/0036_mentions.sql")),
+    ("0037_extraction_chunks", include_str!("../../../sql/migrations/0037_extraction_chunks.sql")),
+    ("0038_confidence", include_str!("../../../sql/migrations/0038_confidence.sql")),
+    ("0039_units", include_str!("../../../sql/migrations/0039_units.sql")),
+    ("0040_temporal_expressions", include_str!("../../../sql/migrations/0040_temporal_expressions.sql")),
+    ("0041_content_regions", include_str!("../../../sql/migrations/0041_content_regions.sql")),
+    ("0042_entity_aliases", include_str!("../../../sql/migrations/0042_entity_aliases.sql")),
+    ("0043_candidate_contexts", include_str!("../../../sql/migrations/0043_candidate_contexts.sql")),
 ];
 
 fn sha256_of(s: &str) -> Vec<u8> {
