@@ -120,6 +120,7 @@ pub const MIGRATIONS: &[(&str, &str)] = &[
     ("0042_entity_aliases", include_str!("../../../sql/migrations/0042_entity_aliases.sql")),
     ("0043_candidate_contexts", include_str!("../../../sql/migrations/0043_candidate_contexts.sql")),
     ("0044_ontology_seeds", include_str!("../../../sql/migrations/0044_ontology_seeds.sql")),
+    ("0045_auto_shape_validation", include_str!("../../../sql/migrations/0045_auto_shape_validation.sql")),
 ];
 
 fn sha256_of(s: &str) -> Vec<u8> {
