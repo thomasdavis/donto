@@ -24,6 +24,9 @@ pgdata/
 # Database backups
 backups/
 
+# Playground: extraction scripts, downloaded PDFs, scratch work
+playground/
+
 # Node / Next.js / Turborepo
 node_modules/
 .next/
