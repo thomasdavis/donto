@@ -109,6 +109,7 @@ pub const MIGRATIONS: &[(&str, &str)] = &[
     ("0031_arguments", include_str!("../../../sql/migrations/0031_arguments.sql")),
     ("0032_proof_obligations", include_str!("../../../sql/migrations/0032_proof_obligations.sql")),
     ("0033_vectors", include_str!("../../../sql/migrations/0033_vectors.sql")),
+    ("0034_claim_card", include_str!("../../../sql/migrations/0034_claim_card.sql")),
 ];
 
 fn sha256_of(s: &str) -> Vec<u8> {

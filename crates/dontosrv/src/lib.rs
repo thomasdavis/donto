@@ -74,6 +74,7 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/obligations/resolve",    post(obligations::resolve))
         .route("/obligations/open",       post(obligations::list_open))
         .route("/obligations/summary",    get(obligations::summary))
+        .route("/claim/:id",              get(claim_card))
         .layer(axum::middleware::from_fn(cors))
         .with_state(state)
 }
@@ -133,6 +134,26 @@ async fn dontoql(State(s): State<Arc<AppState>>, Json(req): Json<QueryReq>) -> i
         Err(e) => return Json(json!({"error": e.to_string()})).into_response(),
     };
     run(&s.client, q, req.scope_preset).await
+}
+
+async fn claim_card(
+    State(s): State<Arc<AppState>>,
+    axum::extract::Path(id): axum::extract::Path<uuid::Uuid>,
+) -> impl IntoResponse {
+    let c = match s.client.pool().get().await {
+        Ok(c) => c,
+        Err(e) => return Json(json!({"error": e.to_string()})).into_response(),
+    };
+    match c.query_one("select donto_claim_card($1)", &[&id]).await {
+        Ok(row) => {
+            let card: Option<serde_json::Value> = row.get(0);
+            match card {
+                Some(v) => Json(v).into_response(),
+                None => Json(json!({"error": "statement not found"})).into_response(),
+            }
+        }
+        Err(e) => Json(json!({"error": e.to_string()})).into_response(),
+    }
 }
 
 async fn run(
