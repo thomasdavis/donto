@@ -1,281 +1,221 @@
 # donto
 
-A bitemporal, paraconsistent quad store. Postgres extension. Optional Lean 4
-sidecar for shape validation, derivations, and machine-checkable certificates.
+A bitemporal, paraconsistent quad store with a full evidence substrate.
+Postgres extension. Optional Lean 4 sidecar for shape validation,
+derivations, and machine-checkable certificates.
+
+**donto is a database for claims that may be wrong.**
+
+It stores what was said, who said it, when it was said, what it was
+based on, what contradicts it, what remains unresolved, and what has
+been formally certified. Traditional databases assume clean facts.
+donto is for the messy interval between evidence and knowledge.
 
 ```text
-                  fact = (subject, predicate, object, context,
-                          valid_time, transaction_time, polarity, maturity)
+claim = (subject, predicate, object, context,
+         valid_time, transaction_time, polarity, maturity)
+       + evidence chain
+       + confidence
+       + shape annotations
+       + arguments (supports / rebuts / undercuts)
+       + proof obligations
+       + certificate
 ```
-
-donto is for systems where the truth is messy:
-
-- Two sources disagree, and **both belong on the record**.
-- Facts have a **history** — what we know now, what we knew last quarter,
-  what was true in the world during 1899.
-- Some statements are speculation, some are observation, some are
-  derivations of derivations. donto treats those differently without
-  needing five tables to do it.
-- The schema, when it shows up, is **a report**, not a barrier to writing.
-
-If your domain is genealogy, biomedical claims, regulatory audit,
-intelligence analysis, knowledge graphs from LLM extractors, or any
-research database where contradictions are evidence, donto is for you.
 
 ---
 
-## A walked-through example
+## What makes donto different
 
-You're piecing together a family tree from old records.
+**Paraconsistent.** Two sources disagree about Alice's birth year. Both
+rows live forever. Contradictions are evidence, not errors.
 
-A 1900 census names someone *Alice Brackenridge*, born around 1899. A
-1925 hospital ledger names *Alice Julian*, born 1925. Could be the same
-person — name change after marriage, common in that era — but you're not
-sure yet. A colleague is convinced they're different people.
+**Bitemporal.** Every statement tracks when the fact was true in the
+world (`valid_time`) and when the system learned it (`tx_time`).
+Retraction closes `tx_time` — nothing is ever deleted.
 
-Most databases force you to pick. donto doesn't.
+**Full evidence chain.** Every claim traces back through extraction run
+→ document revision → source document → agent, with span-level
+anchoring to exact character offsets in the source text.
 
-### 1. Each source becomes a context
+**Epistemic maturity ladder.** Claims climb from raw (Level 0) through
+registry-curated (1), shape-checked (2), rule-derived (3), to
+certified (4). The system tells you exactly why each claim hasn't
+reached the next level.
 
-```sql
-SELECT donto_ensure_context('ctx:src/census1900', 'source', 'permissive', NULL);
-SELECT donto_ensure_context('ctx:src/hospital1925', 'source', 'permissive', NULL);
-```
+**Lean 4 verification.** 60 kernel-checked theorems prove model
+invariants — paraconsistency, snapshot monotonicity, scope semantics,
+correction identity preservation. The proofs hold for every possible
+input, not just test cases.
 
-A *context* is the universal overlay in donto: provenance, snapshots,
-hypotheses, multi-tenancy — they're all contexts. Every fact lives in one.
+---
 
-### 2. Both birth years are recorded — paraconsistently
+## The numbers
 
-```sql
--- Census 1900 says Alice was born 1899.
-SELECT donto_assert(
-    'ex:alice_young', 'ex:birthYear',
-     NULL, '{"v":1899,"dt":"xsd:integer"}'::jsonb,
-    'ctx:src/census1900', 'asserted', 0, NULL, NULL, NULL);
+| Metric | Value |
+|--------|-------|
+| Statements | 35.5M |
+| Migrations | 45 |
+| Tables | 46 |
+| Active predicates | 394 |
+| SQL functions | 80+ |
+| Lean modules | 18 |
+| Lean theorems | 60 |
+| Rust test files | 57 |
+| Integration tests | 230+ |
+| Ingestion formats | 8 |
+| HTTP endpoints | 35+ |
+| Seeded units | 26 |
 
--- Hospital 1925 says Alice was born 1925.
-SELECT donto_assert(
-    'ex:alice_old', 'ex:birthYear',
-     NULL, '{"v":1925,"dt":"xsd:integer"}'::jsonb,
-    'ctx:src/hospital1925', 'asserted', 0, NULL, NULL, NULL);
-```
+---
 
-A query with both sources in scope returns both rows. donto never picks
-a winner — that's an application decision, made downstream:
-
-```bash
-donto query 'SCOPE include <ctx:src/census1900>, <ctx:src/hospital1925>
-             MATCH ?p ex:birthYear ?y
-             PROJECT ?p, ?y'
-# {"p":"ex:alice_young","y":{"v":1899,...}}
-# {"p":"ex:alice_old", "y":{"v":1925,...}}
-```
-
-### 3. Explore "are they the same person?" in a hypothesis branch
+## A quick example
 
 ```sql
--- Hypothesis contexts are themselves contexts. Anything you assert here
--- is invisible to the curated view but available under-hypothesis.
-SELECT donto_ensure_context(
-    'ctx:hypo/alice_merge', 'hypothesis', 'permissive', NULL);
+-- Two sources disagree about a birth year.
+SELECT donto_assert('ex:alice', 'ex:birthYear', NULL,
+    '{"v":1899,"dt":"xsd:integer"}'::jsonb,
+    'ctx:census1900', 'asserted', 0, NULL, NULL, NULL);
 
-SELECT donto_assert(
-    'ex:alice_young', 'donto:sameAs', 'ex:alice_old', NULL,
-    'ctx:hypo/alice_merge', 'asserted', 0, NULL, NULL, NULL);
-```
+SELECT donto_assert('ex:alice', 'ex:birthYear', NULL,
+    '{"v":1925,"dt":"xsd:integer"}'::jsonb,
+    'ctx:hospital1925', 'asserted', 0, NULL, NULL, NULL);
 
-```bash
-# Curated view: nothing has changed. The hypothesis doesn't leak.
-donto query 'PRESET curated MATCH ?x donto:sameAs ?y'
-# (no rows)
+-- Both are visible. donto never picks a winner.
+SELECT * FROM donto_match('ex:alice', 'ex:birthYear',
+    NULL, NULL, NULL, 'asserted', 0, NULL, NULL);
+-- Two rows: 1899 from census, 1925 from hospital.
 
-# Under the hypothesis: Alice and Alice are the same person.
-donto query 'SCOPE include <ctx:hypo/alice_merge>
-             MATCH ?x donto:sameAs ?y'
-# {"x":"ex:alice_young","y":"ex:alice_old"}
-```
-
-This is *non-monotonic identity*: drop the hypothesis from your scope and
-the merge silently disappears. Different research branches can hold
-incompatible identity views simultaneously. Most graph databases treat
-identity as a global rewrite rule and force you to pick.
-
-### 4. Bitemporal: change your mind without losing the trail
-
-You initially recorded Alice's spouse as Bob, based on the census:
-
-```sql
-SELECT donto_assert('ex:alice_young', 'ex:spouse', 'ex:bob', NULL,
-                    'ctx:src/census1900', 'asserted', 0, NULL, NULL, NULL);
-```
-
-Six months later, a parish record reveals you misread the census. Don't
-overwrite — *correct*:
-
-```sql
+-- Correct the record without losing history.
 SELECT donto_correct(
-    (SELECT statement_id
-     FROM donto_match('ex:alice_young', 'ex:spouse', NULL, NULL, NULL,
-                      'asserted', 0, NULL, NULL) LIMIT 1),
-    NULL, NULL, 'ex:not_bob', NULL, NULL, NULL);
+    (SELECT statement_id FROM donto_match('ex:alice', 'ex:birthYear',
+     NULL, NULL, '{"include":["ctx:census1900"]}'::jsonb,
+     'asserted', 0, NULL, NULL) LIMIT 1),
+    NULL, NULL, NULL,
+    '{"v":1898,"dt":"xsd:integer"}'::jsonb, NULL, NULL);
+
+-- Time travel: what did we believe last month?
+SELECT * FROM donto_match('ex:alice', 'ex:birthYear',
+    NULL, NULL, NULL, 'asserted', 0,
+    '2026-03-01T00:00:00Z'::timestamptz, NULL);
 ```
 
-Today's view shows the corrected spouse:
+---
 
-```bash
-donto query 'MATCH ex:alice_young ex:spouse ?s'
-# {"s":"ex:not_bob"}
+## Evidence substrate
+
+donto doesn't just store claims. It stores the full lifecycle of how
+a claim was produced, evaluated, challenged, and certified.
+
+```
+Document (PDF, web page, record)
+  → Revision (text extraction, OCR, parser version)
+    → Spans (character offsets, sentences, regions)
+      → Mentions (entity references, typed)
+        → Coreference clusters (resolved entities)
+    → Tables (rows, columns, cells with headers)
+    → Content regions (figures, charts, code blocks)
+  → Extraction run (model, version, prompt, chunking)
+    → Extraction chunks (per-chunk provenance)
+    → Statements (claims with typed literals)
+      → Confidence scores (per-statement overlay)
+      → Evidence links (statement ↔ span/run/document)
+      → Shape annotations (pass/warn/violate)
+      → Arguments (supports/rebuts/undercuts/qualifies)
+      → Proof obligations (needs-coref, needs-source-support, ...)
+      → Certificates (Lean-verifiable proofs)
 ```
 
-But the original belief is **never deleted**. Time-travel queries see
-what you knew at the time:
+Every layer is queryable, traceable, and correctable.
 
-```bash
-donto match --subject ex:alice_young --predicate ex:spouse \
-            --as-of-tx 2026-04-01T00:00:00Z
-# {"s":"ex:bob"}
+### Claim card
+
+Ask donto everything it knows about a single claim:
+
+```sql
+SELECT donto_claim_card('statement-uuid');
 ```
 
-That's `tx_time` (when the system believed it). donto also tracks
-`valid_time` (when the fact was true in the world), so you can ask
-"what did we believe in March about who Alice was married to in 1923?"
-without confusion. A fact about Alice's youth recorded today and a
-fact about Alice's youth recorded in 1925 are both queryable; they
-just sit in different `tx_time` intervals.
+Returns the statement, its evidence links, arguments, proof
+obligations, shape annotations, reactions, and maturity blockers —
+everything needed to understand and evaluate the claim.
 
-### 5. Spot impossible-by-definition data with shapes
+### Why not higher?
 
-Marriage is functional — at most one spouse at a time. donto ships a
-built-in shape that flags violations as a *report*, not a write error:
+Ask why a claim hasn't been promoted:
 
-```bash
-curl -X POST localhost:7878/shapes/validate -H 'content-type: application/json' \
-  -d '{"shape_iri":"builtin:functional/ex:spouse",
-       "scope":{"include":["ctx:src/census1900","ctx:src/hospital1925"]}}'
-# {"shape_iri":"builtin:functional/ex:spouse",
-#  "violations":[{"focus":"ex:alice_young",
-#                 "reason":"predicate ex:spouse is functional but has 2 objects",
-#                 "evidence":["<uuid>","<uuid>"]}],
-#  "source":"builtin"}
+```sql
+SELECT * FROM donto_why_not_higher('statement-uuid');
+-- predicate_not_registered: Predicate ex:foo is not registered
+-- no_shape_report: No shape validation has been run
+-- no_span_anchor: Not anchored to a specific source span
+-- open_obligations: 2 open proof obligation(s)
 ```
 
-The violations stay visible. The data isn't deleted or rejected. Shapes
-are **annotations**, not constraints — donto's job is to record what
-the world said, not to police it.
+---
 
-For domain-specific constraints, write the shape in Lean — the optional
-`donto_engine` sidecar runs Lean shapes against the same HTTP endpoint:
+## Domains
 
-```bash
-# A shape that says: a parent must be 12-80 years older than their child.
-curl -X POST localhost:7878/shapes/validate -H 'content-type: application/json' \
-  -d '{"shape_iri":"lean:builtin/parent-child-age-gap",
-       "scope":{"include":["ctx:src/census1900"]}}'
-# {"source":"lean",
-#  "report":{"violations":[{"focus":"ex:alice_young",
-#                           "reason":"parent ex:alice_young (1899) is only 5y older than child ex:bob (1904); minimum 12",
-#                           "evidence":["<uuid>"]}]}}
-```
+donto is domain-agnostic. The same schema handles:
 
-Note `"source":"lean"`. That report came from a real Lean process. See
-[`docs/LEAN-OVERLAY.md`](docs/LEAN-OVERLAY.md) for what the Lean side
-proves about the data model and how to author your own shapes.
+- **Scientific papers** — benchmark results as first-class entities,
+  derived comparisons, proof obligations for vague claims
+- **Genealogy** — contradictory records, hypothesis branches,
+  non-monotonic identity, temporal expressions
+- **Business data** — salon services, pricing, entity resolution
+  across registries
+- **Medical records** — lab results, medication histories, temporal
+  expressions, confidence-rated diagnoses
+- **Legal documents** — contract clauses, compliance matrices,
+  section-level anchoring
+- **Any LLM extraction pipeline** — structured output → mentions →
+  candidates → promoted claims with full provenance
 
-### 6. Derive new facts that carry lineage and a certificate
-
-You have parent edges. You want ancestors. Run the bundled transitive
-closure rule:
-
-```bash
-curl -X POST localhost:7878/rules/derive -H 'content-type: application/json' \
-  -d '{"rule_iri":"builtin:transitive/ex:parent",
-       "scope":{"include":["ctx:src/census1900"]},
-       "into":"ctx:derived/ancestors"}'
-# {"emitted":42, "into":"ctx:derived/ancestors", "source":"builtin"}
-```
-
-Each emitted statement:
-- Lives in the `ctx:derived/ancestors` derivation context.
-- Carries `maturity = 3` (rule-derived; level 3 of the maturity ladder).
-- Has lineage pointers back to every input it consumed.
-- Re-running the rule with the same inputs is a cache hit — same
-  fingerprint, same answer, no re-execution.
-
-Optionally attach a certificate that an independent verifier can replay
-without trusting the rule's code:
-
-```bash
-curl -X POST localhost:7878/certificates/attach -H 'content-type: application/json' \
-  -d '{"statement_id":"<uuid>","kind":"transitive_closure",
-       "body":{"predicate":"ex:parent","scope":{"include":["ctx:src/census1900"]}}}'
-
-curl -X POST localhost:7878/certificates/verify/<uuid>
-# {"ok":true}
-```
-
-That's seven of donto's distinctive features in one short story:
-**contexts**, **paraconsistency**, **hypothesis scoping**,
-**non-monotonic identity**, **bitemporal correction**, **shape
-validation as overlay**, **derivation with lineage and certificates**.
-The full set is in [PRD.md](PRD.md).
+Ontology seeds ship with the database (migration 0044): 100+
+predicates across schema.org, ML/AI, physics, genealogy, geography,
+and events. Domain-specific predicates are implicitly registered in
+permissive contexts.
 
 ---
 
 ## Install
 
-donto needs Postgres 16 and Rust stable. A `just` command runner is
-optional but recommended.
-
 ```bash
 git clone https://github.com/thomasdavis/donto
 cd donto
 
-# Bring up Postgres 16 in a container and apply migrations.
+# Bring up Postgres 16 and apply all 45 migrations.
 ./scripts/pg-up.sh
 cargo run -p donto-cli --quiet -- migrate
-```
 
-Want the Postgres extension proper (`CREATE EXTENSION pg_donto;`)?
+# Start the HTTP sidecar.
+cargo run -p dontosrv
 
-```bash
-./scripts/pgrx-build.sh    # builds + tests pg_donto inside a container
-```
+# Run all 230+ tests.
+DONTO_TEST_DSN=postgres://donto:donto@127.0.0.1:55432/donto \
+  cargo test --workspace
 
-The Lean overlay (optional — donto runs without it):
-
-```bash
-cd lean && lake build      # produces .lake/build/bin/donto_engine
+# Build the Lean verification layer (optional).
+cd lean && lake build
 ```
 
 ## Three query surfaces
 
-donto exposes the same algebra through three front ends. Pick whichever
-your team already speaks.
+**SQL functions** — for applications with a Postgres connection:
 
-**Plain SQL functions** — for applications that already have a Postgres
-connection pool:
-
-```rust
-use donto_client::{ContextScope, DontoClient, Object, StatementInput};
-
-let c = DontoClient::from_dsn(env!("DONTO_DSN"))?;
-c.assert(&StatementInput::new("ex:alice", "ex:knows", Object::iri("ex:bob"))
-    .with_context("ctx:src/wikipedia")).await?;
-let rows = c.match_pattern(Some("ex:alice"), None, None,
-    Some(&ContextScope::just("ctx:src/wikipedia")),
-    None, 0, None, None).await?;
+```sql
+SELECT * FROM donto_match('ex:alice', 'ex:knows', NULL, NULL,
+    '{"include":["ctx:wikipedia"]}'::jsonb,
+    'asserted', 0, NULL, NULL);
 ```
 
-**SPARQL 1.1 subset** — for RDF-native tooling:
+**SPARQL 1.1 subset** — for RDF tooling:
 
 ```sparql
 PREFIX ex: <http://example.org/>
 SELECT ?x ?y WHERE { ?x ex:knows ?y . } LIMIT 10
 ```
 
-**DontoQL** — donto's native language, the only one that exposes the
-full surface (scope presets, polarity, maturity, identity expansion):
+**DontoQL** — native language with full feature access:
 
 ```dontoql
 PRESET latest
@@ -284,103 +224,79 @@ FILTER ?n != "Mallory"
 POLARITY asserted
 MATURITY >= 1
 PROJECT ?x, ?n
-LIMIT 10
 ```
 
-## Migrating from existing stores
+## Ingestion
 
 ```bash
-donto ingest dump.nq                        # any RDF quad store
-donto ingest export.json --format property-graph    # Neo4j / AGE
-donto-migrate genealogy /path/to/research.db        # SQLite genealogy schema
+donto ingest dump.nq                                    # N-Quads
+donto ingest data.ttl                                   # Turtle
+donto ingest export.json --format property-graph         # Neo4j / AGE
+donto ingest stream.jsonl --format jsonl                 # LLM output
+donto ingest data.csv --mapping mapping.json             # CSV
+donto-migrate genealogy /path/to/research.db             # SQLite
 ```
 
-donto also ingests Turtle, TriG, RDF/XML, JSON-LD, JSONL streams (for
-LLM extractor pipelines), and CSV with a column-mapping file.
+Also supports TriG, RDF/XML, and JSON-LD.
 
-## Documentation
-
-- [`PRD.md`](PRD.md) — full design specification. Read §3 (principles)
-  and §2 (the maturity ladder) before contributing.
-- [`docs/USER-GUIDE.md`](docs/USER-GUIDE.md) — how to ingest, query,
-  scope, snapshot, and reason under hypothesis.
-- [`docs/OPERATOR-GUIDE.md`](docs/OPERATOR-GUIDE.md) — sizing, backup,
-  observability, sidecar topology, capacity tuning.
-- [`docs/LEAN-OVERLAY.md`](docs/LEAN-OVERLAY.md) — what the Lean side
-  *proves* about the data model and how to wire / author Lean shapes.
-- [`docs/PHASE-0.md`](docs/PHASE-0.md) — phase plans.
+---
 
 ## Project layout
 
-This is a monorepo. The Rust workspace and the TypeScript / Turborepo
-workspace coexist at the root.
-
 ```
-PRD.md                       Source of truth for the engine design.
-PRD-faces.md                 PRD for the visualisation app.
-sql/migrations/              Schema and SQL functions. SQL is canonical.
-sql/fixtures/                Demo data (genealogy, resume, exoneration).
-crates/donto-client/         Typed Rust wrapper over the SQL surface.
-crates/donto-cli/            `donto` CLI — ingest, match, query, retract.
-crates/donto-query/          DontoQL parser, SPARQL subset, evaluator.
-crates/donto-ingest/         Ingestion formats.
-crates/donto-migrate/        Migrators from external stores.
-crates/dontosrv/             HTTP sidecar (SPARQL, DontoQL, shapes, rules,
-                             certificates, /history, /subjects, CORS).
-crates/pg_donto/             pgrx Postgres extension.
-lean/                        Lean overlay (Core, IR, Shapes, Rules, Certs,
-                             Theorems).
-apps/faces/                  Next.js 15 visualisation app — three lenses
-                             (Stratigraph, Rashomon Hall, Probe).
-packages/donto-client/       TypeScript bindings for the dontosrv HTTP API.
-docs/                        User, operator, and Lean guides.
-turbo.json · pnpm-workspace.yaml · package.json   Turborepo wiring.
+PRD.md                       Design specification (principles + maturity ladder)
+CLAUDE.md                    Working contract for AI/human contributors
+sql/migrations/              45 idempotent SQL migrations (schema source of truth)
+crates/donto-client/         Typed Rust wrapper + 57 test files
+crates/dontosrv/             HTTP sidecar (35+ endpoints)
+crates/donto-query/          DontoQL + SPARQL parser and evaluator
+crates/donto-ingest/         8 ingestion format parsers
+crates/donto-migrate/        External store migrators
+crates/pg_donto/             pgrx Postgres extension (all 45 migrations)
+lean/                        18 Lean 4 modules, 60 theorems
+apps/faces/                  Next.js visualisation app
+playground/                  Gitignored extraction scripts and test data
+docs/                        User guide, operator guide, Lean overlay,
+                             migration reference, schema gaps audit
 ```
 
-## Status and roadmap
+## Documentation
 
-donto is **early**. The full design in [PRD.md](PRD.md) ships in eleven
-phases (PRD §26); first implementations of all eleven exist on `main`.
-What that means in practice:
+- [`PRD.md`](PRD.md) — design specification. Read §3 (principles) and
+  §2 (maturity ladder) before contributing.
+- [`docs/MIGRATIONS.md`](docs/MIGRATIONS.md) — complete reference for
+  all 45 migrations with tables, functions, and seeds.
+- [`docs/LEAN-OVERLAY.md`](docs/LEAN-OVERLAY.md) — what the Lean side
+  proves and how to author shapes.
+- [`docs/USER-GUIDE.md`](docs/USER-GUIDE.md) — ingestion, query,
+  scopes, snapshots, hypotheses.
+- [`docs/OPERATOR-GUIDE.md`](docs/OPERATOR-GUIDE.md) — sizing, backup,
+  observability, sidecar topology.
+- [`docs/SCHEMA-GAPS.md`](docs/SCHEMA-GAPS.md) — audit of extraction
+  capabilities and domain coverage.
 
-- **Solid:** the data model, ingestion (8 formats), DontoQL/SPARQL
-  query, contexts and scopes, bitemporal queries, retraction and
-  correction, snapshots, predicate registry with aliases.
-- **Working but minimal:** shape and rule built-ins (the Lean overlay
-  exists as type definitions and combinators; the Rust sidecar mirrors
-  the standard library so the system runs without Lean).
-- **Not yet:** distributed deployment, OWL-lite reasoning, a Cypher
-  front end, federated queries, the full certificate signing PKI.
-  These are explicit follow-ons in PRD §26.
+## Status
 
-**Performance is not yet a goal.** PRD §25 lays out hypotheses
-(10⁹ statements, 100k inserts/sec, sub-ms point queries) to validate
-later. Current focus is correctness and PRD coverage. No speculative
-indexes; no premature partitioning.
+donto is **early and moving fast**. The data model, evidence substrate,
+and Lean verification layer are solid. What's next:
 
-Versioning will follow SemVer once the first tagged release lands. For
-now, treat `main` as a moving target.
+- **AI extraction pipeline** — an LLM-powered system that uses the full
+  observation → interpretation → judgment chain automatically
+- **Claim card UI** — one beautiful page per claim showing evidence,
+  arguments, obligations, and path to certification
+- **Source-support verification** — given a claim and a source span,
+  determine whether the span actually supports the claim
+- **More Lean certificates** — proof-carrying shapes, derivation
+  trees, and certificate verifiers
+
+Performance is not yet a goal (PRD §25). Current focus: correctness,
+PRD coverage, test depth.
 
 ## Contributing
 
-See [`CONTRIBUTING.md`](CONTRIBUTING.md) for the contributor guide and
-[`CODE_OF_CONDUCT.md`](CODE_OF_CONDUCT.md). [`CLAUDE.md`](CLAUDE.md) is
-the shared working contract for AI agents and humans — a concise list
-of donto's non-negotiables and the SQL idioms that took us a few tries
-to get right.
-
-## Security
-
-See [`SECURITY.md`](SECURITY.md). Please report vulnerabilities
-privately via GitHub Security Advisories.
+See [`CLAUDE.md`](CLAUDE.md) for the working contract (non-negotiables,
+SQL idioms, testing patterns).
 
 ## License
 
-Dual licensed under either of:
-
-- Apache License 2.0 ([`LICENSE-APACHE`](LICENSE-APACHE))
-- MIT License ([`LICENSE-MIT`](LICENSE-MIT))
-
-at your option. Unless you explicitly state otherwise, any contribution
-intentionally submitted for inclusion in this work shall be dual-licensed
-as above, without any additional terms or conditions.
+Dual licensed under Apache 2.0 and MIT.
