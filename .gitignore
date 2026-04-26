@@ -33,3 +33,4 @@ node_modules/
 .turbo/
 *.tsbuildinfo
 .vercel
+data/research/
