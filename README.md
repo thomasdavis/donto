@@ -1,7 +1,7 @@
 # donto
 
 A bitemporal, paraconsistent quad store with a full evidence substrate.
-Postgres extension. Optional Lean 4 sidecar for shape validation,
+Postgres 16 + Rust. Optional Lean 4 sidecar for shape validation,
 derivations, and machine-checkable certificates.
 
 **donto is a database for claims that may be wrong.**
@@ -42,29 +42,57 @@ registry-curated (1), shape-checked (2), rule-derived (3), to
 certified (4). The system tells you exactly why each claim hasn't
 reached the next level.
 
-**Lean 4 verification.** 60 kernel-checked theorems prove model
+**Lean 4 verification.** 62 kernel-checked theorems prove model
 invariants — paraconsistency, snapshot monotonicity, scope semantics,
 correction identity preservation. The proofs hold for every possible
 input, not just test cases.
 
 ---
 
-## The numbers
+## At a glance
 
-| Metric | Value |
-|--------|-------|
-| Statements | 35.5M |
-| Migrations | 45 |
-| Tables | 46 |
-| Active predicates | 394 |
-| SQL functions | 80+ |
-| Lean modules | 18 |
-| Lean theorems | 60 |
+| Component | Count |
+|-----------|-------|
+| SQL migrations | 47 |
+| Tables | 55 |
+| SQL functions | 118 |
+| HTTP endpoints | 35 |
 | Rust test files | 57 |
-| Integration tests | 230+ |
+| Lean modules | 21 |
+| Lean theorems | 62 |
 | Ingestion formats | 8 |
-| HTTP endpoints | 35+ |
-| Seeded units | 26 |
+| Registered predicates | 1,300+ |
+
+---
+
+## Quick start
+
+```bash
+git clone https://github.com/thomasdavis/donto
+cd donto
+
+# Bring up Postgres 16 and apply all migrations
+./scripts/pg-up.sh
+cargo run -p donto-cli --quiet -- migrate
+
+# Start the HTTP sidecar (optional — for apps that talk over HTTP)
+cargo run -p dontosrv -- --bind 127.0.0.1:7878
+
+# Run tests (requires running Postgres)
+DONTO_TEST_DSN=postgres://donto:donto@127.0.0.1:55432/donto \
+  cargo test --workspace
+
+# Build the Lean verification layer (optional, requires elan / Lean 4)
+cd lean && lake build
+```
+
+Or with [just](https://github.com/casey/just):
+
+```bash
+just pg-up
+just migrate
+just test
+```
 
 ---
 
@@ -153,51 +181,6 @@ SELECT * FROM donto_why_not_higher('statement-uuid');
 
 ---
 
-## Domains
-
-donto is domain-agnostic. The same schema handles:
-
-- **Scientific papers** — benchmark results as first-class entities,
-  derived comparisons, proof obligations for vague claims
-- **Genealogy** — contradictory records, hypothesis branches,
-  non-monotonic identity, temporal expressions
-- **Business data** — salon services, pricing, entity resolution
-  across registries
-- **Medical records** — lab results, medication histories, temporal
-  expressions, confidence-rated diagnoses
-- **Legal documents** — contract clauses, compliance matrices,
-  section-level anchoring
-- **Any LLM extraction pipeline** — structured output → mentions →
-  candidates → promoted claims with full provenance
-
-Ontology seeds ship with the database (migration 0044): 100+
-predicates across schema.org, ML/AI, physics, genealogy, geography,
-and events. Domain-specific predicates are implicitly registered in
-permissive contexts.
-
----
-
-## Install
-
-```bash
-git clone https://github.com/thomasdavis/donto
-cd donto
-
-# Bring up Postgres 16 and apply all 45 migrations.
-./scripts/pg-up.sh
-cargo run -p donto-cli --quiet -- migrate
-
-# Start the HTTP sidecar.
-cargo run -p dontosrv
-
-# Run all 230+ tests.
-DONTO_TEST_DSN=postgres://donto:donto@127.0.0.1:55432/donto \
-  cargo test --workspace
-
-# Build the Lean verification layer (optional).
-cd lean && lake build
-```
-
 ## Three query surfaces
 
 **SQL functions** — for applications with a Postgres connection:
@@ -226,18 +209,73 @@ MATURITY >= 1
 PROJECT ?x, ?n
 ```
 
+---
+
 ## Ingestion
+
+Eight parsers, all piped through the same assertion path:
 
 ```bash
 donto ingest dump.nq                                    # N-Quads
 donto ingest data.ttl                                   # Turtle
+donto ingest graph.trig                                 # TriG
+donto ingest data.rdf                                   # RDF/XML
+donto ingest data.jsonld                                # JSON-LD
 donto ingest export.json --format property-graph         # Neo4j / AGE
 donto ingest stream.jsonl --format jsonl                 # LLM output
 donto ingest data.csv --mapping mapping.json             # CSV
-donto-migrate genealogy /path/to/research.db             # SQLite
 ```
 
-Also supports TriG, RDF/XML, and JSON-LD.
+---
+
+## HTTP sidecar (dontosrv)
+
+`dontosrv` exposes 35 endpoints for applications that don't have a
+direct Postgres connection. Axum-based, stateless, horizontally
+scalable.
+
+| Category | Endpoints |
+|----------|-----------|
+| Query | `/sparql`, `/dontoql`, `/search`, `/history/:subject`, `/statement/:id`, `/claim/:id` |
+| Browse | `/subjects`, `/contexts`, `/predicates` |
+| Write | `/assert`, `/assert/batch`, `/retract`, `/contexts/ensure` |
+| Evidence | `/documents/register`, `/documents/revision`, `/evidence/link/span`, `/evidence/:stmt` |
+| Arguments | `/arguments/assert`, `/arguments/:stmt`, `/arguments/frontier` |
+| Shapes | `/shapes/validate` |
+| Rules | `/rules/derive` |
+| Certificates | `/certificates/attach`, `/certificates/verify/:stmt` |
+| Obligations | `/obligations/emit`, `/obligations/resolve`, `/obligations/open`, `/obligations/summary` |
+| Agents | `/agents/register`, `/agents/bind` |
+| Reactions | `/react`, `/reactions/:id` |
+| System | `/health`, `/version`, `/dir` |
+
+A TypeScript client (`packages/donto-client`) mirrors the HTTP surface
+for Next.js and other JS/TS applications.
+
+---
+
+## Use cases
+
+donto is domain-agnostic. The same schema handles any domain where
+sources disagree, evidence evolves, or claims need verification:
+
+- **Scientific literature** — benchmark results, measurements, derived
+  comparisons, proof obligations for vague claims
+- **Investigative research** — contradictory records, hypothesis
+  branches, temporal evidence chains
+- **Legal / compliance** — contract clauses, regulatory requirements,
+  section-level anchoring, audit trails
+- **Medical records** — lab results, medication histories, temporal
+  expressions, confidence-rated diagnoses
+- **LLM extraction pipelines** — structured output → mentions →
+  candidates → promoted claims with full provenance
+- **Intelligence analysis** — multi-source fusion, competing
+  hypotheses, confidence tiers
+
+Ontology seeds ship with the database (migration 0044): 1,300+
+predicates across schema.org, ML/AI, physics, geography, and events.
+Domain-specific predicates are implicitly registered in permissive
+contexts.
 
 ---
 
@@ -246,26 +284,29 @@ Also supports TriG, RDF/XML, and JSON-LD.
 ```
 PRD.md                       Design specification (principles + maturity ladder)
 CLAUDE.md                    Working contract for AI/human contributors
-sql/migrations/              45 idempotent SQL migrations (schema source of truth)
+sql/migrations/              47 idempotent SQL migrations (schema source of truth)
+sql/fixtures/                Example data for smoke tests
 crates/donto-client/         Typed Rust wrapper + 57 test files
-crates/dontosrv/             HTTP sidecar (35+ endpoints)
+crates/donto-cli/            CLI: migrate, ingest, query
+crates/dontosrv/             HTTP sidecar (35 endpoints)
 crates/donto-query/          DontoQL + SPARQL parser and evaluator
 crates/donto-ingest/         8 ingestion format parsers
 crates/donto-migrate/        External store migrators
-crates/pg_donto/             pgrx Postgres extension (all 45 migrations)
-lean/                        18 Lean 4 modules, 60 theorems
+crates/pg_donto/             pgrx Postgres extension
+lean/                        21 Lean 4 modules, 62 theorems
 apps/faces/                  Next.js visualisation app
-playground/                  Gitignored extraction scripts and test data
-docs/                        User guide, operator guide, Lean overlay,
-                             migration reference, schema gaps audit
+packages/donto-client/       TypeScript client for dontosrv
+docs/                        Guides and references
 ```
+
+---
 
 ## Documentation
 
 - [`PRD.md`](PRD.md) — design specification. Read §3 (principles) and
   §2 (maturity ladder) before contributing.
 - [`docs/MIGRATIONS.md`](docs/MIGRATIONS.md) — complete reference for
-  all 45 migrations with tables, functions, and seeds.
+  all migrations with tables, functions, and seeds.
 - [`docs/LEAN-OVERLAY.md`](docs/LEAN-OVERLAY.md) — what the Lean side
   proves and how to author shapes.
 - [`docs/USER-GUIDE.md`](docs/USER-GUIDE.md) — ingestion, query,
@@ -275,27 +316,31 @@ docs/                        User guide, operator guide, Lean overlay,
 - [`docs/SCHEMA-GAPS.md`](docs/SCHEMA-GAPS.md) — audit of extraction
   capabilities and domain coverage.
 
+---
+
 ## Status
 
 donto is **early and moving fast**. The data model, evidence substrate,
-and Lean verification layer are solid. What's next:
+and Lean verification layer are solid. Current focus areas:
 
-- **AI extraction pipeline** — an LLM-powered system that uses the full
-  observation → interpretation → judgment chain automatically
-- **Claim card UI** — one beautiful page per claim showing evidence,
-  arguments, obligations, and path to certification
-- **Source-support verification** — given a claim and a source span,
-  determine whether the span actually supports the claim
+- **AI extraction pipeline** — LLM-powered observation → interpretation
+  → judgment chain with full provenance
+- **Claim card UI** — visual inspection of evidence, arguments,
+  obligations, and certification status
+- **Source-support verification** — automated checking of whether a
+  source span actually supports its claim
 - **More Lean certificates** — proof-carrying shapes, derivation
   trees, and certificate verifiers
 
 Performance is not yet a goal (PRD §25). Current focus: correctness,
 PRD coverage, test depth.
 
+---
+
 ## Contributing
 
 See [`CLAUDE.md`](CLAUDE.md) for the working contract (non-negotiables,
-SQL idioms, testing patterns).
+SQL idioms, testing patterns). Read the PRD before changing core types.
 
 ## License
 
