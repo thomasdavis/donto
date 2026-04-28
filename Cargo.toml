@@ -1,19 +1,19 @@
 [workspace]
 resolver = "2"
 members = [
-    "crates/donto-client",
-    "crates/donto-cli",
-    "crates/donto-query",
-    "crates/dontosrv",
-    "crates/donto-ingest",
-    "crates/donto-migrate",
+    "packages/donto-client",
+    "packages/donto-query",
+    "packages/donto-ingest",
+    "packages/donto-migrate",
+    "apps/donto-cli",
+    "apps/dontosrv",
 ]
-# `crates/pg_donto` is the pgrx-based Postgres extension. It is intentionally
+# `packages/pg_donto` is the pgrx-based Postgres extension. It is intentionally
 # *not* a workspace member because pgrx requires Postgres dev headers and a
 # pgrx-cli step that breaks ordinary `cargo build`. Build it explicitly:
-#   cd crates/pg_donto && cargo pgrx package
+#   cd packages/pg_donto && cargo pgrx package
 # CI runs the extension build in its own job (.github/workflows/ext.yml).
-exclude = ["crates/pg_donto"]
+exclude = ["packages/pg_donto"]
 
 [workspace.package]
 version = "0.0.1"

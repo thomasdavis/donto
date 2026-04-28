@@ -4,7 +4,7 @@
 #
 # Prereqs:
 #   ./scripts/pg-up.sh
-#   cd lean && lake build && cd ..
+#   cd packages/lean && lake build && cd ..
 #   cargo build -p dontosrv
 #
 # Run:
@@ -12,10 +12,10 @@
 set -euo pipefail
 
 DSN="${DONTO_DSN:-postgres://donto:donto@127.0.0.1:55432/donto}"
-ENGINE="$(pwd)/lean/.lake/build/bin/donto_engine"
+ENGINE="$(pwd)/packages/lean/.lake/build/bin/donto_engine"
 PORT=7878
 CTX="ctx:demo/lean/$(date +%s)"
-SHAPE_FILE="lean/Donto/Shapes.lean"
+SHAPE_FILE="packages/lean/Donto/Shapes.lean"
 LOG=/tmp/donto-demo-srv.log
 
 step() { printf "\n\033[1;36m── %s ──\033[0m\n" "$*"; }
@@ -76,7 +76,7 @@ sed -i 's/than child {child} ({cYear}); minimum 12/than child {child} ({cYear});
 grep -n 'if gap <' "$SHAPE_FILE"
 
 step "5. lake build (re-typecheck the proof and recompile the engine)"
-run "(cd lean && PATH=\$HOME/.elan/bin:\$PATH lake build) 2>&1 | tail -5"
+run "(cd packages/lean && PATH=\$HOME/.elan/bin:\$PATH lake build) 2>&1 | tail -5"
 
 # 7. Restart dontosrv so it picks up the new engine binary.
 step "6. Restart dontosrv with the new engine binary"
@@ -99,7 +99,7 @@ run "curl -s -X POST http://127.0.0.1:$PORT/shapes/validate \
 # 9. Restore.
 step "8. Restore Lean shape from backup"
 mv "$SHAPE_FILE.bak" "$SHAPE_FILE"
-run "(cd lean && PATH=\$HOME/.elan/bin:\$PATH lake build) 2>&1 | tail -3"
+run "(cd packages/lean && PATH=\$HOME/.elan/bin:\$PATH lake build) 2>&1 | tail -3"
 
 step "Done"
 echo "Demo context: $CTX"

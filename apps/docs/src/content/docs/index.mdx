@@ -1,0 +1,32 @@
+---
+title: donto
+description: Bitemporal paraconsistent quad store on Postgres + Lean 4
+template: splash
+hero:
+  tagline: A database that never forgets, never rejects contradictions, and optionally proves things about your data.
+  actions:
+    - text: Quick Start
+      link: /donto/getting-started/quick-start/
+      icon: right-arrow
+    - text: GitHub
+      link: https://github.com/thomasdavis/donto
+      variant: minimal
+      icon: github
+---
+
+import { Card, CardGrid } from '@astrojs/starlight/components';
+
+<CardGrid>
+  <Card title="Bitemporal" icon="history">
+    Every statement tracks both *when it was true in the world* (`valid_time`) and *when you learned about it* (`tx_time`). Time-travel queries are built in.
+  </Card>
+  <Card title="Paraconsistent" icon="puzzle">
+    Two sources can disagree about the same fact. donto stores both — contradictions coexist. You resolve them with scopes, not deletions.
+  </Card>
+  <Card title="Lean 4 Sidecar" icon="approve-check">
+    An optional Lean 4 engine proves invariants about your data model at the type level and runs user-authored shape validators.
+  </Card>
+  <Card title="Postgres Native" icon="setting">
+    Everything lives in Postgres 16+. SQL functions, standard tooling, `pg_dump` backups. A `pg_donto` extension is available for direct integration.
+  </Card>
+</CardGrid>

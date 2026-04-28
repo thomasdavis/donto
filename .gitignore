@@ -27,9 +27,10 @@ backups/
 # Playground: extraction scripts, downloaded PDFs, scratch work
 playground/
 
-# Node / Next.js / Turborepo
+# Node / Astro / Turborepo
 node_modules/
 .next/
+.astro/
 .turbo/
 *.tsbuildinfo
 .vercel

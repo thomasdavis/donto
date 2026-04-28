@@ -6,15 +6,15 @@
   "tasks": {
     "build": {
       "dependsOn": ["^build"],
-      "outputs": [".next/**", "!.next/cache/**", "dist/**", "build/**"]
+      "outputs": ["dist/**", ".astro/**"]
     },
     "dev": {
       "cache": false,
       "persistent": true
     },
-    "lint":      { "outputs": [] },
-    "typecheck": { "outputs": [] },
-    "test":      { "outputs": [], "dependsOn": ["^build"] },
+    "lint":      { "dependsOn": ["^build"], "outputs": [] },
+    "typecheck": { "dependsOn": ["^build"], "outputs": [] },
+    "test":      { "dependsOn": ["^build"], "outputs": [] },
     "clean":     { "cache": false }
   }
 }

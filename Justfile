@@ -2,6 +2,9 @@
 # or just read the recipes and copy commands.
 
 dsn := env_var_or_default("DONTO_DSN", "postgres://donto:donto@127.0.0.1:55432/donto")
+goroot := env_var_or_default("GOROOT", env_var("HOME") / "go")
+
+export PATH := goroot / "bin" + ":" + env_var("PATH")
 
 # Bring up the dev Postgres container.
 pg-up:
@@ -29,7 +32,7 @@ clippy:
 
 # Ingest the bundled fixture.
 ingest-fixture:
-    cargo run -p donto-cli -- --dsn '{{dsn}}' ingest sql/fixtures/lubm-tiny.nq
+    cargo run -p donto-cli -- --dsn '{{dsn}}' ingest packages/sql/fixtures/lubm-tiny.nq
 
 # Smoke test: bring up pg, migrate, ingest fixture, query.
 smoke: pg-up
@@ -45,11 +48,11 @@ pgrx pg="16":
 
 # Build the Lean overlay (requires elan / Lean 4.12).
 lean:
-    cd lean && lake build
+    cd packages/lean && lake build
 
 # Migrate the bundled tiny genealogy SQLite into a throwaway donto root.
 migrate-genealogy: pg-up
-    sqlite3 /tmp/donto_genealogy_demo.sqlite < sql/fixtures/genealogy_seed.sql
+    sqlite3 /tmp/donto_genealogy_demo.sqlite < packages/sql/fixtures/genealogy_seed.sql
     cargo run -p donto-migrate -- --dsn '{{dsn}}' \
         genealogy /tmp/donto_genealogy_demo.sqlite \
         --root ctx:demo/genealogy
@@ -58,10 +61,26 @@ migrate-genealogy: pg-up
 # Ingest the Brooks exoneration fixture (the donto-faces default demo).
 ingest-brooks: pg-up
     docker exec -i donto-pg psql -U donto -d donto -v ON_ERROR_STOP=1 -At \
-        < sql/fixtures/exoneration_brooks.sql >/dev/null
+        < packages/sql/fixtures/exoneration_brooks.sql >/dev/null
     @echo "ingested ex:darnell-brooks"
 
-# Run the donto-faces visualisation app (Next.js) + dontosrv together.
-faces: ingest-brooks
-    cargo run -p dontosrv --quiet -- --dsn '{{dsn}}' --bind 127.0.0.1:7878 &
-    pnpm --filter '@donto/faces' dev
+# Build the docs site.
+docs:
+    pnpm --filter '@donto/docs' build
+
+# Dev-serve the docs site.
+docs-dev:
+    pnpm --filter '@donto/docs' dev
+
+# Build the donto TUI.
+tui-build:
+    cd apps/donto-tui && go build -o ../../target/donto-tui .
+
+# Run the donto TUI.
+tui *ARGS:
+    cd apps/donto-tui && go run . --dsn '{{dsn}}' {{ARGS}}
+
+# Install LISTEN/NOTIFY trigger for real-time TUI firehose.
+tui-triggers:
+    docker exec -i donto-pg psql -U donto -d donto -v ON_ERROR_STOP=1 \
+        < apps/donto-tui/sql/notify_trigger.sql

@@ -4,15 +4,15 @@ on:
   push:
     branches: [main]
     paths-ignore:
-      - 'crates/pg_donto/**'
-      - 'lean/**'
+      - 'packages/pg_donto/**'
+      - 'packages/lean/**'
       - 'docs/**'
       - '*.md'
       - 'LICENSE-*'
   pull_request:
     paths-ignore:
-      - 'crates/pg_donto/**'
-      - 'lean/**'
+      - 'packages/pg_donto/**'
+      - 'packages/lean/**'
       - 'docs/**'
       - '*.md'
       - 'LICENSE-*'

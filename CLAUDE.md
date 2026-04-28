@@ -24,21 +24,25 @@ and §2 (the maturity ladder) before changing core types.
 - **Postgres owns execution. Lean owns meaning.** DIR is the boundary.
 - **No hidden ordering.** No implicit `ORDER BY`. Aggregations call it out.
 
-## Layout
+## Layout (Turborepo monorepo)
 
-- `sql/migrations/` — SQL is the source of truth. Idempotent (`if not
+- `apps/donto-cli` — CLI binary: migrate, ingest, query, match, retract.
+- `apps/dontosrv` — axum HTTP sidecar (DIR + shapes/rules/certs).
+- `apps/donto-tui` — Go/Charm TUI: dashboard, firehose, explorer, contexts, claim card.
+- `apps/docs` — Astro Starlight documentation site.
+- `packages/donto-client` — typed Rust wrapper over the SQL surface.
+- `packages/donto-query` — DontoQL + SPARQL subset → algebra → evaluator.
+- `packages/donto-ingest` — N-Quads, Turtle, TriG, RDF/XML, JSON-LD, JSONL,
+  CSV, property graph, quarantine.
+- `packages/donto-migrate` — migrators from external stores (genealogy SQLite).
+- `packages/pg_donto` — pgrx-based Postgres extension wrapping the SQL.
+- `packages/sql/migrations/` — SQL is the source of truth. Idempotent (`if not
   exists`, `create or replace`). Each new migration gets a sequential
   number and an entry in `donto-client/src/migrations.rs::MIGRATIONS`.
-- `crates/donto-client` — typed Rust wrapper over the SQL surface.
-- `crates/donto-query` — DontoQL + SPARQL subset → algebra → evaluator.
-- `crates/donto-ingest` — N-Quads, Turtle, TriG, RDF/XML, JSON-LD, JSONL,
-  CSV, property graph, quarantine.
-- `crates/donto-migrate` — migrators from external stores (genealogy SQLite).
-- `crates/dontosrv` — axum sidecar (HTTP + DIR + shapes/rules/certs).
-- `crates/pg_donto` — pgrx-based Postgres extension wrapping the SQL.
-- `lean/` — Lean overlay; standard library mirrored as Rust built-ins so
+- `packages/lean/` — Lean overlay; standard library mirrored as Rust built-ins so
   donto runs without Lean.
-- `docs/` — user/operator guides, per-phase plans.
+- `packages/client-ts` — TypeScript client (`@donto/client`).
+- `packages/tsconfig` — shared TypeScript config (`@donto/tsconfig`).
 
 ## How to run
 
@@ -66,7 +70,7 @@ still build; CI installs it via `mozilla-actions/sccache-action`.
   `donto_migration` and that's OK, but the diff stays attributable).
 - **Do** add tests that assert PRD invariants (paraconsistency, bitemporal
   correctness, scope inheritance, idempotency). See
-  `crates/donto-client/tests/invariants.rs` for patterns.
+  `packages/donto-client/tests/invariants.rs` for patterns.
 - **Do** skip a test cleanly when Postgres is missing — never panic in
   setup; use the `pg_or_skip!` pattern.
 - **Don't** chase performance. Perf is "kept in mind, not optimized for"

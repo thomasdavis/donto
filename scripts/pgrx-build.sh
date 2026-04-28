@@ -14,7 +14,7 @@ echo "Building $TAG (postgres ${PG_VERSION})..."
 docker build \
     --build-arg "PG_VERSION=${PG_VERSION}" \
     -t "$TAG" \
-    -f crates/pg_donto/Dockerfile \
+    -f packages/pg_donto/Dockerfile \
     .
 
 echo "Running pgrx test suite..."

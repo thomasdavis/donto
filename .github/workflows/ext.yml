@@ -4,14 +4,14 @@ on:
   push:
     branches: [main]
     paths:
-      - 'crates/pg_donto/**'
-      - 'sql/migrations/**'
+      - 'packages/pg_donto/**'
+      - 'packages/sql/migrations/**'
       - 'scripts/pgrx-build.sh'
       - '.github/workflows/ext.yml'
   pull_request:
     paths:
-      - 'crates/pg_donto/**'
-      - 'sql/migrations/**'
+      - 'packages/pg_donto/**'
+      - 'packages/sql/migrations/**'
       - 'scripts/pgrx-build.sh'
       - '.github/workflows/ext.yml'
 
@@ -33,7 +33,7 @@ jobs:
         uses: docker/build-push-action@v6
         with:
           context: .
-          file: crates/pg_donto/Dockerfile
+          file: packages/pg_donto/Dockerfile
           build-args: |
             PG_VERSION=${{ matrix.pg }}
           tags: donto-pgrx-pg${{ matrix.pg }}
