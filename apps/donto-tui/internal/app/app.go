@@ -19,10 +19,11 @@ const (
 	tabExplorer
 	tabContexts
 	tabClaimCard
+	tabCharts
 	tabCount
 )
 
-var tabNames = [tabCount]string{"Dashboard", "Firehose", "Explorer", "Contexts", "Card"}
+var tabNames = [tabCount]string{"Dashboard", "Firehose", "Explorer", "Contexts", "Card", "Charts"}
 
 type Model struct {
 	pool         *pgxpool.Pool
@@ -43,6 +44,7 @@ type Model struct {
 	explorer  views.Explorer
 	contexts  views.Contexts
 	claimcard views.ClaimCard
+	charts    views.Charts
 }
 
 func New(pool *pgxpool.Pool, poll time.Duration, srvURL string) Model {
@@ -55,6 +57,7 @@ func New(pool *pgxpool.Pool, poll time.Duration, srvURL string) Model {
 		explorer:     views.NewExplorer(),
 		contexts:     views.NewContexts(),
 		claimcard:    views.NewClaimCard(),
+		charts:       views.NewCharts(),
 	}
 }
 
@@ -90,6 +93,9 @@ func (m Model) updateView(msg tea.Msg) (Model, tea.Cmd) {
 	case tabClaimCard:
 		updated, cmd = m.claimcard.Update(msg)
 		m.claimcard = updated.(views.ClaimCard)
+	case tabCharts:
+		updated, cmd = m.charts.Update(msg)
+		m.charts = updated.(views.Charts)
 	}
 	return m, cmd
 }
@@ -122,6 +128,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "5":
 			m.activeTab = tabClaimCard
 			return m, nil
+		case "6":
+			m.activeTab = tabCharts
+			return m, m.pollActiveTab()
 		case "tab":
 			m.activeTab = (m.activeTab + 1) % tabCount
 			return m, m.pollActiveTab()
@@ -134,7 +143,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.width = msg.Width
 		m.height = msg.Height
 		// Forward to all views so they can store dimensions
-		for _, tab := range []int{tabDashboard, tabFirehose, tabExplorer, tabContexts, tabClaimCard} {
+		for _, tab := range []int{tabDashboard, tabFirehose, tabExplorer, tabContexts, tabClaimCard, tabCharts} {
 			prev := m.activeTab
 			m.activeTab = tab
 			m, _ = m.updateView(msg)
@@ -183,6 +192,19 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case views.ExplorerSearchMsg:
 		return m, m.fetchStatements(msg)
+
+	case views.ChartsGrowthMsg:
+		updated, cmd := m.charts.Update(msg)
+		m.charts = updated.(views.Charts)
+		return m, cmd
+	case views.ChartsContextsMsg:
+		updated, cmd := m.charts.Update(msg)
+		m.charts = updated.(views.Charts)
+		return m, cmd
+	case views.ChartsPredicatesMsg:
+		updated, cmd := m.charts.Update(msg)
+		m.charts = updated.(views.Charts)
+		return m, cmd
 	}
 
 	m, cmd := m.updateView(msg)
@@ -208,6 +230,8 @@ func (m Model) View() string {
 		content = m.contexts.View()
 	case tabClaimCard:
 		content = m.claimcard.View()
+	case tabCharts:
+		content = m.charts.View()
 	}
 
 	status := m.renderStatusBar()
@@ -250,7 +274,7 @@ func (m Model) renderStatusBar() string {
 		"  pg:" + pgStatus + "  srv:" + srvStatus + "  poll:" + ago.String() + " ago",
 	)
 	right := lipgloss.NewStyle().Foreground(styles.Subtle).Render(
-		"q:quit  ?:help  1-5:tabs  ",
+		"q:quit  ?:help  1-6:tabs  ",
 	)
 	gap := m.width - lipgloss.Width(left) - lipgloss.Width(right)
 	if gap < 0 {
@@ -265,7 +289,7 @@ func (m Model) renderHelp(w, h int) string {
 	help := `
   Keybindings
 
-  1-5          Switch tabs
+  1-6          Switch tabs
   Tab          Next tab
   Shift+Tab    Previous tab
   q / Ctrl+C   Quit
@@ -279,6 +303,9 @@ func (m Model) renderHelp(w, h int) string {
   Tab          Switch pane
   Enter        Search / select
   j/k          Navigate results
+
+  Charts:
+  ←/→ or h/l   Cycle charts
 `
 	return lipgloss.NewStyle().
 		Width(w).Height(h).
@@ -337,6 +364,21 @@ func (m Model) pollActiveTab() tea.Cmd {
 			contexts, _ := db.FetchContexts(context.Background(), pool)
 			return views.ContextsDataMsg{Contexts: contexts}
 		}
+	case tabCharts:
+		return tea.Batch(
+			func() tea.Msg {
+				days, _ := db.FetchGrowth(context.Background(), pool)
+				return views.ChartsGrowthMsg{Days: days}
+			},
+			func() tea.Msg {
+				ctxs, _ := db.FetchTopContexts(context.Background(), pool, 10)
+				return views.ChartsContextsMsg{Contexts: ctxs}
+			},
+			func() tea.Msg {
+				preds, _ := db.FetchTopPredicates(context.Background(), pool, 15)
+				return views.ChartsPredicatesMsg{Predicates: preds}
+			},
+		)
 	}
 	return nil
 }

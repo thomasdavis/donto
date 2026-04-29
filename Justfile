@@ -80,6 +80,11 @@ tui-build:
 tui *ARGS:
     cd apps/donto-tui && go run . --dsn '{{dsn}}' {{ARGS}}
 
+# Run the epistemic sweep (shape validation, derivation, obligations, maturity promotion).
+epistemic-sweep:
+    docker exec -i donto-pg psql -U donto -d donto -v ON_ERROR_STOP=1 \
+        < packages/sql/scripts/epistemic_sweep.sql
+
 # Install LISTEN/NOTIFY trigger for real-time TUI firehose.
 tui-triggers:
     docker exec -i donto-pg psql -U donto -d donto -v ON_ERROR_STOP=1 \

@@ -89,3 +89,21 @@ type PgActivity struct {
 	QueryStart *time.Time
 	AppName    string
 }
+
+type GrowthDay struct {
+	Day      time.Time
+	Asserts  int64
+	Retracts int64
+	Corrects int64
+}
+
+type ContextBar struct {
+	IRI   string
+	Kind  string
+	Count int64
+}
+
+type PredicateBar struct {
+	Predicate string
+	Count     int64
+}

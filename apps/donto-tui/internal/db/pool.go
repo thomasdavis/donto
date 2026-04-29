@@ -444,3 +444,117 @@ func QueryVal(ctx context.Context, pool *pgxpool.Pool, sql string, dest interfac
 	defer cancel()
 	pool.QueryRow(qctx, sql).Scan(dest)
 }
+
+func FetchGrowth(ctx context.Context, pool *pgxpool.Pool) ([]model.GrowthDay, error) {
+	qctx, cancel := withTimeout(ctx)
+	defer cancel()
+	rows, err := pool.Query(qctx, `
+		SELECT date_trunc('day', at)::date AS day, action, count(*)
+		FROM donto_audit
+		WHERE at > now() - interval '14 days'
+		GROUP BY day, action
+		ORDER BY day
+	`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	// Aggregate into per-day buckets.
+	dayMap := make(map[time.Time]*model.GrowthDay)
+	for rows.Next() {
+		var day time.Time
+		var action string
+		var count int64
+		if err := rows.Scan(&day, &action, &count); err != nil {
+			return nil, err
+		}
+		g, ok := dayMap[day]
+		if !ok {
+			g = &model.GrowthDay{Day: day}
+			dayMap[day] = g
+		}
+		switch action {
+		case "assert":
+			g.Asserts += count
+		case "retract":
+			g.Retracts += count
+		case "correct":
+			g.Corrects += count
+		}
+	}
+
+	// Fill in all 14 days so the chart always has 14 bars.
+	now := time.Now().UTC().Truncate(24 * time.Hour)
+	result := make([]model.GrowthDay, 14)
+	for i := 0; i < 14; i++ {
+		day := now.AddDate(0, 0, i-13)
+		if g, ok := dayMap[day]; ok {
+			result[i] = *g
+		} else {
+			result[i] = model.GrowthDay{Day: day}
+		}
+	}
+	return result, nil
+}
+
+func FetchTopContexts(ctx context.Context, pool *pgxpool.Pool, limit int) ([]model.ContextBar, error) {
+	qctx, cancel := withTimeout(ctx)
+	defer cancel()
+	rows, err := pool.Query(qctx, `
+		SELECT c.iri, c.kind, coalesce(s.cnt, 0)
+		FROM donto_context c
+		LEFT JOIN (
+			SELECT context, count(*) AS cnt
+			FROM donto_statement
+			WHERE upper(tx_time) IS NULL
+			GROUP BY context
+		) s ON s.context = c.iri
+		ORDER BY coalesce(s.cnt, 0) DESC
+		LIMIT $1
+	`, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var bars []model.ContextBar
+	for rows.Next() {
+		var b model.ContextBar
+		if err := rows.Scan(&b.IRI, &b.Kind, &b.Count); err != nil {
+			return nil, err
+		}
+		bars = append(bars, b)
+	}
+	return bars, nil
+}
+
+func FetchTopPredicates(ctx context.Context, pool *pgxpool.Pool, limit int) ([]model.PredicateBar, error) {
+	qctx, cancel := withTimeout(ctx)
+	defer cancel()
+	rows, err := pool.Query(qctx, `
+		SELECT predicate, count(*) AS cnt
+		FROM (
+			SELECT predicate
+			FROM donto_statement TABLESAMPLE SYSTEM(0.1)
+			WHERE upper(tx_time) IS NULL
+		) t
+		GROUP BY predicate
+		ORDER BY cnt DESC
+		LIMIT $1
+	`, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var bars []model.PredicateBar
+	for rows.Next() {
+		var b model.PredicateBar
+		if err := rows.Scan(&b.Predicate, &b.Count); err != nil {
+			return nil, err
+		}
+		bars = append(bars, b)
+	}
+	return bars, nil
+}
