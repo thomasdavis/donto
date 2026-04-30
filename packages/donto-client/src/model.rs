@@ -391,3 +391,98 @@ pub struct ProofObligation {
     pub context: String,
     pub assigned_agent: Option<Uuid>,
 }
+
+/// Predicate alignment relation type (migration 0048).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AlignmentRelation {
+    ExactEquivalent,
+    InverseEquivalent,
+    SubPropertyOf,
+    CloseMatch,
+    Decomposition,
+    NotEquivalent,
+}
+
+impl AlignmentRelation {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::ExactEquivalent => "exact_equivalent",
+            Self::InverseEquivalent => "inverse_equivalent",
+            Self::SubPropertyOf => "sub_property_of",
+            Self::CloseMatch => "close_match",
+            Self::Decomposition => "decomposition",
+            Self::NotEquivalent => "not_equivalent",
+        }
+    }
+    pub fn parse(s: &str) -> Option<Self> {
+        Some(match s {
+            "exact_equivalent" => Self::ExactEquivalent,
+            "inverse_equivalent" => Self::InverseEquivalent,
+            "sub_property_of" => Self::SubPropertyOf,
+            "close_match" => Self::CloseMatch,
+            "decomposition" => Self::Decomposition,
+            "not_equivalent" => Self::NotEquivalent,
+            _ => return None,
+        })
+    }
+}
+
+/// One row of the predicate alignment table (migration 0048).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PredicateAlignment {
+    pub alignment_id: Uuid,
+    pub source_iri: String,
+    pub target_iri: String,
+    pub relation: AlignmentRelation,
+    pub confidence: f64,
+    pub valid_lo: Option<NaiveDate>,
+    pub valid_hi: Option<NaiveDate>,
+    pub run_id: Option<Uuid>,
+}
+
+/// Rich metadata for a predicate (migration 0049).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PredicateDescriptor {
+    pub iri: String,
+    pub label: String,
+    pub gloss: Option<String>,
+    pub subject_type: Option<String>,
+    pub object_type: Option<String>,
+    pub domain: Option<String>,
+    pub example_subject: Option<String>,
+    pub example_object: Option<String>,
+    pub source_sentence: Option<String>,
+}
+
+/// Alignment run (migration 0050).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AlignmentRun {
+    pub run_id: Uuid,
+    pub run_type: String,
+    pub status: String,
+    pub model_id: Option<String>,
+    pub alignments_proposed: i32,
+    pub alignments_accepted: i32,
+    pub alignments_rejected: i32,
+}
+
+/// A candidate predicate returned from a similarity search (migrations 0049, 0056).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PredicateCandidate {
+    pub iri: String,
+    pub label: String,
+    pub gloss: Option<String>,
+    pub subject_type: Option<String>,
+    pub object_type: Option<String>,
+    pub similarity: f64,
+}
+
+/// A statement returned by `donto_match_aligned` with provenance about how it
+/// was reached through the predicate closure.
+#[derive(Debug, Clone)]
+pub struct AlignedStatement {
+    pub statement: Statement,
+    pub matched_via: String,
+    pub alignment_confidence: f64,
+}

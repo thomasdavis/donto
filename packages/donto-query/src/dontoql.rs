@@ -13,6 +13,7 @@
 //!   | 'POLARITY' ident_in_set
 //!   | 'MATURITY' '>='? INT
 //!   | 'IDENTITY' ident
+//!   | 'PREDICATES' ('EXPAND' | 'STRICT' | 'EXPAND_ABOVE' INT)
 //!   | 'PROJECT'  var (',' var)*
 //!   | 'LIMIT'    INT
 //!   | 'OFFSET'   INT
@@ -326,6 +327,7 @@ impl Parser {
                             q.min_maturity = self.parse_int()? as u8;
                         }
                         "IDENTITY" => q.identity = self.parse_identity()?,
+                        "PREDICATES" => q.predicate_expansion = self.parse_predicate_expansion()?,
                         "PROJECT" => q.project = self.parse_var_list()?,
                         "LIMIT" => q.limit = Some(self.parse_int()? as u64),
                         "OFFSET" => q.offset = Some(self.parse_int()? as u64),
@@ -494,6 +496,30 @@ impl Parser {
         })
     }
 
+    fn parse_predicate_expansion(&mut self) -> Result<PredicateExpansion, ParseError> {
+        let s = self.parse_ident()?;
+        Ok(match s.to_ascii_uppercase().as_str() {
+            "EXPAND" => PredicateExpansion::Expand,
+            "STRICT" => PredicateExpansion::Strict,
+            "EXPAND_ABOVE" => {
+                let n = self.parse_int()?;
+                if !(0..=100).contains(&n) {
+                    return Err(ParseError {
+                        pos: self.pos(),
+                        msg: format!("EXPAND_ABOVE percent out of range: {n}"),
+                    });
+                }
+                PredicateExpansion::ExpandAbove(n as u8)
+            }
+            other => {
+                return Err(ParseError {
+                    pos: self.pos(),
+                    msg: format!("unknown predicate expansion mode `{other}`"),
+                })
+            }
+        })
+    }
+
     fn parse_identity(&mut self) -> Result<IdentityMode, ParseError> {
         let s = self.parse_ident()?;
         Ok(match s.to_ascii_uppercase().as_str() {
@@ -655,6 +681,25 @@ mod tests {
         let q = parse_dontoql("MATCH ?s ?p ?o LIMIT 25 OFFSET 100").unwrap();
         assert_eq!(q.limit, Some(25));
         assert_eq!(q.offset, Some(100));
+    }
+
+    #[test]
+    fn predicates_keyword_parses_all_modes() {
+        let q = parse_dontoql("MATCH ?s ?p ?o PREDICATES STRICT").unwrap();
+        assert_eq!(q.predicate_expansion, PredicateExpansion::Strict);
+
+        let q = parse_dontoql("MATCH ?s ?p ?o PREDICATES EXPAND").unwrap();
+        assert_eq!(q.predicate_expansion, PredicateExpansion::Expand);
+
+        let q = parse_dontoql("MATCH ?s ?p ?o PREDICATES EXPAND_ABOVE 80").unwrap();
+        assert_eq!(q.predicate_expansion, PredicateExpansion::ExpandAbove(80));
+
+        // Default (no PREDICATES clause) is Expand.
+        let q = parse_dontoql("MATCH ?s ?p ?o").unwrap();
+        assert_eq!(q.predicate_expansion, PredicateExpansion::Expand);
+
+        // Out-of-range percent is rejected.
+        assert!(parse_dontoql("MATCH ?s ?p ?o PREDICATES EXPAND_ABOVE 150").is_err());
     }
 
     #[test]

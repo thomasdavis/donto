@@ -4,6 +4,7 @@
 #![warn(missing_debug_implementations, rust_2018_idioms)]
 
 pub mod agents;
+pub mod alignment;
 pub mod arguments;
 pub mod browse;
 pub mod certificates;
@@ -75,6 +76,16 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/obligations/open",       post(obligations::list_open))
         .route("/obligations/summary",    get(obligations::summary))
         .route("/claim/:id",              get(claim_card))
+        // Predicate alignment layer (PAL)
+        .route("/alignment/register",       post(alignment::register))
+        .route("/alignment/retract",        post(alignment::retract))
+        .route("/alignment/rebuild-closure",post(alignment::rebuild_closure))
+        .route("/alignment/runs/start",     post(alignment::start_run))
+        .route("/alignment/runs/complete",  post(alignment::complete_run))
+        .route("/descriptors/upsert",       post(alignment::upsert_descriptor))
+        .route("/descriptors/nearest",      post(alignment::nearest_predicates))
+        .route("/shadow/materialize",       post(alignment::materialize_shadow))
+        .route("/shadow/rebuild",           post(alignment::rebuild_shadows))
         .layer(axum::middleware::from_fn(cors))
         .with_state(state)
 }

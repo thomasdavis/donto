@@ -18,8 +18,9 @@ pub use client::DontoClient;
 pub use error::{Error, Result};
 pub use migrations::apply_migrations;
 pub use model::{
-    Agent, ArgumentRelation, Document, DocumentRevision, EvidenceLink, ExtractionRun, Literal,
-    Object, ObligationStatus, Polarity, ProofObligation, Reaction, ReactionKind, ShapeVerdict,
-    Span, Statement, StatementInput, TextMatch, TimeBucket,
+    Agent, AlignedStatement, AlignmentRelation, AlignmentRun, ArgumentRelation, Document,
+    DocumentRevision, EvidenceLink, ExtractionRun, Literal, Object, ObligationStatus, Polarity,
+    PredicateAlignment, PredicateCandidate, PredicateDescriptor, ProofObligation, Reaction,
+    ReactionKind, ShapeVerdict, Span, Statement, StatementInput, TextMatch, TimeBucket,
 };
 pub use scope::ContextScope;

@@ -123,6 +123,15 @@ pub const MIGRATIONS: &[(&str, &str)] = &[
     ("0045_auto_shape_validation", include_str!("../../sql/migrations/0045_auto_shape_validation.sql")),
     ("0046_references", include_str!("../../sql/migrations/0046_references.sql")),
     ("0047_claim_lifecycle", include_str!("../../sql/migrations/0047_claim_lifecycle.sql")),
+    ("0048_predicate_alignment", include_str!("../../sql/migrations/0048_predicate_alignment.sql")),
+    ("0049_predicate_descriptor", include_str!("../../sql/migrations/0049_predicate_descriptor.sql")),
+    ("0050_alignment_run", include_str!("../../sql/migrations/0050_alignment_run.sql")),
+    ("0051_predicate_closure", include_str!("../../sql/migrations/0051_predicate_closure.sql")),
+    ("0052_match_aligned", include_str!("../../sql/migrations/0052_match_aligned.sql")),
+    ("0053_canonical_shadow", include_str!("../../sql/migrations/0053_canonical_shadow.sql")),
+    ("0054_event_frames", include_str!("../../sql/migrations/0054_event_frames.sql")),
+    ("0055_match_alignment_integration", include_str!("../../sql/migrations/0055_match_alignment_integration.sql")),
+    ("0056_lexical_normalizer", include_str!("../../sql/migrations/0056_lexical_normalizer.sql")),
 ];
 
 fn sha256_of(s: &str) -> Vec<u8> {

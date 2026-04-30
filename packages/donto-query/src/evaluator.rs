@@ -13,6 +13,23 @@ use donto_client::{ContextScope, DontoClient, Object, Statement};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
+/// Pull a [`Statement`] out of either match path.
+trait IntoStatement {
+    fn into_statement(self) -> Statement;
+}
+
+impl IntoStatement for Statement {
+    fn into_statement(self) -> Statement {
+        self
+    }
+}
+
+impl IntoStatement for donto_client::AlignedStatement {
+    fn into_statement(self) -> Statement {
+        self.statement
+    }
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum EvalError {
     #[error("client error: {0}")]
@@ -52,18 +69,49 @@ pub async fn evaluate(client: &DontoClient, q: &Query) -> Result<Vec<EvalRow>, E
                 _ => None,
             };
 
-            let stmts = client
-                .match_pattern(
-                    subject.as_deref(),
-                    predicate.as_deref(),
-                    object_iri_filter.as_deref(),
-                    scope.as_ref(),
-                    polarity,
-                    q.min_maturity,
-                    None,
-                    None,
-                )
-                .await?;
+            let stmts: Vec<Statement> = match q.predicate_expansion {
+                PredicateExpansion::Expand => client
+                    .match_pattern(
+                        subject.as_deref(),
+                        predicate.as_deref(),
+                        object_iri_filter.as_deref(),
+                        scope.as_ref(),
+                        polarity,
+                        q.min_maturity,
+                        None,
+                        None,
+                    )
+                    .await?,
+                PredicateExpansion::Strict => client
+                    .match_strict(
+                        subject.as_deref(),
+                        predicate.as_deref(),
+                        object_iri_filter.as_deref(),
+                        scope.as_ref(),
+                        polarity,
+                        q.min_maturity,
+                        None,
+                        None,
+                    )
+                    .await?,
+                PredicateExpansion::ExpandAbove(pct) => client
+                    .match_aligned(
+                        subject.as_deref(),
+                        predicate.as_deref(),
+                        object_iri_filter.as_deref(),
+                        scope.as_ref(),
+                        polarity,
+                        q.min_maturity,
+                        None,
+                        None,
+                        true,
+                        pct as f64 / 100.0,
+                    )
+                    .await?
+                    .into_iter()
+                    .map(IntoStatement::into_statement)
+                    .collect(),
+            };
 
             for st in stmts {
                 if let Some(env2) = unify(env, pat, &st) {

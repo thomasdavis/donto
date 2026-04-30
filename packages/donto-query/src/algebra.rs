@@ -55,6 +55,25 @@ pub enum IdentityMode {
     Strict,
 }
 
+/// Predicate-alignment expansion mode (Predicate Alignment Layer).
+///
+/// Controls how a query treats the predicate slot. `Expand` is the default and
+/// rides the predicate closure (migration 0055 makes `donto_match` expand by
+/// default). `Strict` pins to the exact predicate IRI; `ExpandAbove(pct)`
+/// expands only via alignments whose confidence ≥ pct/100.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum PredicateExpansion {
+    Expand,
+    Strict,
+    ExpandAbove(u8),
+}
+
+impl Default for PredicateExpansion {
+    fn default() -> Self {
+        PredicateExpansion::Expand
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum Filter {
     Eq(Term, Term),
@@ -78,6 +97,7 @@ pub struct Query {
     pub project: Vec<String>, // empty = all bound vars
     pub limit: Option<u64>,
     pub offset: Option<u64>,
+    pub predicate_expansion: PredicateExpansion,
 }
 
 impl Default for Query {
@@ -93,6 +113,7 @@ impl Default for Query {
             project: vec![],
             limit: None,
             offset: None,
+            predicate_expansion: PredicateExpansion::Expand,
         }
     }
 }

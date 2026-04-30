@@ -4,8 +4,8 @@
 
 use crate::error::{Error, Result};
 use crate::model::{
-    Literal, Object, Polarity, Reaction, ReactionKind, ShapeVerdict, Statement, StatementInput,
-    TextMatch, TimeBucket,
+    AlignedStatement, AlignmentRelation, Literal, Object, Polarity, PredicateCandidate, Reaction,
+    ReactionKind, ShapeVerdict, Statement, StatementInput, TextMatch, TimeBucket,
 };
 use crate::scope::ContextScope;
 
@@ -785,6 +785,341 @@ impl DontoClient {
             .await?;
         Ok(row.get::<_, Uuid>(0))
     }
+
+    // --- Predicate alignment layer ---
+
+    /// Register an alignment edge between two predicates (migration 0048).
+    #[allow(clippy::too_many_arguments)]
+    pub async fn register_alignment(
+        &self,
+        source: &str,
+        target: &str,
+        relation: AlignmentRelation,
+        confidence: f64,
+        valid_lo: Option<NaiveDate>,
+        valid_hi: Option<NaiveDate>,
+        run_id: Option<Uuid>,
+        provenance: Option<&Json>,
+        actor: Option<&str>,
+    ) -> Result<Uuid> {
+        let c = self.pool.get().await?;
+        let prov_default = Json::Object(serde_json::Map::new());
+        let prov: &Json = provenance.unwrap_or(&prov_default);
+        let row = c
+            .query_one(
+                "select donto_register_alignment($1, $2, $3, $4, $5, $6, $7, $8, $9)",
+                &[
+                    &source,
+                    &target,
+                    &relation.as_str(),
+                    &confidence,
+                    &valid_lo,
+                    &valid_hi,
+                    &run_id,
+                    &prov,
+                    &actor,
+                ],
+            )
+            .await?;
+        Ok(row.get::<_, Uuid>(0))
+    }
+
+    /// Close transaction-time on an alignment edge (migration 0048). Returns
+    /// true if a current row was actually retracted.
+    pub async fn retract_alignment(&self, alignment_id: Uuid) -> Result<bool> {
+        let c = self.pool.get().await?;
+        let row = c
+            .query_one(
+                "select donto_retract_alignment($1)",
+                &[&alignment_id],
+            )
+            .await?;
+        Ok(row.get::<_, bool>(0))
+    }
+
+    /// Rebuild the materialized predicate closure index (migration 0051).
+    /// Returns the number of rows in the closure after rebuild.
+    pub async fn rebuild_predicate_closure(&self) -> Result<i32> {
+        let c = self.pool.get().await?;
+        let row = c
+            .query_one("select donto_rebuild_predicate_closure()", &[])
+            .await?;
+        Ok(row.get::<_, i32>(0))
+    }
+
+    /// Upsert a predicate descriptor (migration 0049). Returns the IRI.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn upsert_descriptor(
+        &self,
+        iri: &str,
+        label: &str,
+        gloss: Option<&str>,
+        subject_type: Option<&str>,
+        object_type: Option<&str>,
+        domain: Option<&str>,
+        embedding_model: Option<&str>,
+        embedding: Option<&[f32]>,
+    ) -> Result<String> {
+        let c = self.pool.get().await?;
+        let row = c
+            .query_one(
+                "select donto_upsert_descriptor($1, $2, $3, $4, $5, $6, \
+                                                 null, null, null, null, $7, $8)",
+                &[
+                    &iri,
+                    &label,
+                    &gloss,
+                    &subject_type,
+                    &object_type,
+                    &domain,
+                    &embedding_model,
+                    &embedding,
+                ],
+            )
+            .await?;
+        Ok(row.get::<_, String>(0))
+    }
+
+    /// Find predicates whose descriptor embedding is closest to a query
+    /// embedding (migration 0049).
+    pub async fn nearest_predicates(
+        &self,
+        query_embedding: &[f32],
+        model_id: &str,
+        domain: Option<&str>,
+        limit: i32,
+    ) -> Result<Vec<PredicateCandidate>> {
+        let c = self.pool.get().await?;
+        let rows = c
+            .query(
+                "select iri, label, gloss, similarity \
+                 from donto_nearest_predicates($1, $2, $3, null, null, $4)",
+                &[&query_embedding, &model_id, &domain, &limit],
+            )
+            .await?;
+        rows.into_iter()
+            .map(|r| {
+                Ok(PredicateCandidate {
+                    iri: r.try_get("iri")?,
+                    label: r.try_get("label")?,
+                    gloss: r.try_get("gloss")?,
+                    subject_type: None,
+                    object_type: None,
+                    similarity: r.try_get("similarity")?,
+                })
+            })
+            .collect()
+    }
+
+    /// Open a new alignment run (migration 0050). Returns the run_id.
+    pub async fn start_alignment_run(
+        &self,
+        run_type: &str,
+        model_id: Option<&str>,
+        config: Option<&Json>,
+        source_predicates: Option<&[String]>,
+    ) -> Result<Uuid> {
+        let c = self.pool.get().await?;
+        let cfg_default = Json::Object(serde_json::Map::new());
+        let cfg: &Json = config.unwrap_or(&cfg_default);
+        let row = c
+            .query_one(
+                "select donto_start_alignment_run($1, $2, null, $3, $4, '{}'::jsonb)",
+                &[&run_type, &model_id, &cfg, &source_predicates],
+            )
+            .await?;
+        Ok(row.get::<_, Uuid>(0))
+    }
+
+    /// Close an alignment run with status and counters (migration 0050).
+    pub async fn complete_alignment_run(
+        &self,
+        run_id: Uuid,
+        status: &str,
+        proposed: Option<i32>,
+        accepted: Option<i32>,
+        rejected: Option<i32>,
+    ) -> Result<()> {
+        let c = self.pool.get().await?;
+        c.execute(
+            "select donto_complete_alignment_run($1, $2, $3, $4, $5)",
+            &[&run_id, &status, &proposed, &accepted, &rejected],
+        )
+        .await?;
+        Ok(())
+    }
+
+    /// Alignment-aware match: like [`match_pattern`] but expanding via the
+    /// predicate closure (migration 0052). Each row carries `matched_via` and
+    /// `alignment_confidence`.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn match_aligned(
+        &self,
+        subject: Option<&str>,
+        predicate: Option<&str>,
+        object_iri: Option<&str>,
+        scope: Option<&ContextScope>,
+        polarity: Option<Polarity>,
+        min_maturity: u8,
+        as_of_tx: Option<DateTime<Utc>>,
+        as_of_valid: Option<NaiveDate>,
+        expand: bool,
+        min_confidence: f64,
+    ) -> Result<Vec<AlignedStatement>> {
+        let scope_json: Option<Json> = scope.map(|s| s.to_json());
+        let polarity_str: Option<&str> = polarity.map(Polarity::as_str);
+        let c = self.pool.get().await?;
+        let params: [&(dyn ToSql + Sync); 11] = [
+            &subject,
+            &predicate,
+            &object_iri,
+            &Option::<Json>::None,
+            &scope_json,
+            &polarity_str,
+            &(min_maturity as i32),
+            &as_of_tx,
+            &as_of_valid,
+            &expand,
+            &min_confidence,
+        ];
+        let rows = c
+            .query(
+                "select * from donto_match_aligned($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)",
+                &params,
+            )
+            .await?;
+        rows.into_iter().map(row_to_aligned_statement).collect()
+    }
+
+    /// Strict (un-expanded) match (migration 0055).
+    #[allow(clippy::too_many_arguments)]
+    pub async fn match_strict(
+        &self,
+        subject: Option<&str>,
+        predicate: Option<&str>,
+        object_iri: Option<&str>,
+        scope: Option<&ContextScope>,
+        polarity: Option<Polarity>,
+        min_maturity: u8,
+        as_of_tx: Option<DateTime<Utc>>,
+        as_of_valid: Option<NaiveDate>,
+    ) -> Result<Vec<Statement>> {
+        let scope_json: Option<Json> = scope.map(|s| s.to_json());
+        let polarity_str: Option<&str> = polarity.map(Polarity::as_str);
+        let c = self.pool.get().await?;
+        let params: [&(dyn ToSql + Sync); 9] = [
+            &subject,
+            &predicate,
+            &object_iri,
+            &Option::<Json>::None,
+            &scope_json,
+            &polarity_str,
+            &(min_maturity as i32),
+            &as_of_tx,
+            &as_of_valid,
+        ];
+        let rows = c
+            .query(
+                "select * from donto_match_strict($1, $2, $3, $4, $5, $6, $7, $8, $9)",
+                &params,
+            )
+            .await?;
+        rows.into_iter().map(row_to_statement).collect()
+    }
+
+    /// Materialize (or re-materialize) the canonical shadow for one statement
+    /// (migration 0053). Returns the new shadow_id, or None if the statement
+    /// is not currently open.
+    pub async fn materialize_shadow(&self, statement_id: Uuid) -> Result<Option<Uuid>> {
+        let c = self.pool.get().await?;
+        let row = c
+            .query_one("select donto_materialize_shadow($1)", &[&statement_id])
+            .await?;
+        Ok(row.get::<_, Option<Uuid>>(0))
+    }
+
+    /// Batch rebuild canonical shadows for a context (or all current
+    /// statements when context is None). Returns the count rebuilt.
+    pub async fn rebuild_shadows(
+        &self,
+        context: Option<&str>,
+        limit: Option<i32>,
+    ) -> Result<i32> {
+        let c = self.pool.get().await?;
+        let row = c
+            .query_one(
+                "select donto_rebuild_shadows($1, $2)",
+                &[&context, &limit],
+            )
+            .await?;
+        Ok(row.get::<_, i32>(0))
+    }
+
+    /// Decompose a statement into an event frame plus role triples
+    /// (migration 0054). Returns the new frame_id.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn decompose_to_frame(
+        &self,
+        subject: &str,
+        predicate: &str,
+        object_iri: Option<&str>,
+        context: &str,
+        frame_type: Option<&str>,
+        extra_roles: Option<&Json>,
+        valid_lo: Option<NaiveDate>,
+        valid_hi: Option<NaiveDate>,
+        actor: Option<&str>,
+    ) -> Result<Uuid> {
+        let c = self.pool.get().await?;
+        let row = c
+            .query_one(
+                "select donto_decompose_to_frame($1, $2, $3, $4, $5, $6, $7, $8, $9)",
+                &[
+                    &subject,
+                    &predicate,
+                    &object_iri,
+                    &context,
+                    &frame_type,
+                    &extra_roles,
+                    &valid_lo,
+                    &valid_hi,
+                    &actor,
+                ],
+            )
+            .await?;
+        Ok(row.get::<_, Uuid>(0))
+    }
+
+    /// Embedding-based extraction-time predicate candidates (migration 0056).
+    pub async fn extraction_predicate_candidates(
+        &self,
+        embedding: &[f32],
+        model_id: &str,
+        domain: Option<&str>,
+        subject_type: Option<&str>,
+        limit: i32,
+    ) -> Result<Vec<PredicateCandidate>> {
+        let c = self.pool.get().await?;
+        let rows = c
+            .query(
+                "select iri, label, gloss, subject_type, object_type, similarity \
+                 from donto_extraction_predicate_candidates($1, $2, $3, $4, null, $5)",
+                &[&embedding, &model_id, &domain, &subject_type, &limit],
+            )
+            .await?;
+        rows.into_iter()
+            .map(|r| {
+                Ok(PredicateCandidate {
+                    iri: r.try_get("iri")?,
+                    label: r.try_get("label")?,
+                    gloss: r.try_get("gloss")?,
+                    subject_type: r.try_get("subject_type")?,
+                    object_type: r.try_get("object_type")?,
+                    similarity: r.try_get("similarity")?,
+                })
+            })
+            .collect()
+    }
 }
 
 fn stmt_to_json(s: &StatementInput) -> Json {
@@ -823,6 +1158,10 @@ fn stmt_to_json(s: &StatementInput) -> Json {
 }
 
 fn row_to_statement(row: Row) -> Result<Statement> {
+    statement_from_row(&row)
+}
+
+fn statement_from_row(row: &Row) -> Result<Statement> {
     let object_iri: Option<String> = row.try_get("object_iri")?;
     let object_lit: Option<Json> = row.try_get("object_lit")?;
     let object = match (object_iri, object_lit) {
@@ -851,5 +1190,14 @@ fn row_to_statement(row: Row) -> Result<Statement> {
         valid_hi: row.try_get("valid_hi")?,
         tx_lo: row.try_get("tx_lo")?,
         tx_hi: row.try_get("tx_hi")?,
+    })
+}
+
+fn row_to_aligned_statement(row: Row) -> Result<AlignedStatement> {
+    let statement = statement_from_row(&row)?;
+    Ok(AlignedStatement {
+        statement,
+        matched_via: row.try_get("matched_via")?,
+        alignment_confidence: row.try_get("alignment_confidence")?,
     })
 }

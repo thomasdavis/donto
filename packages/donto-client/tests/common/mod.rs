@@ -109,3 +109,25 @@ pub async fn curated_ctx(client: &DontoClient, name: &str) -> String {
         .expect("ensure_context");
     ctx
 }
+
+/// `donto_rebuild_predicate_closure` does a TRUNCATE-then-INSERT on a shared
+/// table. With cargo running test functions in parallel, two concurrent
+/// rebuilds can deadlock on the closure index. Retry on deadlock so the suite
+/// stays stable.
+pub async fn rebuild_closure_with_retry(client: &DontoClient) {
+    for attempt in 0..6 {
+        match client.rebuild_predicate_closure().await {
+            Ok(_) => return,
+            Err(e) => {
+                let msg = format!("{e:?}");
+                if msg.contains("deadlock") || msg.contains("40P01") {
+                    let backoff = 50u64 << attempt;
+                    tokio::time::sleep(std::time::Duration::from_millis(backoff)).await;
+                    continue;
+                }
+                panic!("rebuild_predicate_closure failed: {e:?}");
+            }
+        }
+    }
+    panic!("rebuild_predicate_closure deadlocked after retries");
+}
