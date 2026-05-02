@@ -342,21 +342,40 @@ async def version():
 
 
 class ExtractIngestRequest(BaseModel):
-    text: str = Field(..., description="Source text to extract knowledge from")
-    context: str = Field(..., description="Context IRI (e.g. ctx:genes/mary-watson)")
-    model: str = Field("grok", description="grok (default), mistral, or OpenRouter model ID")
+    text: str = Field(..., description="The full source text to extract knowledge from. Can be any length — articles, obituaries, transcripts, legal documents, Wikipedia pages, interview notes, etc. Longer texts yield more facts proportionally. A 500-word article typically produces 60-150 facts across all 8 analytical tiers.", json_schema_extra={"example": "Mary Watson was born in Cornwall, England in 1860. She married Robert Watson in Cooktown, Queensland in 1879. Robert was a beche-de-mer fisherman who operated from Lizard Island."})
+    context: str = Field(..., description="Context IRI that scopes the extracted facts. Use ctx:genes/<topic>/<source-type> for genealogy research. Each context is independently queryable, alignable, and retractable. Examples: ctx:genes/mary-watson/obituary, ctx:genes/cooktown-history/newspaper, ctx:research/climate-models/paper-2024.", json_schema_extra={"example": "ctx:genes/mary-watson/obituary"})
+    model: str = Field("grok", description="LLM model for extraction. Shortcuts: 'grok' = Grok 4.1 Fast ($0.005/article, quality 8.4-8.8/10, recommended for bulk work), 'mistral' = Mistral Large ($0.02/article, quality 8.4-8.8/10, fallback). Or pass any full OpenRouter model ID like 'anthropic/claude-sonnet-4-6'.", json_schema_extra={"example": "grok"})
 
 
 @app.post("/extract-and-ingest", tags=["Extract"],
-    summary="Extract knowledge from text and ingest (preferred)")
+    summary="Extract knowledge from text and ingest into the graph (preferred endpoint for agents)")
 async def extract_and_ingest(req: ExtractIngestRequest):
-    """**Preferred endpoint for agents.** Extracts facts from text via LLM,
-    ingests directly into the graph. No intermediate steps.
+    """**This is the primary endpoint for building knowledge graphs. Use this first.**
 
-    1. Calls OpenRouter with the extraction prompt
-    2. Parses the returned facts (subject/predicate/object/tier/confidence)
-    3. Batch-inserts into donto via dontosrv /assert/batch
-    4. Returns a report with counts and tier breakdown
+    Takes unstructured text, sends it to an LLM (Grok 4.1 Fast by default via OpenRouter),
+    which extracts structured facts across 8 analytical tiers (surface facts → philosophical
+    analysis), then batch-inserts all facts directly into the knowledge graph under the
+    specified context.
+
+    **How it works internally:**
+    1. Calls OpenRouter with a specialized 8-tier extraction prompt
+    2. LLM returns JSON with facts: subject (kebab-case IRI), predicate (camelCase), object (IRI or literal), tier (1-8), confidence (0.0-1.0), notes
+    3. Maps confidence to maturity: ≥0.95→L4, ≥0.8→L3, ≥0.6→L2, ≥0.4→L1, else L0
+    4. Ensures the context exists in the database
+    5. Batch-inserts all facts via dontosrv /assert/batch (idempotent — duplicates are content-hash deduplicated)
+
+    **Typical workflow:**
+    1. Find text about your research topic (obituary, newspaper article, Wikipedia page, etc.)
+    2. POST it here with a descriptive context like `ctx:genes/person-name/source-type`
+    3. Repeat for additional sources with different contexts
+    4. Call `POST /align/auto` to converge predicates across sources
+    5. Query with `GET /search`, `GET /history/{subject}`, or `GET /match`
+
+    **Cost:** ~$0.005 per article via Grok 4.1 Fast. A 500-word article yields 60-150 facts.
+
+    **Timing:** 30-120 seconds (LLM call dominates). Set your HTTP client timeout to at least 600 seconds.
+
+    **Returns:** `{model, context, facts_extracted, statements_ingested, tiers: {t1..t8}, elapsed_ms}`
     """
     start = time.time()
     model = resolve_model(req.model)
@@ -385,16 +404,32 @@ async def extract_and_ingest(req: ExtractIngestRequest):
 
 
 class ExtractRequest(BaseModel):
-    text: str = Field(..., description="Source text")
-    context: Optional[str] = Field(None, description="Context IRI")
-    model: str = Field("grok", description="Model")
-    dry_run: bool = Field(False, description="Preview without ingesting")
+    text: str = Field(..., description="Source text to extract knowledge from.")
+    context: Optional[str] = Field(None, description="Context IRI. If omitted, auto-generated as ctx:extract/<model-name>.")
+    model: str = Field("grok", description="Model shortcut or full OpenRouter model ID.")
+    dry_run: bool = Field(False, description="If true, returns the extracted facts as a JSON array without ingesting them into the database. Useful for previewing what the LLM extracts before committing.")
 
 
 @app.post("/extract", tags=["Extract"],
-    summary="Extract with dry-run option")
+    summary="Extract knowledge from text with optional dry-run preview")
 async def extract(req: ExtractRequest):
-    """Like /extract-and-ingest but with dry_run to preview facts before ingesting."""
+    """Like `/extract-and-ingest` but with additional options.
+
+    **Use this when you want to:**
+    - Preview extracted facts before committing (`dry_run: true`)
+    - Let the context be auto-generated from the model name
+    - Inspect the raw LLM output including tier labels, confidence scores, and justification notes
+
+    **With `dry_run: true`**, the response includes a `facts` array with every extracted fact,
+    each containing: subject, predicate, object, tier (1-8), confidence (0.0-1.0), and notes
+    (brief justification of why this fact was extracted from the text).
+
+    **Timing:** 30-120 seconds. Set HTTP timeout to 600s.
+
+    **Returns (dry_run=false):** `{model, context, facts_extracted, statements_ingested, tiers, elapsed_ms}`
+
+    **Returns (dry_run=true):** `{model, facts_extracted, tiers, dry_run: true, facts: [...], elapsed_ms}`
+    """
     start = time.time()
     model = resolve_model(req.model)
     facts = await call_openrouter(req.text, model)
@@ -434,45 +469,82 @@ async def extract(req: ExtractRequest):
 
 
 class AssertRequest(BaseModel):
-    subject: str = Field(..., description="Subject IRI")
-    predicate: str = Field(..., description="Predicate")
-    object_iri: Optional[str] = Field(None, description="Object IRI")
-    object_lit: Optional[dict] = Field(None, description='{"v": value, "dt": "xsd:type"}')
-    context: str = Field("donto:anonymous", description="Context IRI")
-    polarity: str = Field("asserted")
-    maturity: int = Field(0)
+    subject: str = Field(..., description="Subject IRI. Use kebab-lower-case with ex: prefix. Example: ex:mary-watson, ex:cooktown-municipality", json_schema_extra={"example": "ex:mary-watson"})
+    predicate: str = Field(..., description="Predicate name. Use camelCase. Example: bornIn, marriedTo, hasBirthYear", json_schema_extra={"example": "bornIn"})
+    object_iri: Optional[str] = Field(None, description="Object as an entity IRI. Use for people, places, organizations, events, concepts. Mutually exclusive with object_lit. Example: ex:cornwall-england", json_schema_extra={"example": "ex:cornwall-england"})
+    object_lit: Optional[dict] = Field(None, description="Object as a typed literal value. Use for numbers, dates, strings, text. Mutually exclusive with object_iri. Format: {\"v\": <value>, \"dt\": \"<xsd-type>\"}. Common types: xsd:string, xsd:integer, xsd:date, xsd:decimal, xsd:boolean (avoid booleans — use predicates instead).", json_schema_extra={"example": {"v": 1860, "dt": "xsd:integer"}})
+    context: str = Field("donto:anonymous", description="Context IRI scoping this fact. Use ctx:genes/<topic>/<source> for genealogy research. Facts in different contexts can be queried, compared, and retracted independently.", json_schema_extra={"example": "ctx:genes/mary-watson/manual"})
+    polarity: str = Field("asserted", description="Epistemic polarity. 'asserted' = this fact is claimed true. 'negated' = this fact is claimed false. 'absent' = this fact is explicitly missing. 'unknown' = epistemic status undetermined.")
+    maturity: int = Field(0, description="Maturity level 0-4. L0=raw, L1=registered, L2=evidenced, L3=validated, L4=certified. Higher maturity facts are prioritized in queries. Set to 3 or 4 for manually verified facts.")
 
 
-@app.post("/assert", tags=["Ingest"], summary="Assert a single statement")
+@app.post("/assert", tags=["Ingest"], summary="Assert a single statement into the knowledge graph")
 async def assert_stmt(req: AssertRequest):
-    """Insert a single statement."""
+    """Insert a single fact into the knowledge graph.
+
+    Provide exactly one of `object_iri` (for entity objects like people, places, concepts)
+    or `object_lit` (for literal values like numbers, dates, names).
+
+    **When to use this vs /extract-and-ingest:**
+    - Use `/extract-and-ingest` when you have unstructured text and want the LLM to find facts
+    - Use `/assert` when you already know the specific fact to record (manual corrections, structured data imports, programmatic assertions)
+
+    **Idempotent:** Duplicate facts (same subject+predicate+object+context+polarity) are
+    content-hash deduplicated. Asserting the same fact twice is safe.
+
+    **Returns:** `{statement_id: "uuid"}` — the UUID of the inserted (or existing) statement.
+    Use this ID with `/retract/{id}` to retract the fact later, or with `/claim/{id}` to
+    see its full evidence card.
+    """
     return await srv_post("/assert", req.model_dump())
 
 
 class BatchAssertRequest(BaseModel):
-    statements: list[dict] = Field(..., description="Array of statement objects")
+    statements: list[dict] = Field(..., description="Array of statement objects. Each must have: subject (str), predicate (str), and exactly one of object_iri (str) or object_lit ({v, dt}). Optional: context (str), polarity (str), maturity (int 0-4).", json_schema_extra={"example": [{"subject": "ex:mary-watson", "predicate": "bornIn", "object_iri": "ex:cornwall", "context": "ctx:genes/mary-watson"}, {"subject": "ex:mary-watson", "predicate": "hasBirthYear", "object_lit": {"v": 1860, "dt": "xsd:integer"}, "context": "ctx:genes/mary-watson"}]})
 
 
-@app.post("/assert/batch", tags=["Ingest"], summary="Assert a batch of statements")
+@app.post("/assert/batch", tags=["Ingest"], summary="Assert multiple statements in one call")
 async def assert_batch(req: BatchAssertRequest):
-    """Batch-insert statements."""
+    """Batch-insert multiple facts in a single database transaction. More efficient than
+    calling `/assert` repeatedly.
+
+    Each statement in the array follows the same format as `/assert`. All are inserted
+    atomically — either all succeed or none do.
+
+    **Returns:** `{inserted: N}` — the number of statements inserted (excluding duplicates).
+    """
     return await srv_post("/assert/batch", {"statements": req.statements})
 
 
 # ── Query (direct to dontosrv) ──────────────────────────────────────────
 
 
-@app.get("/subjects", tags=["Query"], summary="List subjects")
+@app.get("/subjects", tags=["Query"], summary="List top subjects by fact count")
 async def subjects():
-    """List subjects with statement counts."""
+    """List the most-connected subjects in the graph, ordered by statement count.
+
+    Returns the top 50 subjects with the most facts. Each result includes the subject IRI
+    and its total statement count. Use this to discover the most important entities in the graph.
+
+    **Returns:** `{subjects: [{subject, count}, ...]}`
+    """
     return await srv_get("/subjects")
 
 
-@app.get("/search", tags=["Query"], summary="Full-text search (~5ms)")
-async def search(q: str = Query(..., description="Search query"), limit: int = Query(25, description="Max results")):
-    """Search subjects by name/label. Uses a trigram-indexed label cache for instant results.
+@app.get("/search", tags=["Query"], summary="Full-text search by name/label (~5ms, trigram-indexed)")
+async def search(q: str = Query(..., description="Search query. Matches against entity labels using trigram similarity. Case-insensitive. Supports partial matches. Examples: 'lisa watts', 'cooktown', 'watson'"), limit: int = Query(25, description="Maximum number of results to return (1-100).")):
+    """Search for entities by name or label. This is the fastest way to find entities in the graph.
 
-    Returns subjects with matching labels, ordered by statement count (most connected first).
+    Uses a pre-built trigram-indexed label cache (516K labels) for near-instant results (~5ms).
+    Results are ordered by statement count — the most-connected entities appear first.
+
+    **Use this as the starting point for any research.** Search for a person, place, or concept
+    by name, then use the returned `subject` IRI with `/history/{subject}` to see all their facts.
+
+    **Returns:** `{matches: [{subject, label, count}, ...], q: "your query"}`
+
+    The `subject` field is the IRI you'll use in other endpoints. The `count` is how many
+    facts exist about this entity — higher counts mean more information is available.
     """
     import asyncpg
     dsn = os.environ.get("DONTO_DSN", "postgres://donto:donto@127.0.0.1:5432/donto")
@@ -487,37 +559,101 @@ async def search(q: str = Query(..., description="Search query"), limit: int = Q
         await conn.close()
 
 
-@app.get("/history/{subject:path}", tags=["Query"], summary="Statement history")
+@app.get("/history/{subject:path}", tags=["Query"], summary="Get all facts about a specific entity")
 async def history(subject: str):
-    """All statements for a subject (including retracted)."""
+    """Get the complete statement history for a subject, including retracted statements.
+
+    This is the most comprehensive view of an entity. Returns every fact ever recorded
+    about this subject, with full metadata: predicate, object, context, polarity, maturity,
+    valid-time, transaction-time. Retracted statements (tx_hi is set) are included so you
+    can see what was believed and when.
+
+    **URL encoding:** The subject IRI goes in the URL path. For IRIs with colons or slashes
+    (like `ex:mary-watson`), most HTTP clients handle encoding automatically.
+
+    **Returns:** `{count: N, rows: [{statement_id, predicate, object_iri or object_lit, context, polarity, maturity, valid_lo, valid_hi, tx_lo, tx_hi}, ...]}`
+
+    Use the `statement_id` from results with `/claim/{id}` for evidence detail, or
+    `/retract/{id}` to retract a wrong fact.
+    """
     return await srv_get(f"/history/{subject}")
 
 
-@app.get("/statement/{id}", tags=["Query"], summary="Statement detail")
+@app.get("/statement/{id}", tags=["Query"], summary="Get a single statement by UUID")
 async def statement_detail(id: str):
-    """Full detail for a statement by UUID."""
+    """Get full detail for a single statement by its UUID.
+
+    Returns the complete statement with all metadata. Use statement UUIDs from
+    `/history`, `/match`, or `/search` results.
+
+    **Returns:** Full statement object with subject, predicate, object, context, polarity,
+    maturity, valid_time, tx_time, and any linked evidence/arguments.
+    """
     return await srv_get(f"/statement/{id}")
 
 
-@app.get("/contexts", tags=["Query"], summary="List contexts")
+@app.get("/contexts", tags=["Query"], summary="List all contexts in the knowledge graph")
 async def contexts():
-    """List all contexts."""
+    """List all contexts (scopes/namespaces) in the knowledge graph.
+
+    Each context represents a source, research question, extraction run, or manual import.
+    Use context IRIs with `/match?context=...` to query facts from a specific source.
+
+    **Context types:**
+    - `ctx:genes/<topic>/<source>` — genealogy research
+    - `ctx:extract/<file>/<model>` — auto-created by extraction
+    - `ctx:genealogy/research-db` — legacy archive (35.8M statements)
+    - `ctx:test/*` — test data
+
+    **Returns:** `{contexts: [{iri, kind, label, parent, ...}, ...]}`
+    """
     return await srv_get("/contexts")
 
 
-@app.get("/predicates", tags=["Query"], summary="List predicates with counts")
+@app.get("/predicates", tags=["Query"], summary="List all predicates with statement counts")
 async def predicates():
-    """List predicates ordered by frequency."""
+    """List every predicate in the knowledge graph, ordered by how many statements use it.
+
+    This shows you the vocabulary of the graph — what kinds of relationships exist and how
+    common they are. Useful for:
+    - Understanding what's in the graph
+    - Finding predicates to align (different names for the same relationship)
+    - Discovering the vocabulary an extraction run produced
+    - Checking if a predicate you want to use already exists
+
+    **Returns:** `{predicates: [{predicate, count}, ...]}`
+
+    **Current top predicates:** rdf:type (3.7M), donto:status (1.6M), donto:textSpan (1.2M),
+    rdfs:label (589K), ex:knownAs (1M)
+    """
     return await srv_get("/predicates")
 
 
 class QueryRequest(BaseModel):
-    query: str = Field(..., description="DontoQL or SPARQL query text")
+    query: str = Field(..., description="DontoQL or SPARQL query text. DontoQL starts with MATCH. SPARQL starts with SELECT or PREFIX.", json_schema_extra={"example": "MATCH ?s ?p ?o LIMIT 20"})
 
 
-@app.post("/query", tags=["Query"], summary="DontoQL / SPARQL query")
+@app.post("/query", tags=["Query"], summary="Run a DontoQL or SPARQL query for complex graph traversals")
 async def query(req: QueryRequest):
-    """Run DontoQL (MATCH ...) or SPARQL subset (SELECT ...)."""
+    """Run a DontoQL or SPARQL (subset) query for complex pattern matching and graph traversal.
+
+    **DontoQL** (starts with MATCH):
+    ```
+    MATCH ?s ?p ?o LIMIT 20
+    MATCH ?s marriedTo ?o LIMIT 10
+    ```
+
+    **SPARQL subset** (starts with SELECT or PREFIX):
+    ```
+    SELECT ?s ?p ?o WHERE { ?s ?p ?o } LIMIT 20
+    PREFIX ex: <http://ex/> SELECT ?x WHERE { ?x ex:bornIn ex:cornwall }
+    ```
+
+    Use this for queries that `/match` or `/search` can't express — joins across multiple
+    patterns, variable binding, or multi-hop traversals.
+
+    **Returns:** Array of result rows, each as a JSON object with the bound variables.
+    """
     q = req.query.strip()
     if q.upper().startswith("SELECT") or q.upper().startswith("PREFIX"):
         return await srv_post("/sparql", {"query": q})
@@ -527,9 +663,21 @@ async def query(req: QueryRequest):
 # ── Retract ─────────────────────────────────────────────────────────────
 
 
-@app.post("/retract/{statement_id}", tags=["Mutate"], summary="Retract a statement")
+@app.post("/retract/{statement_id}", tags=["Mutate"], summary="Retract a statement (bitemporal soft-delete)")
 async def retract(statement_id: str):
-    """Bitemporal delete — closes tx_time, row remains for history."""
+    """Retract a statement by UUID. This is a **bitemporal soft-delete** — the physical row
+    remains in the database with its `tx_hi` timestamp closed. Historical as-of queries
+    that specify a time before the retraction will still return the fact.
+
+    **When to use:** When you discover a fact is wrong and want to correct the record.
+    Retraction does not destroy data — it marks the fact as no longer current.
+
+    **Idempotent:** Retracting an already-retracted statement is a no-op.
+
+    **Get statement IDs from:** `/history/{subject}`, `/match`, or `/search` results (the `statement_id` or `id` field).
+
+    **Returns:** `{retracted: true, statement_id: "uuid"}` or `{retracted: false}` if already retracted.
+    """
     return await srv_post("/retract", {"statement_id": statement_id})
 
 
@@ -537,33 +685,79 @@ async def retract(statement_id: str):
 
 
 class AlignRegisterRequest(BaseModel):
-    source: str = Field(...)
-    target: str = Field(...)
-    relation: str = Field(...)
-    confidence: float = Field(1.0)
+    source: str = Field(..., description="Source predicate IRI. The predicate you want to align FROM.", json_schema_extra={"example": "bornIn"})
+    target: str = Field(..., description="Target predicate IRI. The predicate you want to align TO.", json_schema_extra={"example": "birthplaceOf"})
+    relation: str = Field(..., description="Alignment relation type. One of: exact_equivalent (same meaning, same direction), inverse_equivalent (same meaning, swap subject/object), sub_property_of (specific implies general), close_match (similar but not identical), decomposition (one predicate = n-ary event), not_equivalent (explicitly NOT the same — blocks auto-alignment).", json_schema_extra={"example": "inverse_equivalent"})
+    confidence: float = Field(1.0, description="Alignment confidence 0.0-1.0. Use 0.95+ for certain alignments, 0.7-0.9 for probable, 0.5-0.7 for possible.", json_schema_extra={"example": 0.95})
 
 
-@app.post("/align/register", tags=["Alignment"], summary="Register alignment")
+@app.post("/align/register", tags=["Alignment"], summary="Register a predicate alignment between two predicates")
 async def align_register(req: AlignRegisterRequest):
-    """Register a predicate alignment. Call /align/rebuild after."""
+    """Register an alignment between two predicates so queries can find facts regardless of which
+    predicate name was used during extraction.
+
+    **The problem this solves:** Different LLM extraction runs mint different predicate names for
+    the same relationship. Source A says `bornIn`, source B says `birthplaceOf`, source C says
+    `bornInPlace`. Without alignment, a query for `bornIn` misses 2 out of 3 facts.
+
+    **After registering:** Call `POST /align/rebuild` to update the materialized closure index.
+    Then queries through `/match` and `/shadow` will automatically expand through the alignment.
+
+    **Relation types:**
+    - `exact_equivalent`: bornIn = bornInPlace (same direction)
+    - `inverse_equivalent`: bornIn ↔ birthplaceOf (swap subject and object)
+    - `sub_property_of`: assassinatedBy → killedBy (specific implies general)
+    - `close_match`: authored ≈ wroteFor (similar, lower confidence in query results)
+    - `not_equivalent`: killed ≠ died (blocks auto-alignment from incorrectly merging these)
+
+    **Returns:** `{alignment_id: "uuid"}` — the UUID of the new alignment edge.
+    """
     return await srv_post("/alignment/register", req.model_dump())
 
 
-@app.post("/align/rebuild", tags=["Alignment"], summary="Rebuild closure")
+@app.post("/align/rebuild", tags=["Alignment"], summary="Rebuild the predicate closure index")
 async def align_rebuild():
-    """Rebuild predicate closure index. Call after registering alignments."""
+    """Rebuild the materialized predicate closure index. **Call this after any alignment registration.**
+
+    The closure pre-computes all transitive alignment chains so that queries are fast
+    (O(1) lookup, not graph traversal). Without rebuilding, newly registered alignments
+    won't take effect in queries.
+
+    **Returns:** `{rows: N}` — the number of rows in the closure table. More rows = richer
+    alignment coverage. Current count: ~12,000 closure rows.
+    """
     return await srv_post("/alignment/rebuild-closure", {})
 
 
-@app.post("/align/retract/{alignment_id}", tags=["Alignment"], summary="Retract alignment")
+@app.post("/align/retract/{alignment_id}", tags=["Alignment"], summary="Retract a predicate alignment")
 async def align_retract(alignment_id: str):
-    """Retract an alignment edge."""
+    """Retract an alignment edge by UUID. The alignment is closed (tx_hi set) but retained
+    for historical queries. Call `/align/rebuild` afterward to update the closure.
+
+    **Returns:** `{ok: true}` or error if not found.
+    """
     return await srv_post("/alignment/retract", {"alignment_id": alignment_id})
 
 
-@app.get("/align/suggest/{predicate}", tags=["Alignment"], summary="Suggest similar predicates")
-async def align_suggest(predicate: str, threshold: float = Query(0.3), limit: int = Query(20)):
-    """Find predicates with similar names using trigram similarity."""
+@app.get("/align/suggest/{predicate}", tags=["Alignment"], summary="Find predicates with similar names (trigram similarity)")
+async def align_suggest(predicate: str, threshold: float = Query(0.3, description="Minimum trigram similarity score (0.0-1.0). Lower = more results but less precise. 0.3 is a good starting point, 0.6+ for high-confidence suggestions."), limit: int = Query(20, description="Maximum number of suggestions to return.")):
+    """Find predicates with similar names that aren't already aligned, using PostgreSQL trigram similarity.
+
+    This is the discovery tool for predicate alignment. It compares the normalized form of
+    your predicate against all ~12,000 registered predicates and returns the closest matches.
+
+    **Example:** Searching for `bornInPlace` returns `bornIn` (0.57 similarity), suggesting
+    they should be aligned as `exact_equivalent`.
+
+    **Workflow:**
+    1. `GET /align/suggest/bornInPlace` → sees `bornIn` at 0.57
+    2. `POST /align/register` with source=bornInPlace, target=bornIn, relation=exact_equivalent
+    3. `POST /align/rebuild`
+
+    **Or skip manual work:** Use `POST /align/auto?threshold=0.6` to batch-align everything automatically.
+
+    **Returns:** Array of `{source, target, similarity, label}` suggestions, ordered by similarity descending.
+    """
     return await srv_post("/sparql", {"query":
         f"SELECT target_iri, similarity, target_label FROM donto_suggest_alignments('{predicate}', {threshold}, {limit})"
     })
@@ -572,15 +766,41 @@ async def align_suggest(predicate: str, threshold: float = Query(0.3), limit: in
 # ── Evidence ────────────────────────────────────────────────────────────
 
 
-@app.get("/evidence/{statement_id}", tags=["Evidence"], summary="Evidence for a statement")
+@app.get("/evidence/{statement_id}", tags=["Evidence"], summary="Get evidence spans linked to a statement")
 async def evidence_for(statement_id: str):
-    """Get evidence spans linked to a statement."""
+    """Get the evidence trail for a statement — source documents, text spans, extraction runs,
+    and evidence links that support or refute it.
+
+    **Returns:** `{evidence: [{link_type, document, span, surface_text, confidence, ...}, ...]}`
+
+    Evidence types: `produced_by` (created by extraction run), `extracted_from` (from specific document),
+    `mentioned_in` (referenced in source), `supports` (corroborating evidence), `refutes` (contradicting
+    evidence), `contextualizes` (provides context).
+
+    Empty evidence array means the statement was inserted directly (e.g., via `/assert`)
+    without linking to a source document.
+    """
     return await srv_get(f"/evidence/{statement_id}")
 
 
-@app.get("/claim/{statement_id}", tags=["Evidence"], summary="Claim card")
+@app.get("/claim/{statement_id}", tags=["Evidence"], summary="Full claim card with evidence, arguments, and obligations")
 async def claim_card(statement_id: str):
-    """Full claim card — evidence, arguments, obligations."""
+    """Get the complete claim card for a statement — the most comprehensive view of a single fact.
+
+    **Includes:**
+    - The statement itself (subject, predicate, object, context, polarity, maturity)
+    - When it was asserted and by whom
+    - Evidence spans linking it to source documents
+    - Arguments (other statements that support, rebut, undercut, or qualify this one)
+    - Proof obligations (open tasks: needs-coref, needs-source-support, needs-human-review, etc.)
+    - Blockers (unresolved obligations preventing maturity promotion)
+
+    **Returns:** `{subject, predicate, object, context, polarity, maturity, asserted_at,
+    evidence: [...], arguments: [...], obligations: [...], blockers: [...]}`
+
+    Use this to assess the epistemic quality of a fact — how well-supported is it, what
+    contradicts it, and what open questions remain.
+    """
     return await srv_get(f"/claim/{statement_id}")
 
 
