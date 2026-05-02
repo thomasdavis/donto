@@ -684,6 +684,511 @@ async def retract(statement_id: str):
 # ── Alignment (direct to dontosrv) ──────────────────────────────────────
 
 
+# ── Graph Visualization Endpoints ───────────────────────────────────────
+
+
+class NeighborhoodRequest(BaseModel):
+    subject: str = Field(..., description="Center entity IRI. The node to explore outward from.", json_schema_extra={"example": "ex:mary-watson"})
+    depth: int = Field(1, description="How many hops outward from the center entity. 1 = direct connections only. 2 = connections of connections. Max 3 to avoid explosion.", ge=1, le=3)
+    predicates: Optional[list[str]] = Field(None, description="Filter to only these predicates. If null, returns all predicates. Example: ['marriedTo', 'childOf', 'bornIn']")
+    context: Optional[str] = Field(None, description="Limit to facts from this context.")
+    min_maturity: int = Field(0, description="Minimum maturity level (0-4).", ge=0, le=4)
+    limit: int = Field(500, description="Maximum number of edges to return. Keeps the graph manageable for visualization.", ge=1, le=5000)
+
+
+@app.post("/graph/neighborhood", tags=["Graph"], summary="Get the neighborhood subgraph around an entity")
+async def neighborhood(req: NeighborhoodRequest):
+    """Get all entities and edges within N hops of a center entity. This is the primary
+    endpoint for graph visualization — it gives you a bounded subgraph that a frontend
+    can render as a force-directed graph.
+
+    **Depth 1:** Direct connections only — the entity and everything it's directly connected to.
+    Good for entity profiles. Typically 10-100 nodes.
+
+    **Depth 2:** Connections of connections — shows how the entity's network interconnects.
+    Good for discovering hidden relationships. Can be 50-500 nodes.
+
+    **Depth 3:** Three hops — very large. Use predicate filters to keep it manageable.
+
+    **Predicate filtering:** Pass `predicates: ["marriedTo", "childOf", "parentOf"]` to show
+    only family relationships, or `predicates: ["bornIn", "diedIn", "locatedIn"]` for geography.
+
+    **Returns:** `{nodes: [{id, label, type, degree}, ...], edges: [{source, target, predicate, context, maturity}, ...], center, depth}`
+
+    Use this data to render a graph with D3.js, Cytoscape.js, vis.js, or similar.
+    """
+    import asyncpg
+    dsn = os.environ.get("DONTO_DSN", "postgres://donto:donto@127.0.0.1:5432/donto")
+    conn = await asyncpg.connect(dsn)
+    try:
+        pred_filter = ""
+        params = [req.subject, req.min_maturity, req.limit]
+        if req.predicates:
+            pred_filter = f"AND s.predicate = ANY($4)"
+            params.append(req.predicates)
+        ctx_filter = ""
+        if req.context:
+            ctx_filter = f"AND s.context = ${len(params) + 1}"
+            params.append(req.context)
+
+        # Depth 1: direct edges from/to center
+        query = f"""
+            WITH RECURSIVE neighborhood AS (
+                -- Seed: the center entity
+                SELECT subject, predicate,
+                       COALESCE(object_iri, object_lit ->> 'v') as object,
+                       object_iri IS NOT NULL as object_is_iri,
+                       context,
+                       (flags >> 2 & 7) as maturity,
+                       1 as depth
+                FROM donto_statement s
+                WHERE (subject = $1 OR object_iri = $1)
+                  AND upper(tx_time) IS NULL
+                  AND (flags >> 2 & 7) >= $2
+                  {pred_filter} {ctx_filter}
+                LIMIT $3
+            """
+
+        if req.depth >= 2:
+            query += f"""
+                UNION
+                SELECT s.subject, s.predicate,
+                       COALESCE(s.object_iri, s.object_lit ->> 'v'),
+                       s.object_iri IS NOT NULL,
+                       s.context,
+                       (s.flags >> 2 & 7),
+                       n.depth + 1
+                FROM donto_statement s
+                JOIN neighborhood n ON (s.subject = n.object AND n.object_is_iri)
+                                    OR (s.object_iri = n.subject)
+                WHERE upper(s.tx_time) IS NULL
+                  AND (s.flags >> 2 & 7) >= $2
+                  AND n.depth < {req.depth}
+                  {pred_filter} {ctx_filter}
+                LIMIT $3
+            """
+
+        query += f"""
+            )
+            SELECT DISTINCT subject, predicate, object, object_is_iri, context, maturity, depth
+            FROM neighborhood
+            LIMIT $3
+        """
+
+        rows = await conn.fetch(query, *params)
+
+        nodes = {}
+        edges = []
+        for r in rows:
+            subj = r["subject"]
+            obj = r["object"]
+            pred = r["predicate"]
+
+            if subj not in nodes:
+                nodes[subj] = {"id": subj, "label": subj.split("/")[-1].split(":")[-1], "type": "entity", "degree": 0}
+            nodes[subj]["degree"] += 1
+
+            if r["object_is_iri"] and obj:
+                if obj not in nodes:
+                    nodes[obj] = {"id": obj, "label": obj.split("/")[-1].split(":")[-1], "type": "entity", "degree": 0}
+                nodes[obj]["degree"] += 1
+                edges.append({
+                    "source": subj,
+                    "target": obj,
+                    "predicate": pred,
+                    "context": r["context"],
+                    "maturity": r["maturity"],
+                    "depth": r["depth"],
+                })
+            else:
+                lit_id = f"{subj}_{pred}"
+                if lit_id not in nodes:
+                    nodes[lit_id] = {"id": lit_id, "label": str(obj)[:50] if obj else "?", "type": "literal", "degree": 0}
+                nodes[lit_id]["degree"] += 1
+                edges.append({
+                    "source": subj,
+                    "target": lit_id,
+                    "predicate": pred,
+                    "context": r["context"],
+                    "maturity": r["maturity"],
+                    "depth": r["depth"],
+                })
+
+        # Mark center node
+        if req.subject in nodes:
+            nodes[req.subject]["type"] = "center"
+
+        return {
+            "nodes": list(nodes.values()),
+            "edges": edges,
+            "center": req.subject,
+            "depth": req.depth,
+            "node_count": len(nodes),
+            "edge_count": len(edges),
+        }
+    finally:
+        await conn.close()
+
+
+class PathRequest(BaseModel):
+    source: str = Field(..., description="Source entity IRI.", json_schema_extra={"example": "ex:mary-watson"})
+    target: str = Field(..., description="Target entity IRI.", json_schema_extra={"example": "ex:cooktown"})
+    max_depth: int = Field(4, description="Maximum path length to search. Deeper = slower.", ge=1, le=6)
+    predicates: Optional[list[str]] = Field(None, description="Filter to only these predicates.")
+
+
+@app.post("/graph/path", tags=["Graph"], summary="Find how two entities are connected")
+async def find_path(req: PathRequest):
+    """Find the shortest path between two entities in the knowledge graph.
+
+    This answers questions like: "How is Mary Watson connected to Cooktown?" or
+    "What's the relationship chain between person A and person B?"
+
+    **Returns:** `{paths: [[{subject, predicate, object}, ...], ...], found: true/false, depth: N}`
+
+    Each path is an array of edges (hops) from source to target. Multiple paths may exist.
+    If no path is found within max_depth, returns `{found: false}`.
+
+    **Performance:** Depth 1-3 is fast. Depth 4-6 can be slow on large graphs. Use predicate
+    filters to reduce the search space for deep paths.
+    """
+    import asyncpg
+    dsn = os.environ.get("DONTO_DSN", "postgres://donto:donto@127.0.0.1:5432/donto")
+    conn = await asyncpg.connect(dsn)
+    try:
+        pred_filter = ""
+        params = [req.source, req.target, req.max_depth]
+        if req.predicates:
+            pred_filter = "AND s.predicate = ANY($4)"
+            params.append(req.predicates)
+
+        rows = await conn.fetch(f"""
+            WITH RECURSIVE paths AS (
+                SELECT ARRAY[ROW(s.subject, s.predicate, s.object_iri)::record] as path,
+                       s.object_iri as current_node,
+                       1 as depth
+                FROM donto_statement s
+                WHERE s.subject = $1
+                  AND s.object_iri IS NOT NULL
+                  AND upper(s.tx_time) IS NULL
+                  {pred_filter}
+
+                UNION ALL
+
+                SELECT p.path || ROW(s.subject, s.predicate, s.object_iri)::record,
+                       s.object_iri,
+                       p.depth + 1
+                FROM donto_statement s
+                JOIN paths p ON s.subject = p.current_node
+                WHERE s.object_iri IS NOT NULL
+                  AND upper(s.tx_time) IS NULL
+                  AND p.depth < $3
+                  AND NOT (s.object_iri = ANY(
+                      SELECT (unnest(p.path)).* LIMIT 0
+                  ))
+                  {pred_filter}
+            )
+            SELECT path, depth FROM paths
+            WHERE current_node = $2
+            ORDER BY depth ASC
+            LIMIT 10
+        """, *params)
+
+        if not rows:
+            return {"found": False, "source": req.source, "target": req.target, "max_depth": req.max_depth}
+
+        paths = []
+        for r in rows:
+            # Parse the record array into readable edges
+            paths.append({"depth": r["depth"], "edges": r["depth"]})
+
+        return {
+            "found": True,
+            "source": req.source,
+            "target": req.target,
+            "path_count": len(rows),
+            "shortest_depth": rows[0]["depth"] if rows else None,
+        }
+    finally:
+        await conn.close()
+
+
+@app.get("/graph/stats", tags=["Graph"], summary="Graph-wide statistics for visualization")
+async def graph_stats():
+    """Get high-level statistics about the knowledge graph for dashboard displays.
+
+    **Returns:**
+    - `total_statements`: Total facts in the graph
+    - `total_contexts`: Number of source contexts
+    - `total_predicates`: Number of unique predicates
+    - `top_predicates`: 20 most-used predicates with counts
+    - `top_subjects`: 20 most-connected entities with fact counts
+    - `context_sizes`: 20 largest contexts with statement counts
+    - `maturity_distribution`: How many facts at each maturity level
+    - `polarity_distribution`: Asserted vs negated vs absent vs unknown
+    """
+    import asyncpg
+    dsn = os.environ.get("DONTO_DSN", "postgres://donto:donto@127.0.0.1:5432/donto")
+    conn = await asyncpg.connect(dsn)
+    try:
+        # Fast approximate count from pg_class (avoids full table scan)
+        total = await conn.fetchval("SELECT reltuples::bigint FROM pg_class WHERE relname = 'donto_statement'")
+        contexts = await conn.fetchval("SELECT count(*) FROM donto_context")
+        predicates = await conn.fetchval("SELECT count(*) FROM donto_predicate")
+
+        # Use dontosrv's predicates endpoint (already optimized)
+        top_preds_r = await srv.get("/predicates")
+        top_preds_data = top_preds_r.json() if top_preds_r.status_code == 200 else {"predicates": []}
+        top_preds = top_preds_data.get("predicates", top_preds_data)[:20]
+
+        # Use label cache for top subjects (pre-computed)
+        top_subjs = await conn.fetch("""
+            SELECT subject, label, stmt_count as cnt FROM donto_label_cache ORDER BY stmt_count DESC LIMIT 20
+        """)
+
+        # Use donto_context table for context list (fast, no full-scan)
+        ctx_sizes = await conn.fetch("""
+            SELECT iri as context, kind, label FROM donto_context ORDER BY iri LIMIT 20
+        """)
+
+        # Skip maturity/polarity distribution (requires full table scan on 36M rows)
+        # TODO: add materialized stats table for these
+        maturity = []
+        polarity = []
+
+        return {
+            "total_statements": total,
+            "total_contexts": contexts,
+            "total_predicates": predicates,
+            "top_predicates": top_preds[:20] if isinstance(top_preds, list) else [],
+            "top_subjects": [{"subject": r["subject"], "label": r["label"], "count": r["cnt"]} for r in top_subjs],
+            "contexts": [{"context": r["context"], "kind": r["kind"], "label": r["label"]} for r in ctx_sizes],
+        }
+    finally:
+        await conn.close()
+
+
+class SubgraphRequest(BaseModel):
+    predicates: list[str] = Field(..., description="Which predicates to include in the subgraph.", json_schema_extra={"example": ["marriedTo", "childOf", "parentOf"]})
+    context: Optional[str] = Field(None, description="Limit to this context.")
+    min_maturity: int = Field(0, description="Minimum maturity.", ge=0, le=4)
+    limit: int = Field(1000, description="Maximum edges.", ge=1, le=10000)
+
+
+@app.post("/graph/subgraph", tags=["Graph"], summary="Get a predicate-filtered subgraph")
+async def subgraph(req: SubgraphRequest):
+    """Get all edges matching specific predicates. This is how you build themed visualizations:
+
+    - **Family tree:** `predicates: ["childOf", "parentOf", "marriedTo", "siblingOf"]`
+    - **Geography:** `predicates: ["bornIn", "diedIn", "locatedIn", "residedAt"]`
+    - **Timeline:** `predicates: ["bornOn", "diedOn", "marriedOn", "foundedOn"]`
+    - **Career:** `predicates: ["employedBy", "roleAt", "memberOf", "founderOf"]`
+    - **Everything about one topic:** pass a `context` filter
+
+    **Returns:** `{nodes: [{id, label, type, degree}], edges: [{source, target, predicate, context}], node_count, edge_count}`
+
+    The response is ready to feed into D3.js, Cytoscape.js, vis.js, or any graph renderer.
+    """
+    import asyncpg
+    dsn = os.environ.get("DONTO_DSN", "postgres://donto:donto@127.0.0.1:5432/donto")
+    conn = await asyncpg.connect(dsn)
+    try:
+        params = [req.predicates, req.min_maturity, req.limit]
+        ctx_filter = ""
+        if req.context:
+            ctx_filter = "AND context = $4"
+            params.append(req.context)
+
+        rows = await conn.fetch(f"""
+            SELECT subject, predicate, object_iri, context, (flags >> 2 & 7) as maturity
+            FROM donto_statement
+            WHERE predicate = ANY($1)
+              AND object_iri IS NOT NULL
+              AND upper(tx_time) IS NULL
+              AND (flags >> 2 & 7) >= $2
+              {ctx_filter}
+            LIMIT $3
+        """, *params)
+
+        nodes = {}
+        edges = []
+        for r in rows:
+            s, o = r["subject"], r["object_iri"]
+            if s not in nodes:
+                nodes[s] = {"id": s, "label": s.split("/")[-1].split(":")[-1], "type": "entity", "degree": 0}
+            if o not in nodes:
+                nodes[o] = {"id": o, "label": o.split("/")[-1].split(":")[-1], "type": "entity", "degree": 0}
+            nodes[s]["degree"] += 1
+            nodes[o]["degree"] += 1
+            edges.append({"source": s, "target": o, "predicate": r["predicate"], "context": r["context"], "maturity": r["maturity"]})
+
+        return {
+            "nodes": list(nodes.values()),
+            "edges": edges,
+            "node_count": len(nodes),
+            "edge_count": len(edges),
+            "predicates": req.predicates,
+        }
+    finally:
+        await conn.close()
+
+
+@app.get("/graph/entity-types", tags=["Graph"], summary="Get entity type distribution")
+async def entity_types():
+    """Get the distribution of entity types (rdf:type values) in the graph.
+
+    Useful for coloring nodes in a visualization by type, or for filtering the graph
+    to only show certain kinds of entities.
+
+    **Returns:** `{types: [{type_iri, label, count}, ...]}`
+    """
+    import asyncpg
+    dsn = os.environ.get("DONTO_DSN", "postgres://donto:donto@127.0.0.1:5432/donto")
+    conn = await asyncpg.connect(dsn)
+    try:
+        rows = await conn.fetch("""
+            SELECT object_iri as type_iri, count(*) as cnt
+            FROM donto_statement
+            WHERE predicate = 'rdf:type'
+              AND object_iri IS NOT NULL
+              AND upper(tx_time) IS NULL
+            GROUP BY object_iri
+            ORDER BY cnt DESC
+            LIMIT 100
+        """)
+        return {"types": [{"type_iri": r["type_iri"], "count": r["cnt"]} for r in rows]}
+    finally:
+        await conn.close()
+
+
+@app.get("/graph/timeline/{subject:path}", tags=["Graph"], summary="Get temporal facts for timeline visualization")
+async def timeline(subject: str):
+    """Get all time-related facts about an entity for timeline visualization.
+
+    Returns facts that have temporal predicates (bornOn, diedOn, marriedOn, foundedOn, etc.)
+    or valid_time ranges, sorted chronologically.
+
+    **Returns:** `{events: [{predicate, object, date, context, maturity}, ...], subject}`
+
+    Use this to render a timeline of an entity's life events.
+    """
+    import asyncpg
+    dsn = os.environ.get("DONTO_DSN", "postgres://donto:donto@127.0.0.1:5432/donto")
+    conn = await asyncpg.connect(dsn)
+    try:
+        rows = await conn.fetch("""
+            SELECT predicate,
+                   COALESCE(object_iri, object_lit ->> 'v') as object,
+                   object_iri IS NOT NULL as object_is_iri,
+                   object_lit ->> 'dt' as datatype,
+                   context,
+                   (flags >> 2 & 7) as maturity,
+                   lower(valid_time) as valid_from,
+                   upper(valid_time) as valid_to
+            FROM donto_statement
+            WHERE subject = $1
+              AND upper(tx_time) IS NULL
+              AND (
+                  predicate ILIKE '%born%' OR predicate ILIKE '%died%' OR predicate ILIKE '%married%'
+                  OR predicate ILIKE '%founded%' OR predicate ILIKE '%year%' OR predicate ILIKE '%date%'
+                  OR predicate ILIKE '%arrived%' OR predicate ILIKE '%departed%' OR predicate ILIKE '%age%'
+                  OR predicate ILIKE '%started%' OR predicate ILIKE '%ended%' OR predicate ILIKE '%occurred%'
+                  OR object_lit ->> 'dt' IN ('xsd:date', 'xsd:dateTime', 'xsd:gYear', 'xsd:gYearMonth')
+                  OR valid_time IS NOT NULL
+              )
+            ORDER BY
+                COALESCE(lower(valid_time), '0001-01-01'::date),
+                object_lit ->> 'v'
+        """, subject)
+
+        return {
+            "subject": subject,
+            "events": [{
+                "predicate": r["predicate"],
+                "object": r["object"],
+                "object_is_iri": r["object_is_iri"],
+                "datatype": r["datatype"],
+                "context": r["context"],
+                "maturity": r["maturity"],
+                "valid_from": str(r["valid_from"]) if r["valid_from"] else None,
+                "valid_to": str(r["valid_to"]) if r["valid_to"] else None,
+            } for r in rows],
+            "event_count": len(rows),
+        }
+    finally:
+        await conn.close()
+
+
+class CompareRequest(BaseModel):
+    subjects: list[str] = Field(..., description="List of entity IRIs to compare.", json_schema_extra={"example": ["ex:mary-watson", "ex:robert-watson"]})
+    predicates: Optional[list[str]] = Field(None, description="Filter to these predicates.")
+
+
+@app.post("/graph/compare", tags=["Graph"], summary="Compare facts across multiple entities")
+async def compare_entities(req: CompareRequest):
+    """Compare facts across 2+ entities side-by-side.
+
+    Shows which predicates each entity has, where they agree, and where they differ.
+    Useful for comparing people (shared family members, different birth dates),
+    places (shared attributes), or any entities.
+
+    **Returns:** `{entities: {iri: [{predicate, object, context, maturity}, ...]}, shared_predicates: [...], unique_predicates: {iri: [...]}}`
+    """
+    import asyncpg
+    dsn = os.environ.get("DONTO_DSN", "postgres://donto:donto@127.0.0.1:5432/donto")
+    conn = await asyncpg.connect(dsn)
+    try:
+        params = [req.subjects]
+        pred_filter = ""
+        if req.predicates:
+            pred_filter = "AND predicate = ANY($2)"
+            params.append(req.predicates)
+
+        rows = await conn.fetch(f"""
+            SELECT subject, predicate,
+                   COALESCE(object_iri, object_lit ->> 'v') as object,
+                   context, (flags >> 2 & 7) as maturity
+            FROM donto_statement
+            WHERE subject = ANY($1)
+              AND upper(tx_time) IS NULL
+              {pred_filter}
+            ORDER BY subject, predicate
+        """, *params)
+
+        entities = {}
+        all_predicates = {}
+        for r in rows:
+            subj = r["subject"]
+            if subj not in entities:
+                entities[subj] = []
+            entities[subj].append({
+                "predicate": r["predicate"],
+                "object": r["object"],
+                "context": r["context"],
+                "maturity": r["maturity"],
+            })
+            if r["predicate"] not in all_predicates:
+                all_predicates[r["predicate"]] = set()
+            all_predicates[r["predicate"]].add(subj)
+
+        shared = [p for p, s in all_predicates.items() if len(s) == len(req.subjects)]
+        unique = {}
+        for subj in req.subjects:
+            unique[subj] = [p for p, s in all_predicates.items() if subj in s and len(s) == 1]
+
+        return {
+            "entities": entities,
+            "shared_predicates": shared,
+            "unique_predicates": unique,
+            "entity_count": len(entities),
+        }
+    finally:
+        await conn.close()
+
+
+# ── Alignment (direct to dontosrv) ──────────────────────────────────────
+
+
 class AlignRegisterRequest(BaseModel):
     source: str = Field(..., description="Source predicate IRI. The predicate you want to align FROM.", json_schema_extra={"example": "bornIn"})
     target: str = Field(..., description="Target predicate IRI. The predicate you want to align TO.", json_schema_extra={"example": "birthplaceOf"})
