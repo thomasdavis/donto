@@ -50,6 +50,7 @@ rio_xml        = "0.8"
 nom            = "7"
 proptest       = "1"
 tempfile       = "3"
+reqwest        = { version = "0.12", features = ["json", "rustls-tls"], default-features = false }
 
 [profile.release]
 lto = "thin"

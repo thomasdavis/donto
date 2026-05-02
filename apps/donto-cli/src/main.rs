@@ -172,6 +172,42 @@ enum Cmd {
         insert_count: u64,
     },
 
+    /// Extract knowledge from unstructured text using an LLM, then ingest
+    /// the resulting facts into donto. Uses OpenRouter (Grok 4.1 Fast by
+    /// default) to extract 8-tier predicates from articles, transcripts,
+    /// essays, or any text.
+    ///
+    /// Model shortcuts: grok (default), sonnet (premium), mistral (fallback),
+    /// or any OpenRouter model ID.
+    ///
+    /// Examples:
+    ///   donto extract article.md
+    ///   donto extract article.md --context ctx:research/cooktown
+    ///   donto extract article.md --model sonnet
+    ///   donto extract article.md --dry-run   # preview without ingesting
+    ///
+    /// Requires $OPENROUTER_API_KEY.
+    #[command(verbatim_doc_comment)]
+    Extract {
+        /// Path to the source text file.
+        #[arg(value_name = "PATH")]
+        file: PathBuf,
+        /// Context IRI for ingested statements. Defaults to
+        /// ctx:extract/<filename>/<model>.
+        #[arg(long, value_name = "IRI")]
+        context: Option<String>,
+        /// Model to use. Shortcuts: grok (default), sonnet, mistral.
+        /// Or pass a full OpenRouter model ID.
+        #[arg(long, default_value = "grok", value_name = "MODEL")]
+        model: String,
+        /// Statements per insert batch.
+        #[arg(long, default_value_t = 1000, value_name = "N")]
+        batch: usize,
+        /// Print extracted facts as JSON without ingesting.
+        #[arg(long)]
+        dry_run: bool,
+    },
+
     /// Emit the roff-formatted man page on stdout. Pipe to `man -l -` or
     /// redirect to a file under `~/.local/share/man/man1/donto.1`.
     Man,
@@ -356,6 +392,29 @@ async fn main() -> Result<()> {
                 }
             );
         }
+        Cmd::Extract {
+            file,
+            context,
+            model,
+            batch,
+            dry_run,
+        } => {
+            let api_key = std::env::var("OPENROUTER_API_KEY")
+                .context("$OPENROUTER_API_KEY not set. Get one at https://openrouter.ai")?;
+            let model = extract::resolve_model(&model);
+            let source_stem = file
+                .file_stem()
+                .map(|s| s.to_string_lossy().to_string())
+                .unwrap_or_else(|| "unknown".into());
+            let ctx = context.unwrap_or_else(|| {
+                let model_short = model.split('/').last().unwrap_or(model);
+                format!("ctx:extract/{source_stem}/{model_short}")
+            });
+            let report =
+                extract::run(&client, &file, &ctx, model, batch, &api_key, dry_run).await?;
+            eprintln!();
+            println!("{}", serde_json::to_string_pretty(&report)?);
+        }
         Cmd::Bench { insert_count } => {
             let report = bench::run(&client, insert_count).await?;
             println!("{}", serde_json::to_string_pretty(&report)?);
@@ -364,6 +423,8 @@ async fn main() -> Result<()> {
 
     Ok(())
 }
+
+mod extract;
 
 mod bench {
     use super::*;

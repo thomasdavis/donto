@@ -105,13 +105,15 @@ func FetchDashboard(ctx context.Context, pool *pgxpool.Pool) (*model.DashboardSt
 	defer cancel()
 	stats := &model.DashboardStats{}
 
-	// n_live_tup is updated in real-time by Postgres on every insert/delete
+	// Use the higher of n_live_tup (live counter, resets on crash) and
+	// reltuples (survives crash, updated by ANALYZE)
 	pool.QueryRow(qctx, `
-		SELECT n_live_tup FROM pg_stat_user_tables WHERE relname = 'donto_statement'
+		SELECT greatest(
+			(SELECT n_live_tup FROM pg_stat_user_tables WHERE relname = 'donto_statement'),
+			(SELECT reltuples::bigint FROM pg_class WHERE relname = 'donto_statement')
+		)
 	`).Scan(&stats.TotalStatements)
 	stats.OpenStatements = stats.TotalStatements
-	// n_tup_del approximates retractions (closed tx_time = UPDATE, but
-	// ON CONFLICT DO NOTHING also increments dead tuples)
 	pool.QueryRow(qctx, `
 		SELECT n_dead_tup FROM pg_stat_user_tables WHERE relname = 'donto_statement'
 	`).Scan(&stats.RetractedStatements)
@@ -449,9 +451,9 @@ func FetchGrowth(ctx context.Context, pool *pgxpool.Pool) ([]model.GrowthDay, er
 	qctx, cancel := withTimeout(ctx)
 	defer cancel()
 	rows, err := pool.Query(qctx, `
-		SELECT date_trunc('day', at)::date AS day, action, count(*)
-		FROM donto_audit
-		WHERE at > now() - interval '14 days'
+		SELECT date_trunc('day', at)::date AS day, action, count(*) * 10
+		FROM (SELECT at, action FROM donto_audit TABLESAMPLE SYSTEM(10)) t
+		WHERE at > now() - interval '7 days'
 		GROUP BY day, action
 		ORDER BY day
 	`)
@@ -484,11 +486,10 @@ func FetchGrowth(ctx context.Context, pool *pgxpool.Pool) ([]model.GrowthDay, er
 		}
 	}
 
-	// Fill in all 14 days so the chart always has 14 bars.
 	now := time.Now().UTC().Truncate(24 * time.Hour)
-	result := make([]model.GrowthDay, 14)
-	for i := 0; i < 14; i++ {
-		day := now.AddDate(0, 0, i-13)
+	result := make([]model.GrowthDay, 7)
+	for i := 0; i < 7; i++ {
+		day := now.AddDate(0, 0, i-6)
 		if g, ok := dayMap[day]; ok {
 			result[i] = *g
 		} else {
@@ -502,15 +503,11 @@ func FetchTopContexts(ctx context.Context, pool *pgxpool.Pool, limit int) ([]mod
 	qctx, cancel := withTimeout(ctx)
 	defer cancel()
 	rows, err := pool.Query(qctx, `
-		SELECT c.iri, c.kind, coalesce(s.cnt, 0)
-		FROM donto_context c
-		LEFT JOIN (
-			SELECT context, count(*) AS cnt
-			FROM donto_statement
-			WHERE upper(tx_time) IS NULL
-			GROUP BY context
-		) s ON s.context = c.iri
-		ORDER BY coalesce(s.cnt, 0) DESC
+		SELECT s.context, c.kind, count(*) * 100 AS cnt
+		FROM (SELECT context FROM donto_statement TABLESAMPLE SYSTEM(1) WHERE upper(tx_time) IS NULL) s
+		JOIN donto_context c ON c.iri = s.context
+		GROUP BY s.context, c.kind
+		ORDER BY cnt DESC
 		LIMIT $1
 	`, limit)
 	if err != nil {
@@ -533,10 +530,10 @@ func FetchTopPredicates(ctx context.Context, pool *pgxpool.Pool, limit int) ([]m
 	qctx, cancel := withTimeout(ctx)
 	defer cancel()
 	rows, err := pool.Query(qctx, `
-		SELECT predicate, count(*) AS cnt
+		SELECT predicate, count(*) * 100 AS cnt
 		FROM (
 			SELECT predicate
-			FROM donto_statement TABLESAMPLE SYSTEM(0.1)
+			FROM donto_statement TABLESAMPLE SYSTEM(1)
 			WHERE upper(tx_time) IS NULL
 		) t
 		GROUP BY predicate

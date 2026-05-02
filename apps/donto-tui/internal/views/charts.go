@@ -2,7 +2,6 @@ package views
 
 import (
 	"fmt"
-	"math"
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -62,7 +61,7 @@ func (c Charts) View() string {
 	}
 
 	titles := [chartCount]string{
-		"Statement Growth (14 days)",
+		"Statement Growth (7 days)",
 		"Top 10 Contexts by Size",
 		"Predicate Usage (Top 15)",
 	}
@@ -89,156 +88,172 @@ func (c Charts) View() string {
 	return lipgloss.JoinVertical(lipgloss.Left, title, "", body, "", hint)
 }
 
-// renderGrowth draws a stacked vertical bar chart for the last 14 days.
+// renderGrowth draws a cumulative total growth sparkline over the last 14 days.
 func (c Charts) renderGrowth() string {
 	if len(c.growth) == 0 {
 		return styles.HelpStyle.Render("  No growth data available.")
 	}
 
-	yAxisW := 8
-	chartW := c.width - yAxisW - 2
-	if chartW < 14 {
-		chartW = 14
-	}
-	barW := chartW / 14
-	if barW < 3 {
-		barW = 3
-	}
-	chartW = barW * 14 // snap to exact multiple
-
-	barH := c.height - 8 // title, nav, x-axis, hints, padding
-	if barH < 5 {
-		barH = 5
+	// Build cumulative totals
+	cumulative := make([]int64, len(c.growth))
+	var running int64
+	for i, d := range c.growth {
+		running += d.Asserts + d.Retracts + d.Corrects
+		cumulative[i] = running
 	}
 
-	// Find max total for normalization.
-	var maxTotal int64
-	for _, d := range c.growth {
-		total := d.Asserts + d.Retracts + d.Corrects
-		if total > maxTotal {
-			maxTotal = total
-		}
-	}
-	if maxTotal == 0 {
+	if running == 0 {
 		return styles.HelpStyle.Render("  All days have zero activity.")
 	}
 
-	greenStyle := lipgloss.NewStyle().Foreground(styles.ColorGreen)
-	redStyle := lipgloss.NewStyle().Foreground(styles.ColorRed)
-	yellowStyle := lipgloss.NewStyle().Foreground(styles.ColorAmber)
-	dimStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#313244"))
+	chartW := c.width - 4
+	if chartW < 20 {
+		chartW = 20
+	}
+	chartH := c.height - 10
+	if chartH < 5 {
+		chartH = 5
+	}
 
-	// Build a 2D grid: rows (top=0) x cols
+	lineColor := styles.ColorGreen
+	dotColor := lipgloss.Color("#F59E0B")
+	dimStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#45475A"))
+	lineStyle := lipgloss.NewStyle().Foreground(lineColor)
+	fillStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#1E3A2F"))
+
+	maxVal := cumulative[len(cumulative)-1]
+	if maxVal == 0 {
+		maxVal = 1
+	}
+
+	// Build grid
 	type cell struct {
-		char  string
+		ch    string
 		style lipgloss.Style
 	}
-	grid := make([][]cell, barH)
+	grid := make([][]cell, chartH)
 	for r := range grid {
 		grid[r] = make([]cell, chartW)
 		for col := range grid[r] {
-			grid[r][col] = cell{char: " ", style: dimStyle}
+			grid[r][col] = cell{ch: " ", style: dimStyle}
 		}
 	}
 
-	// For each day, compute segment heights and fill the grid bottom-up.
-	for di, day := range c.growth {
-		total := day.Asserts + day.Retracts + day.Corrects
-		if total == 0 {
-			continue
+	// Plot the line and fill area below it
+	colStep := float64(chartW) / float64(len(cumulative))
+	for i, val := range cumulative {
+		col := int(float64(i)*colStep + colStep/2)
+		if col >= chartW {
+			col = chartW - 1
 		}
-		fullH := float64(barH) * float64(total) / float64(maxTotal)
-		assertH := float64(barH) * float64(day.Asserts) / float64(maxTotal)
-		retractH := float64(barH) * float64(day.Retracts) / float64(maxTotal)
-		correctH := fullH - assertH - retractH
-
-		// Segments drawn bottom-up: asserts, retracts, corrects
-		segments := []struct {
-			h     float64
-			style lipgloss.Style
-		}{
-			{assertH, greenStyle},
-			{retractH, redStyle},
-			{correctH, yellowStyle},
+		lineRow := chartH - 1 - int(float64(chartH-1)*float64(val)/float64(maxVal))
+		if lineRow < 0 {
+			lineRow = 0
 		}
 
-		colStart := di * barW
-		colEnd := colStart + barW - 1 // leave 1 col gap between bars
-		if colEnd >= chartW {
-			colEnd = chartW - 1
-		}
-
-		row := barH - 1 // start from bottom
-		for _, seg := range segments {
-			full := int(seg.h)
-			frac := seg.h - float64(full)
-
-			for f := 0; f < full && row >= 0; f++ {
-				for col := colStart; col <= colEnd; col++ {
-					grid[row][col] = cell{char: "█", style: seg.style}
-				}
-				row--
+		// Fill below the line
+		for r := lineRow + 1; r < chartH; r++ {
+			if grid[r][col].ch == " " {
+				grid[r][col] = cell{ch: "░", style: fillStyle}
 			}
-			// Half block for fractional part
-			if frac >= 0.5 && row >= 0 {
-				for col := colStart; col <= colEnd; col++ {
-					grid[row][col] = cell{char: "▄", style: seg.style}
+		}
+		// Draw the line point
+		grid[lineRow][col] = cell{ch: "█", style: lineStyle}
+
+		// Connect to next point
+		if i < len(cumulative)-1 {
+			nextCol := int(float64(i+1)*colStep + colStep/2)
+			if nextCol >= chartW {
+				nextCol = chartW - 1
+			}
+			nextVal := cumulative[i+1]
+			nextRow := chartH - 1 - int(float64(chartH-1)*float64(nextVal)/float64(maxVal))
+			if nextRow < 0 {
+				nextRow = 0
+			}
+			// Draw connecting segments between columns
+			for cc := col + 1; cc < nextCol; cc++ {
+				frac := float64(cc-col) / float64(nextCol-col)
+				interpRow := lineRow + int(frac*float64(nextRow-lineRow))
+				if interpRow >= 0 && interpRow < chartH {
+					grid[interpRow][cc] = cell{ch: "─", style: lineStyle}
+					for r := interpRow + 1; r < chartH; r++ {
+						if grid[r][cc].ch == " " {
+							grid[r][cc] = cell{ch: "░", style: fillStyle}
+						}
+					}
 				}
-				row--
 			}
 		}
 	}
 
-	// Render grid with y-axis labels.
+	// Render
 	var sb strings.Builder
-	for r := 0; r < barH; r++ {
-		// Y-axis label: show value at this row level
-		val := int64(math.Round(float64(maxTotal) * float64(barH-r) / float64(barH)))
-		label := ""
+
+	for r := 0; r < chartH; r++ {
+		// Y-axis
+		label := "       "
 		if r == 0 {
-			label = fmt.Sprintf("%7d", val)
-		} else if r == barH/2 {
-			label = fmt.Sprintf("%7d", val)
-		} else if r == barH-1 {
-			label = fmt.Sprintf("%7d", int64(0))
-		} else {
-			label = "       "
+			label = fmtCount(maxVal)
+		} else if r == chartH/2 {
+			label = fmtCount(maxVal / 2)
+		} else if r == chartH-1 {
+			label = fmtCount(0)
 		}
 		sb.WriteString(styles.StatLabelStyle.Render(label) + " ")
-
 		for col := 0; col < chartW; col++ {
 			c := grid[r][col]
-			sb.WriteString(c.style.Render(c.char))
+			sb.WriteString(c.style.Render(c.ch))
 		}
 		sb.WriteString("\n")
 	}
 
-	// X-axis labels
-	sb.WriteString(strings.Repeat(" ", yAxisW))
-	for _, day := range c.growth {
-		lbl := day.Day.Format("Jan 2")
-		if len(lbl) > barW {
-			lbl = day.Day.Format("1/2")
-		}
-		// Pad or truncate to barW
-		if len(lbl) < barW {
-			lbl = lbl + strings.Repeat(" ", barW-len(lbl))
-		} else {
-			lbl = lbl[:barW]
-		}
-		sb.WriteString(styles.StatLabelStyle.Render(lbl))
+	// X-axis dates
+	sb.WriteString("        ")
+	step := len(c.growth) / 7
+	if step < 1 {
+		step = 1
 	}
-	sb.WriteString("\n")
+	labelW := chartW / len(c.growth)
+	for i, d := range c.growth {
+		if i%step == 0 {
+			lbl := d.Day.Format("Jan 2")
+			pad := labelW*step - len(lbl)
+			if pad < 1 {
+				pad = 1
+			}
+			sb.WriteString(styles.StatLabelStyle.Render(lbl) + strings.Repeat(" ", pad))
+		}
+	}
+	sb.WriteString("\n\n")
 
-	// Legend
-	legend := fmt.Sprintf("  %s assert  %s retract  %s correct",
-		greenStyle.Render("█"),
-		redStyle.Render("█"),
-		yellowStyle.Render("█"),
+	// Summary line
+	var totalA, totalR, totalC int64
+	for _, d := range c.growth {
+		totalA += d.Asserts
+		totalR += d.Retracts
+		totalC += d.Corrects
+	}
+	summary := fmt.Sprintf("  Total: %s   %s asserts  %s retracts  %s corrects",
+		lipgloss.NewStyle().Bold(true).Foreground(dotColor).Render(fmtCount(running)),
+		lipgloss.NewStyle().Foreground(styles.ColorGreen).Render(fmtCount(totalA)),
+		lipgloss.NewStyle().Foreground(styles.ColorRed).Render(fmtCount(totalR)),
+		lipgloss.NewStyle().Foreground(styles.ColorAmber).Render(fmtCount(totalC)),
 	)
-	sb.WriteString(legend)
+	sb.WriteString(summary)
 
 	return sb.String()
+}
+
+func fmtCount(n int64) string {
+	switch {
+	case n >= 1_000_000:
+		return fmt.Sprintf("%5.1fM", float64(n)/1_000_000)
+	case n >= 1_000:
+		return fmt.Sprintf("%5.1fK", float64(n)/1_000)
+	default:
+		return fmt.Sprintf("%6d", n)
+	}
 }
 
 // renderContexts draws horizontal bars for top 10 contexts.
