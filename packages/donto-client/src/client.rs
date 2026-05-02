@@ -1120,6 +1120,53 @@ impl DontoClient {
             })
             .collect()
     }
+
+    /// Suggest predicate alignments using trigram lexical similarity (migration 0056).
+    pub async fn suggest_alignments(
+        &self,
+        source: &str,
+        min_similarity: f64,
+        limit: i32,
+    ) -> Result<Vec<(String, f64, Option<String>)>> {
+        let c = self.pool.get().await?;
+        let rows = c
+            .query(
+                "select target_iri, similarity, target_label \
+                 from donto_suggest_alignments($1, $2, $3)",
+                &[&source, &min_similarity, &limit],
+            )
+            .await?;
+        Ok(rows
+            .into_iter()
+            .map(|r| {
+                (
+                    r.get::<_, String>("target_iri"),
+                    r.get::<_, f64>("similarity"),
+                    r.get::<_, Option<String>>("target_label"),
+                )
+            })
+            .collect())
+    }
+
+    /// Run batch lexical auto-alignment (migration 0056).
+    /// Returns the alignment_run UUID.
+    pub async fn lexical_auto_align(
+        &self,
+        sources: Option<&[&str]>,
+        min_similarity: f64,
+        actor: Option<&str>,
+    ) -> Result<Uuid> {
+        let c = self.pool.get().await?;
+        let sources_arr: Option<Vec<String>> =
+            sources.map(|s| s.iter().map(|x| x.to_string()).collect());
+        let row = c
+            .query_one(
+                "select donto_auto_align_batch($1::text[], $2, $3)",
+                &[&sources_arr, &min_similarity, &actor],
+            )
+            .await?;
+        Ok(row.get::<_, Uuid>(0))
+    }
 }
 
 fn stmt_to_json(s: &StatementInput) -> Json {

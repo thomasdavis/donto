@@ -323,18 +323,38 @@ enum AlignCmd {
         confidence: f64,
     },
 
-    /// Suggest alignments for a predicate by querying current alignment edges
-    /// above a confidence threshold.
+    /// Suggest alignments for a predicate using trigram lexical similarity.
+    /// Finds predicates with similar names that aren't already aligned.
+    ///
+    /// Example:
+    ///   donto align suggest bornIn           # → bornInPlace (0.82), birthYear (0.45)
+    ///   donto align suggest marriedTo --threshold 0.3
+    #[command(verbatim_doc_comment)]
     Suggest {
         /// Predicate IRI to find suggestions for.
         #[arg(value_name = "PREDICATE")]
         predicate: String,
-        /// Minimum confidence threshold.
-        #[arg(long, default_value_t = 0.5, value_name = "F")]
+        /// Minimum trigram similarity (0.0..=1.0).
+        #[arg(long, default_value_t = 0.3, value_name = "F")]
         threshold: f64,
         /// Maximum number of suggestions.
         #[arg(long, default_value_t = 20, value_name = "N")]
         limit: i32,
+    },
+
+    /// Auto-align predicates using trigram similarity. Scans all active
+    /// predicates (or a specific list), finds the best lexical match above
+    /// the threshold, and registers close_match alignments. Rebuilds
+    /// the closure afterward.
+    ///
+    /// Example:
+    ///   donto align auto                    # align all predicates
+    ///   donto align auto --threshold 0.7    # stricter matching
+    #[command(verbatim_doc_comment)]
+    Auto {
+        /// Minimum similarity for auto-alignment.
+        #[arg(long, default_value_t = 0.6, value_name = "F")]
+        threshold: f64,
     },
 
     /// List current alignment edges for a predicate.
@@ -579,40 +599,21 @@ async fn main() -> Result<()> {
                 threshold,
                 limit,
             } => {
-                let c = client.pool().get().await?;
-                let rows = c
-                    .query(
-                        "select alignment_id, source_iri, target_iri, relation, confidence, \
-                                registered_by, registered_at \
-                         from donto_predicate_alignment \
-                         where (source_iri = $1 or target_iri = $1) \
-                           and upper(tx_time) is null \
-                           and confidence >= $2 \
-                         order by confidence desc \
-                         limit $3",
-                        &[&predicate, &threshold, &(limit as i64)],
-                    )
-                    .await?;
-                for r in rows {
-                    let aid: Uuid = r.get("alignment_id");
-                    let src: String = r.get("source_iri");
-                    let tgt: String = r.get("target_iri");
-                    let rel: String = r.get("relation");
-                    let conf: f64 = r.get("confidence");
-                    let by: Option<String> = r.get("registered_by");
-                    let at: chrono::DateTime<chrono::Utc> = r.get("registered_at");
-                    println!(
-                        "{}",
-                        serde_json::json!({
-                            "alignment_id": aid,
-                            "source": src,
-                            "target": tgt,
-                            "relation": rel,
-                            "confidence": conf,
-                            "registered_by": by,
-                            "registered_at": at,
-                        })
-                    );
+                let suggestions = client.suggest_alignments(&predicate, threshold, limit).await?;
+                if suggestions.is_empty() {
+                    eprintln!("no suggestions above {threshold} similarity for {predicate}");
+                } else {
+                    for (target, sim, label) in &suggestions {
+                        println!(
+                            "{}",
+                            serde_json::json!({
+                                "source": predicate,
+                                "target": target,
+                                "similarity": sim,
+                                "label": label,
+                            })
+                        );
+                    }
                 }
             }
             AlignCmd::List { predicate } => {
@@ -669,6 +670,19 @@ async fn main() -> Result<()> {
                 println!(
                     "{}",
                     serde_json::json!({
+                        "closure_rows": count,
+                    })
+                );
+            }
+            AlignCmd::Auto { threshold } => {
+                eprintln!("running lexical auto-alignment (threshold {threshold})...");
+                let run_id = client.lexical_auto_align(None, threshold, Some("donto-cli")).await?;
+                eprintln!("rebuilding closure...");
+                let count = client.rebuild_predicate_closure().await?;
+                println!(
+                    "{}",
+                    serde_json::json!({
+                        "run_id": run_id,
                         "closure_rows": count,
                     })
                 );
