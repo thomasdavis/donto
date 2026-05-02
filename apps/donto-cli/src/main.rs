@@ -6,7 +6,7 @@
 
 use anyhow::{Context, Result};
 use clap::{CommandFactory, Parser, Subcommand};
-use donto_client::{ContextScope, DontoClient, Polarity};
+use donto_client::{AlignmentRelation, ContextScope, DontoClient, Polarity};
 use std::path::PathBuf;
 use uuid::Uuid;
 
@@ -208,6 +208,84 @@ enum Cmd {
         dry_run: bool,
     },
 
+    /// Manage predicate alignments: register, suggest, list, retract, and
+    /// rebuild the predicate closure index.
+    ///
+    /// Predicate alignment maps between equivalent, inverse, sub-property,
+    /// close-match, decomposition, and not-equivalent predicate pairs.
+    /// The closure index powers alignment-aware queries.
+    ///
+    /// Examples:
+    ///   donto align register ex:knows ex:acquaintedWith --relation exact_equivalent --confidence 0.95
+    ///   donto align suggest ex:knows --threshold 0.5 --limit 10
+    ///   donto align list ex:knows
+    ///   donto align retract <uuid>
+    ///   donto align rebuild
+    #[command(verbatim_doc_comment)]
+    Align {
+        #[command(subcommand)]
+        action: AlignCmd,
+    },
+
+    /// List predicates with statement counts.
+    ///
+    /// Queries the predicate registry and joins against current statements
+    /// to show how many open statements use each predicate. Output is
+    /// newline-delimited JSON, one predicate per line.
+    ///
+    /// Examples:
+    ///   donto predicates
+    ///   donto predicates --limit 20
+    #[command(verbatim_doc_comment)]
+    Predicates {
+        /// Maximum number of predicates to return.
+        #[arg(long, default_value_t = 100, value_name = "N")]
+        limit: i32,
+    },
+
+    /// Query the canonical shadow view (alignment-aware match).
+    ///
+    /// Like `donto match` but expands predicates through the alignment
+    /// closure, returning rows that match via equivalent, sub-property,
+    /// or other aligned predicates. Each row carries `matched_via` and
+    /// `alignment_confidence` fields.
+    ///
+    /// Examples:
+    ///   donto shadow --predicate ex:knows
+    ///   donto shadow --subject ex:alice --min-confidence 0.8
+    ///   donto shadow --predicate ex:knows --no-expand
+    #[command(verbatim_doc_comment)]
+    Shadow {
+        /// Subject IRI.
+        #[arg(long, value_name = "IRI")]
+        subject: Option<String>,
+        /// Predicate IRI.
+        #[arg(long, value_name = "IRI")]
+        predicate: Option<String>,
+        /// Object IRI.
+        #[arg(long, value_name = "IRI")]
+        object_iri: Option<String>,
+        /// Anchor context.
+        #[arg(long, value_name = "IRI")]
+        context: Option<String>,
+        /// Polarity filter. `any` disables the filter.
+        #[arg(
+            long,
+            default_value = "asserted",
+            value_name = "asserted|negated|absent|unknown|any"
+        )]
+        polarity: String,
+        /// Maturity floor (0..=4).
+        #[arg(long, default_value_t = 0, value_name = "N")]
+        min_maturity: u8,
+        /// Disable alignment expansion (strict match only).
+        #[arg(long)]
+        no_expand: bool,
+        /// Minimum alignment confidence (0.0..=1.0).
+        #[arg(long, default_value_t = 0.0, value_name = "F")]
+        min_confidence: f64,
+    },
+
     /// Emit the roff-formatted man page on stdout. Pipe to `man -l -` or
     /// redirect to a file under `~/.local/share/man/man1/donto.1`.
     Man,
@@ -221,6 +299,60 @@ enum Cmd {
         #[arg(value_enum, value_name = "SHELL")]
         shell: clap_complete::Shell,
     },
+}
+
+#[derive(Subcommand, Debug)]
+enum AlignCmd {
+    /// Register an alignment between two predicates.
+    ///
+    /// Relation types: exact_equivalent, inverse_equivalent, sub_property_of,
+    /// close_match, decomposition, not_equivalent.
+    #[command(verbatim_doc_comment)]
+    Register {
+        /// Source predicate IRI.
+        #[arg(value_name = "SOURCE")]
+        source: String,
+        /// Target predicate IRI.
+        #[arg(value_name = "TARGET")]
+        target: String,
+        /// Alignment relation type.
+        #[arg(long, value_name = "TYPE")]
+        relation: String,
+        /// Confidence score (0.0..=1.0).
+        #[arg(long, default_value_t = 1.0, value_name = "F")]
+        confidence: f64,
+    },
+
+    /// Suggest alignments for a predicate by querying current alignment edges
+    /// above a confidence threshold.
+    Suggest {
+        /// Predicate IRI to find suggestions for.
+        #[arg(value_name = "PREDICATE")]
+        predicate: String,
+        /// Minimum confidence threshold.
+        #[arg(long, default_value_t = 0.5, value_name = "F")]
+        threshold: f64,
+        /// Maximum number of suggestions.
+        #[arg(long, default_value_t = 20, value_name = "N")]
+        limit: i32,
+    },
+
+    /// List current alignment edges for a predicate.
+    List {
+        /// Predicate IRI (matches as source or target).
+        #[arg(value_name = "PREDICATE")]
+        predicate: String,
+    },
+
+    /// Retract (close) an alignment edge by its UUID.
+    Retract {
+        /// Alignment UUID.
+        #[arg(value_name = "UUID")]
+        id: Uuid,
+    },
+
+    /// Rebuild the materialized predicate closure index.
+    Rebuild,
 }
 
 #[derive(clap::ValueEnum, Clone, Debug)]
@@ -418,6 +550,214 @@ async fn main() -> Result<()> {
         Cmd::Bench { insert_count } => {
             let report = bench::run(&client, insert_count).await?;
             println!("{}", serde_json::to_string_pretty(&report)?);
+        }
+        Cmd::Align { action } => match action {
+            AlignCmd::Register {
+                source,
+                target,
+                relation,
+                confidence,
+            } => {
+                let rel = AlignmentRelation::parse(&relation)
+                    .ok_or_else(|| anyhow::anyhow!("unknown relation type: {relation}"))?;
+                let id = client
+                    .register_alignment(&source, &target, rel, confidence, None, None, None, None, None)
+                    .await?;
+                println!(
+                    "{}",
+                    serde_json::json!({
+                        "alignment_id": id,
+                        "source": source,
+                        "target": target,
+                        "relation": relation,
+                        "confidence": confidence,
+                    })
+                );
+            }
+            AlignCmd::Suggest {
+                predicate,
+                threshold,
+                limit,
+            } => {
+                let c = client.pool().get().await?;
+                let rows = c
+                    .query(
+                        "select alignment_id, source_iri, target_iri, relation, confidence, \
+                                registered_by, registered_at \
+                         from donto_predicate_alignment \
+                         where (source_iri = $1 or target_iri = $1) \
+                           and upper(tx_time) is null \
+                           and confidence >= $2 \
+                         order by confidence desc \
+                         limit $3",
+                        &[&predicate, &threshold, &(limit as i64)],
+                    )
+                    .await?;
+                for r in rows {
+                    let aid: Uuid = r.get("alignment_id");
+                    let src: String = r.get("source_iri");
+                    let tgt: String = r.get("target_iri");
+                    let rel: String = r.get("relation");
+                    let conf: f64 = r.get("confidence");
+                    let by: Option<String> = r.get("registered_by");
+                    let at: chrono::DateTime<chrono::Utc> = r.get("registered_at");
+                    println!(
+                        "{}",
+                        serde_json::json!({
+                            "alignment_id": aid,
+                            "source": src,
+                            "target": tgt,
+                            "relation": rel,
+                            "confidence": conf,
+                            "registered_by": by,
+                            "registered_at": at,
+                        })
+                    );
+                }
+            }
+            AlignCmd::List { predicate } => {
+                let c = client.pool().get().await?;
+                let rows = c
+                    .query(
+                        "select alignment_id, source_iri, target_iri, relation, confidence, \
+                                run_id, provenance, registered_by, registered_at \
+                         from donto_predicate_alignment \
+                         where (source_iri = $1 or target_iri = $1) \
+                           and upper(tx_time) is null \
+                         order by registered_at desc",
+                        &[&predicate],
+                    )
+                    .await?;
+                for r in rows {
+                    let aid: Uuid = r.get("alignment_id");
+                    let src: String = r.get("source_iri");
+                    let tgt: String = r.get("target_iri");
+                    let rel: String = r.get("relation");
+                    let conf: f64 = r.get("confidence");
+                    let run: Option<Uuid> = r.get("run_id");
+                    let prov: serde_json::Value = r.get("provenance");
+                    let by: Option<String> = r.get("registered_by");
+                    let at: chrono::DateTime<chrono::Utc> = r.get("registered_at");
+                    println!(
+                        "{}",
+                        serde_json::json!({
+                            "alignment_id": aid,
+                            "source": src,
+                            "target": tgt,
+                            "relation": rel,
+                            "confidence": conf,
+                            "run_id": run,
+                            "provenance": prov,
+                            "registered_by": by,
+                            "registered_at": at,
+                        })
+                    );
+                }
+            }
+            AlignCmd::Retract { id } => {
+                println!(
+                    "{}",
+                    if client.retract_alignment(id).await? {
+                        "retracted"
+                    } else {
+                        "no current alignment"
+                    }
+                );
+            }
+            AlignCmd::Rebuild => {
+                let count = client.rebuild_predicate_closure().await?;
+                println!(
+                    "{}",
+                    serde_json::json!({
+                        "closure_rows": count,
+                    })
+                );
+            }
+        },
+        Cmd::Predicates { limit } => {
+            let c = client.pool().get().await?;
+            let rows = c
+                .query(
+                    "select p.iri, p.label, \
+                            coalesce(cnt.n, 0) as stmt_count \
+                     from donto_predicate p \
+                     left join lateral ( \
+                         select count(*) as n \
+                         from donto_statement s \
+                         where s.predicate = p.iri and upper(s.tx_time) is null \
+                     ) cnt on true \
+                     order by cnt.n desc nulls last, p.iri \
+                     limit $1",
+                    &[&(limit as i64)],
+                )
+                .await?;
+            for r in rows {
+                let iri: String = r.get("iri");
+                let label: Option<String> = r.get("label");
+                let count: i64 = r.get("stmt_count");
+                println!(
+                    "{}",
+                    serde_json::json!({
+                        "iri": iri,
+                        "label": label,
+                        "count": count,
+                    })
+                );
+            }
+        }
+        Cmd::Shadow {
+            subject,
+            predicate,
+            object_iri,
+            context,
+            polarity,
+            min_maturity,
+            no_expand,
+            min_confidence,
+        } => {
+            let scope = context.as_deref().map(ContextScope::just);
+            let pol = if polarity == "any" {
+                None
+            } else {
+                Some(
+                    Polarity::parse(&polarity)
+                        .ok_or_else(|| anyhow::anyhow!("bad polarity {polarity}"))?,
+                )
+            };
+            let stmts = client
+                .match_aligned(
+                    subject.as_deref(),
+                    predicate.as_deref(),
+                    object_iri.as_deref(),
+                    scope.as_ref(),
+                    pol,
+                    min_maturity,
+                    None,
+                    None,
+                    !no_expand,
+                    min_confidence,
+                )
+                .await?;
+            for s in stmts {
+                println!(
+                    "{}",
+                    serde_json::json!({
+                        "id": s.statement.statement_id,
+                        "subject": s.statement.subject,
+                        "predicate": s.statement.predicate,
+                        "object": s.statement.object,
+                        "context": s.statement.context,
+                        "polarity": s.statement.polarity.as_str(),
+                        "maturity": s.statement.maturity,
+                        "valid_lo": s.statement.valid_lo,
+                        "valid_hi": s.statement.valid_hi,
+                        "tx_lo": s.statement.tx_lo,
+                        "tx_hi": s.statement.tx_hi,
+                        "matched_via": s.matched_via,
+                        "alignment_confidence": s.alignment_confidence,
+                    })
+                );
+            }
         }
     }
 
