@@ -307,10 +307,14 @@ async def call_openrouter(text: str, model: str) -> list[dict]:
         repaired = cleaned
         # Fix trailing commas before ] or }
         repaired = re.sub(r',\s*([}\]])', r'\1', repaired)
+        # Fix double-close then comma: }},"tier" → },"tier" (Grok common error)
+        repaired = re.sub(r'}}\s*,\s*"', '},"', repaired)
         # Fix missing commas between objects: }{ → },{
         repaired = re.sub(r'}\s*{', '},{', repaired)
         # Fix missing commas between } and "
         repaired = re.sub(r'}\s*"', '},"', repaired)
+        # Fix }}] at end → }]
+        repaired = re.sub(r'}}\s*]', '}]', repaired)
         # Truncate at last complete object if JSON is cut off
         if repaired.count('{') > repaired.count('}'):
             last_brace = repaired.rfind('}')
