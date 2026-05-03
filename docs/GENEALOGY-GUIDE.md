@@ -273,46 +273,78 @@ ex:mary-watson-nee-oxley (from a marriage record)
 ex:watson-mary          (from a census)
 ```
 
+### Register entities
+
+First register the IRIs as entity symbols:
+
+```bash
+curl -X POST https://genes.apexpots.com/entity/register/batch \
+  -H "Content-Type: application/json" \
+  -d '{
+    "entities": [
+      {"iri": "ex:mary-watson", "kind": "person", "label": "Mary Watson"},
+      {"iri": "ex:mrs-watson", "kind": "person", "label": "Mrs Watson"},
+      {"iri": "ex:mary-oxley", "kind": "person", "label": "Mary Oxley"}
+    ]
+  }'
+```
+
 ### Assert identity edges
 
 When you believe two symbols refer to the same person:
 
-```sql
--- Via database
-SELECT donto_assert_identity(
-    donto_symbol_id('ex:mary-watson'),
-    donto_symbol_id('ex:mrs-watson'),
-    'same_referent',
-    0.95,           -- confidence
-    'human',        -- method
-    'Same spouse, same residence, same time period'  -- explanation
-);
+```bash
+curl -X POST https://genes.apexpots.com/entity/identity \
+  -H "Content-Type: application/json" \
+  -d '{
+    "symbol_a": "ex:mary-watson",
+    "symbol_b": "ex:mrs-watson",
+    "relation": "same_referent",
+    "confidence": 0.95,
+    "method": "human",
+    "explanation": "Same spouse, same residence, same time period"
+  }'
 ```
 
 When you're not sure:
 
-```sql
-SELECT donto_assert_identity(
-    donto_symbol_id('ex:mary-watson'),
-    donto_symbol_id('ex:mary-oxley'),
-    'possibly_same_referent',
-    0.65,
-    'trigram',
-    'Similar name, overlapping dates, but no direct evidence'
-);
+```bash
+curl -X POST https://genes.apexpots.com/entity/identity \
+  -H "Content-Type: application/json" \
+  -d '{
+    "symbol_a": "ex:mary-watson",
+    "symbol_b": "ex:mary-oxley",
+    "relation": "possibly_same_referent",
+    "confidence": 0.65,
+    "explanation": "Similar name, overlapping dates, but no direct evidence"
+  }'
 ```
 
 When you know they're different:
 
-```sql
-SELECT donto_assert_identity(
-    donto_symbol_id('ex:mary-watson'),
-    donto_symbol_id('ex:mary-watson-of-sydney'),
-    'distinct_referent',
-    0.90,
-    'human',
-    'Different birth date, different parents, different location'
-);
+```bash
+curl -X POST https://genes.apexpots.com/entity/identity \
+  -H "Content-Type: application/json" \
+  -d '{
+    "symbol_a": "ex:mary-watson",
+    "symbol_b": "ex:mary-watson-of-sydney",
+    "relation": "distinct_referent",
+    "confidence": 0.90,
+    "explanation": "Different birth date, different parents, different location"
+  }'
+```
+
+For bulk operations, use the batch endpoint:
+
+```bash
+curl -X POST https://genes.apexpots.com/entity/identity/batch \
+  -H "Content-Type: application/json" \
+  -d '{
+    "edges": [
+      {"symbol_a": "ex:mary-watson", "symbol_b": "ex:mrs-watson", "relation": "same_referent", "confidence": 0.95, "explanation": "Same person"},
+      {"symbol_a": "ex:mary-watson", "symbol_b": "ex:mary-watson-of-sydney", "relation": "distinct_referent", "confidence": 0.90, "explanation": "Different person"}
+    ]
+  }'
 ```
 
 ### Identity hypotheses
@@ -327,12 +359,18 @@ The system maintains three default identity policies:
 
 Query which symbols are in the same cluster:
 
-```sql
--- What referent is Mary Watson in the "likely" hypothesis?
-SELECT donto_resolve_referent(2, donto_symbol_id('ex:mary-watson'));
+```bash
+# Resolve Mary Watson to her referent and see who else is in the cluster
+curl https://genes.apexpots.com/entity/resolve/ex:mary-watson?hypothesis=likely
 
--- Who else is in that cluster?
-SELECT * FROM donto_referent_symbols(2, <referent_id>);
+# List all members of a specific cluster
+curl https://genes.apexpots.com/entity/cluster/likely/3
+
+# See all identity edges for a symbol
+curl https://genes.apexpots.com/entity/ex:mary-watson/edges
+
+# Get the full family resolution table
+curl https://genes.apexpots.com/entity/family-table
 ```
 
 ### Key principle: merges are hypotheses, not destructive rewrites
@@ -345,27 +383,18 @@ The original statement `(ex:mrs-watson, bornIn, ex:cornwall)` is never modified.
 
 Genealogical dates are messy. Donto handles this properly.
 
-### Parse dates with correct precision
+### How dates work
 
-```sql
--- Exact date
-SELECT donto_parse_time_expression('1860-06-15');
--- → grain: day, canonical: [1860-06-15, 1860-06-16)
+The system parses dates with correct precision:
 
--- Year only
-SELECT donto_parse_time_expression('1860');
--- → grain: year, canonical: [1860-01-01, 1861-01-01)
-
--- Approximate
-SELECT donto_parse_time_expression('circa 1860');
--- → grain: year, approximate: true
-
--- Uncertain
-SELECT donto_parse_time_expression('1860?');
--- → grain: year, uncertain: true
-```
+- `1860` → grain: year, range: [1860-01-01, 1861-01-01)
+- `1860-06-15` → grain: day, range: [1860-06-15, 1860-06-16)
+- `circa 1860` → grain: year, approximate: true, EDTF: `1860~`
+- `1860?` → grain: year, uncertain: true, EDTF: `1860?`
 
 **Critical rule:** "1860" is NOT "1860-01-01". It's a year-grain expression. The system preserves this distinction.
+
+Date parsing happens automatically during extraction. For manual temporal assertions, use the `valid_lo`/`valid_hi` fields on statements.
 
 ### Record temporal relationships between events
 
@@ -753,6 +782,16 @@ All of this is stored bitemporally — you can always ask "what did we know on d
 | **Subjects** | GET | `/subjects` |
 | **Query** | POST | `/query` |
 | **Health** | GET | `/health` |
+| | | |
+| **Entity register** | POST | `/entity/register` |
+| **Entity batch register** | POST | `/entity/register/batch` |
+| **Identity edge** | POST | `/entity/identity` |
+| **Identity batch** | POST | `/entity/identity/batch` |
+| **Cluster membership** | POST | `/entity/membership` |
+| **Entity edges** | GET | `/entity/{iri}/edges` |
+| **Cluster members** | GET | `/entity/cluster/{hypothesis}/{referent}` |
+| **Resolve entity** | GET | `/entity/resolve/{iri}` |
+| **Family table** | GET | `/entity/family-table` |
 
 **Set HTTP timeout to 600 seconds for all calls.** Extract endpoints take 30-120s.
 
