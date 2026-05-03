@@ -292,7 +292,13 @@ async def ingest_facts(facts: list[dict], context: str) -> int:
     # Convert facts to assert format
     statements = []
     for f in facts:
+        subj = f.get("subject")
+        pred = f.get("predicate")
+        if not subj or not pred:
+            continue
         obj_iri, obj_lit = parse_fact_object(f.get("object"))
+        if not obj_iri and not obj_lit:
+            continue
         confidence = f.get("confidence", 0.7)
         if isinstance(confidence, str):
             try: confidence = float(confidence)
@@ -303,8 +309,8 @@ async def ingest_facts(facts: list[dict], context: str) -> int:
             except: tier = 1
 
         statements.append({
-            "subject": f["subject"],
-            "predicate": f["predicate"],
+            "subject": subj,
+            "predicate": pred,
             "object_iri": obj_iri,
             "object_lit": obj_lit,
             "context": context,
