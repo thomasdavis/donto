@@ -309,10 +309,12 @@ async def call_openrouter(text: str, model: str) -> list[dict]:
         repaired = re.sub(r',\s*([}\]])', r'\1', repaired)
         # Fix double-close then comma: }},"tier" → },"tier" (Grok common error)
         repaired = re.sub(r'}}\s*,\s*"', '},"', repaired)
+        # Fix missing opening brace between facts: },"subject" → },{"subject"
+        repaired = re.sub(r'},\s*"subject"\s*:', '},{"subject":', repaired)
         # Fix missing commas between objects: }{ → },{
         repaired = re.sub(r'}\s*{', '},{', repaired)
-        # Fix missing commas between } and "
-        repaired = re.sub(r'}\s*"', '},"', repaired)
+        # Fix missing commas between } and " (but not inside arrays/objects)
+        repaired = re.sub(r'}\s*"(?!:)', '},"', repaired)
         # Fix }}] at end → }]
         repaired = re.sub(r'}}\s*]', '}]', repaired)
         # Truncate at last complete object if JSON is cut off
@@ -322,8 +324,25 @@ async def call_openrouter(text: str, model: str) -> list[dict]:
                 repaired = repaired[:last_brace+1] + ']}'
         try:
             return json.loads(repaired)["facts"]
-        except (json.JSONDecodeError, KeyError):
-            logger.error(f"JSON repair failed. First 500 chars: {cleaned[:500]}")
+        except (json.JSONDecodeError, KeyError) as e2:
+            # Last resort: extract individual fact objects with regex
+            try:
+                fact_pattern = r'\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}'
+                raw_facts = re.findall(fact_pattern, repaired)
+                parsed = []
+                for rf in raw_facts:
+                    try:
+                        obj = json.loads(rf)
+                        if 'subject' in obj and 'predicate' in obj:
+                            parsed.append(obj)
+                    except json.JSONDecodeError:
+                        continue
+                if parsed:
+                    logger.warning(f"JSON repair partial: recovered {len(parsed)} facts from regex extraction")
+                    return parsed
+            except Exception:
+                pass
+            logger.error(f"JSON repair failed completely. First 500 chars: {cleaned[:500]}")
             raise HTTPException(502, f"Failed to parse extraction output: {e}. First 300 chars: {cleaned[:300]}")
 
 
