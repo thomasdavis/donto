@@ -589,6 +589,213 @@ async def get_job(job_id: str):
     return jobs[job_id]
 
 
+@app.get("/queue", response_class=HTMLResponse, tags=["Jobs"],
+    summary="Job queue dashboard UI")
+async def queue_dashboard():
+    """Live dashboard showing all extraction jobs with auto-refresh."""
+    return """<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Extraction Queue — donto</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, system-ui, sans-serif; background: #0d1117; color: #c9d1d9; padding: 20px; }
+  h1 { font-size: 20px; font-weight: 600; margin-bottom: 16px; color: #f0f6fc; }
+  .stats { display: flex; gap: 12px; margin-bottom: 20px; flex-wrap: wrap; }
+  .stat { background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 12px 16px; min-width: 120px; }
+  .stat .label { font-size: 11px; color: #8b949e; text-transform: uppercase; letter-spacing: 0.5px; }
+  .stat .value { font-size: 24px; font-weight: 700; margin-top: 2px; }
+  .stat .value.green { color: #3fb950; }
+  .stat .value.blue { color: #58a6ff; }
+  .stat .value.yellow { color: #d29922; }
+  .stat .value.red { color: #f85149; }
+  .stat .value.purple { color: #bc8cff; }
+  .controls { display: flex; gap: 8px; margin-bottom: 16px; align-items: center; flex-wrap: wrap; }
+  .controls button, .controls select { background: #21262d; border: 1px solid #30363d; color: #c9d1d9; padding: 6px 12px; border-radius: 6px; cursor: pointer; font-size: 13px; }
+  .controls button:hover { background: #30363d; }
+  .controls button.active { background: #1f6feb; border-color: #1f6feb; color: #fff; }
+  .controls .spacer { flex: 1; }
+  .controls .refresh-info { font-size: 11px; color: #8b949e; }
+  table { width: 100%; border-collapse: collapse; background: #161b22; border: 1px solid #30363d; border-radius: 8px; overflow: hidden; }
+  th { background: #21262d; text-align: left; padding: 8px 12px; font-size: 11px; color: #8b949e; text-transform: uppercase; letter-spacing: 0.5px; border-bottom: 1px solid #30363d; }
+  td { padding: 8px 12px; border-bottom: 1px solid #21262d; font-size: 13px; vertical-align: top; }
+  tr:last-child td { border-bottom: none; }
+  tr:hover { background: #1c2128; }
+  .badge { display: inline-block; padding: 2px 8px; border-radius: 12px; font-size: 11px; font-weight: 600; }
+  .badge.queued { background: #1c2128; color: #8b949e; border: 1px solid #30363d; }
+  .badge.extracting { background: #0d2847; color: #58a6ff; border: 1px solid #1f6feb; }
+  .badge.ingesting { background: #2a1f00; color: #d29922; border: 1px solid #d29922; }
+  .badge.completed { background: #0b2e13; color: #3fb950; border: 1px solid #238636; }
+  .badge.failed { background: #3d0e0e; color: #f85149; border: 1px solid #da3633; }
+  .mono { font-family: 'SF Mono', Consolas, monospace; font-size: 12px; }
+  .tiers { display: flex; gap: 2px; }
+  .tier { background: #21262d; padding: 1px 4px; border-radius: 3px; font-size: 10px; font-family: monospace; }
+  .tier.has { background: #0d2847; color: #58a6ff; }
+  .error-text { color: #f85149; font-size: 11px; max-width: 400px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: pointer; }
+  .error-text:hover { white-space: normal; word-break: break-all; }
+  .elapsed { color: #8b949e; font-size: 11px; }
+  .progress-bar { width: 100%; height: 4px; background: #21262d; border-radius: 2px; margin-top: 8px; overflow: hidden; }
+  .progress-fill { height: 100%; background: linear-gradient(90deg, #1f6feb, #3fb950); transition: width 0.5s; border-radius: 2px; }
+  .empty { text-align: center; padding: 40px; color: #8b949e; }
+  .detail-panel { display: none; background: #0d1117; border: 1px solid #30363d; border-radius: 8px; padding: 16px; margin-top: 12px; }
+  .detail-panel.open { display: block; }
+  .detail-panel pre { font-size: 11px; color: #c9d1d9; overflow-x: auto; white-space: pre-wrap; word-break: break-all; }
+  .rate { font-size: 12px; color: #8b949e; margin-top: 4px; }
+</style>
+</head>
+<body>
+<h1>Extraction Queue</h1>
+<div id="stats" class="stats"></div>
+<div class="controls">
+  <button onclick="setFilter('all')" id="btn-all" class="active">All</button>
+  <button onclick="setFilter('queued')" id="btn-queued">Queued</button>
+  <button onclick="setFilter('extracting')" id="btn-extracting">Extracting</button>
+  <button onclick="setFilter('ingesting')" id="btn-ingesting">Ingesting</button>
+  <button onclick="setFilter('completed')" id="btn-completed">Completed</button>
+  <button onclick="setFilter('failed')" id="btn-failed">Failed</button>
+  <span class="spacer"></span>
+  <select id="sort-select" onchange="refresh()">
+    <option value="newest">Newest first</option>
+    <option value="oldest">Oldest first</option>
+    <option value="most-facts">Most facts</option>
+    <option value="slowest">Slowest</option>
+  </select>
+  <span class="refresh-info" id="refresh-info">Auto-refresh: 5s</span>
+</div>
+<div id="progress-container" style="margin-bottom:16px"></div>
+<div id="table-container"></div>
+<div id="detail-panel" class="detail-panel"><pre id="detail-json"></pre></div>
+
+<script>
+let currentFilter = 'all';
+let allJobs = [];
+let refreshTimer;
+
+function setFilter(f) {
+  currentFilter = f;
+  document.querySelectorAll('.controls button').forEach(b => b.classList.remove('active'));
+  document.getElementById('btn-' + f).classList.add('active');
+  renderTable();
+}
+
+function fmt(ms) {
+  if (!ms) return '-';
+  if (ms < 1000) return ms + 'ms';
+  if (ms < 60000) return (ms/1000).toFixed(1) + 's';
+  return (ms/60000).toFixed(1) + 'm';
+}
+
+function ago(ts) {
+  if (!ts) return '-';
+  const s = Math.floor(Date.now()/1000 - ts);
+  if (s < 60) return s + 's ago';
+  if (s < 3600) return Math.floor(s/60) + 'm ago';
+  return Math.floor(s/3600) + 'h ' + Math.floor((s%3600)/60) + 'm ago';
+}
+
+function renderStats(data) {
+  const s = data.summary || {};
+  const total = data.total || 0;
+  const completed = s.completed || 0;
+  const active = (s.extracting||0) + (s.ingesting||0) + (s.queued||0);
+  const failed = s.failed || 0;
+  const totalFacts = allJobs.reduce((a,j) => a + (j.facts_extracted||0), 0);
+  const avgMs = allJobs.filter(j=>j.total_ms).length > 0
+    ? Math.round(allJobs.filter(j=>j.total_ms).reduce((a,j)=>a+(j.total_ms||0),0) / allJobs.filter(j=>j.total_ms).length) : 0;
+
+  document.getElementById('stats').innerHTML = `
+    <div class="stat"><div class="label">Total Jobs</div><div class="value">${total}</div></div>
+    <div class="stat"><div class="label">Completed</div><div class="value green">${completed}</div></div>
+    <div class="stat"><div class="label">Active</div><div class="value blue">${active}</div></div>
+    <div class="stat"><div class="label">Failed</div><div class="value red">${failed}</div></div>
+    <div class="stat"><div class="label">Total Facts</div><div class="value purple">${totalFacts.toLocaleString()}</div></div>
+    <div class="stat"><div class="label">Avg Time</div><div class="value">${fmt(avgMs)}</div></div>
+  `;
+
+  if (total > 0) {
+    const pct = Math.round(completed / total * 100);
+    document.getElementById('progress-container').innerHTML = `
+      <div class="progress-bar"><div class="progress-fill" style="width:${pct}%"></div></div>
+      <div class="rate">${pct}% complete · ${completed}/${total} jobs · ~${Math.round(totalFacts/Math.max(completed,1))} facts/job avg</div>
+    `;
+  }
+}
+
+function renderTable() {
+  let filtered = currentFilter === 'all' ? allJobs : allJobs.filter(j => j.status === currentFilter);
+  const sort = document.getElementById('sort-select').value;
+  if (sort === 'newest') filtered.sort((a,b) => (b.created_at||0) - (a.created_at||0));
+  else if (sort === 'oldest') filtered.sort((a,b) => (a.created_at||0) - (b.created_at||0));
+  else if (sort === 'most-facts') filtered.sort((a,b) => (b.facts_extracted||0) - (a.facts_extracted||0));
+  else if (sort === 'slowest') filtered.sort((a,b) => (b.total_ms||0) - (a.total_ms||0));
+
+  if (filtered.length === 0) {
+    document.getElementById('table-container').innerHTML = '<div class="empty">No jobs matching filter</div>';
+    return;
+  }
+
+  let html = `<table><thead><tr>
+    <th>ID</th><th>Status</th><th>Context</th><th>Size</th>
+    <th>Facts</th><th>LLM</th><th>Ingest</th><th>Total</th>
+    <th>Tiers</th><th>Created</th>
+  </tr></thead><tbody>`;
+
+  for (const j of filtered) {
+    const tiers = j.tiers || {};
+    const tiersHtml = [1,2,3,4,5,6,7,8].map(i => {
+      const v = tiers['t'+i] || 0;
+      return `<span class="tier ${v?'has':''}" title="T${i}: ${v}">T${i}:${v}</span>`;
+    }).join('');
+
+    html += `<tr onclick="showDetail('${j.id}')" style="cursor:pointer">
+      <td class="mono">${j.id}</td>
+      <td><span class="badge ${j.status}">${j.status}</span></td>
+      <td class="mono" style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${j.context||''}">${(j.context||'').replace('ctx:genes/trove-cooktown/','')}</td>
+      <td>${j.text_length ? (j.text_length/1000).toFixed(1)+'k' : '-'}</td>
+      <td style="font-weight:600">${j.facts_extracted||'-'}</td>
+      <td class="elapsed">${fmt(j.llm_ms)}</td>
+      <td class="elapsed">${fmt(j.ingest_ms)}</td>
+      <td class="elapsed">${fmt(j.total_ms)}</td>
+      <td><div class="tiers">${tiersHtml}</div></td>
+      <td class="elapsed">${ago(j.created_at)}</td>
+    </tr>`;
+    if (j.error) {
+      html += `<tr><td colspan="10"><div class="error-text" title="${j.error.replace(/"/g,'&quot;')}">${j.error}</div></td></tr>`;
+    }
+  }
+  html += '</tbody></table>';
+  document.getElementById('table-container').innerHTML = html;
+}
+
+function showDetail(id) {
+  const j = allJobs.find(x => x.id === id);
+  if (!j) return;
+  const panel = document.getElementById('detail-panel');
+  document.getElementById('detail-json').textContent = JSON.stringify(j, null, 2);
+  panel.classList.toggle('open');
+}
+
+async function refresh() {
+  try {
+    const r = await fetch('/jobs');
+    const data = await r.json();
+    allJobs = data.jobs || [];
+    renderStats(data);
+    renderTable();
+  } catch(e) {
+    console.error('refresh failed', e);
+  }
+}
+
+refresh();
+refreshTimer = setInterval(refresh, 5000);
+</script>
+</body>
+</html>"""
+
+
 class ExtractRequest(BaseModel):
     text: str = Field(..., description="Source text to extract knowledge from.")
     context: Optional[str] = Field(None, description="Context IRI. If omitted, auto-generated as ctx:extract/<model-name>.")
