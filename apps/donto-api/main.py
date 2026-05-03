@@ -274,8 +274,8 @@ Return a JSON object with a single "facts" array. Each fact:
 Return ONLY the JSON. No commentary before or after."""
 
 
-async def call_openrouter(text: str, model: str) -> list[dict]:
-    """Call OpenRouter and return parsed facts."""
+async def call_openrouter(text: str, model: str) -> tuple[list[dict], dict]:
+    """Call OpenRouter and return (parsed_facts, metadata)."""
     resp = await openrouter.post(
         OPENROUTER_URL,
         headers={"Authorization": f"Bearer {OPENROUTER_KEY}", "Content-Type": "application/json"},
@@ -292,7 +292,20 @@ async def call_openrouter(text: str, model: str) -> list[dict]:
     if resp.status_code != 200:
         raise HTTPException(502, f"OpenRouter returned {resp.status_code}: {resp.text[:500]}")
 
-    content = resp.json()["choices"][0]["message"]["content"]
+    raw_response = resp.json()
+    usage = raw_response.get("usage", {})
+    metadata = {
+        "openrouter_id": raw_response.get("id"),
+        "model_used": raw_response.get("model"),
+        "prompt_tokens": usage.get("prompt_tokens", 0),
+        "completion_tokens": usage.get("completion_tokens", 0),
+        "total_tokens": usage.get("total_tokens", 0),
+        "cost": usage.get("total_cost") or usage.get("cost"),
+        "native_tokens_prompt": usage.get("native_tokens_prompt"),
+        "native_tokens_completion": usage.get("native_tokens_completion"),
+    }
+
+    content = raw_response["choices"][0]["message"]["content"]
 
     # Strip markdown fences
     cleaned = content.strip()
@@ -301,7 +314,7 @@ async def call_openrouter(text: str, model: str) -> list[dict]:
         cleaned = re.sub(r"\s*```$", "", cleaned)
 
     try:
-        return json.loads(cleaned)["facts"]
+        return json.loads(cleaned)["facts"], metadata
     except (json.JSONDecodeError, KeyError) as e:
         # Try to repair common LLM JSON errors
         repaired = cleaned
@@ -323,7 +336,7 @@ async def call_openrouter(text: str, model: str) -> list[dict]:
             if last_brace > 0:
                 repaired = repaired[:last_brace+1] + ']}'
         try:
-            return json.loads(repaired)["facts"]
+            return json.loads(repaired)["facts"], metadata
         except (json.JSONDecodeError, KeyError) as e2:
             # Last resort: extract individual fact objects with regex
             try:
@@ -339,7 +352,7 @@ async def call_openrouter(text: str, model: str) -> list[dict]:
                         continue
                 if parsed:
                     logger.warning(f"JSON repair partial: recovered {len(parsed)} facts from regex extraction")
-                    return parsed
+                    return parsed, metadata
             except Exception:
                 pass
             logger.error(f"JSON repair failed completely. First 500 chars: {cleaned[:500]}")
@@ -445,9 +458,9 @@ async def extract_and_ingest(req: ExtractIngestRequest):
     logger.info(f"extract-and-ingest: ctx={req.context} text={len(req.text)} chars model={model}")
 
     t0 = time.time()
-    facts = await call_openrouter(req.text, model)
+    facts, llm_meta = await call_openrouter(req.text, model)
     llm_ms = int((time.time() - t0) * 1000)
-    logger.info(f"  LLM extraction: {len(facts)} facts in {llm_ms}ms")
+    logger.info(f"  LLM extraction: {len(facts)} facts in {llm_ms}ms cost={llm_meta.get('cost')}")
 
     tiers = {f"t{i}": 0 for i in range(1, 9)}
     for f in facts:
@@ -472,6 +485,7 @@ async def extract_and_ingest(req: ExtractIngestRequest):
         "tiers": tiers,
         "elapsed_ms": total_ms,
         "timing": {"llm_ms": llm_ms, "ingest_ms": ingest_ms},
+        "usage": llm_meta,
     }
 
 
@@ -502,11 +516,12 @@ async def _run_extraction_job(job_id: str, text: str, context: str, model: str):
             logger.info(f"  job {job_id}: extracting ({len(text)} chars)")
 
             t0 = time.time()
-            facts = await call_openrouter(text, model)
+            facts, llm_meta = await call_openrouter(text, model)
             llm_ms = int((time.time() - t0) * 1000)
             job["llm_ms"] = llm_ms
             job["facts_extracted"] = len(facts)
-            logger.info(f"  job {job_id}: LLM done, {len(facts)} facts in {llm_ms}ms")
+            job["usage"] = llm_meta
+            logger.info(f"  job {job_id}: LLM done, {len(facts)} facts in {llm_ms}ms cost={llm_meta.get('cost')}")
 
             tiers = {f"t{i}": 0 for i in range(1, 9)}
             for f in facts:
@@ -723,6 +738,8 @@ function renderStats(data) {
   const totalFacts = allJobs.reduce((a,j) => a + (j.facts_extracted||0), 0);
   const avgMs = allJobs.filter(j=>j.total_ms).length > 0
     ? Math.round(allJobs.filter(j=>j.total_ms).reduce((a,j)=>a+(j.total_ms||0),0) / allJobs.filter(j=>j.total_ms).length) : 0;
+  const totalCost = allJobs.reduce((a,j) => a + ((j.usage&&j.usage.cost)||0), 0);
+  const totalTokens = allJobs.reduce((a,j) => a + ((j.usage&&j.usage.total_tokens)||0), 0);
 
   document.getElementById('stats').innerHTML = `
     <div class="stat"><div class="label">Total Jobs</div><div class="value">${total}</div></div>
@@ -731,6 +748,8 @@ function renderStats(data) {
     <div class="stat"><div class="label">Failed</div><div class="value red">${failed}</div></div>
     <div class="stat"><div class="label">Total Facts</div><div class="value purple">${totalFacts.toLocaleString()}</div></div>
     <div class="stat"><div class="label">Avg Time</div><div class="value">${fmt(avgMs)}</div></div>
+    <div class="stat"><div class="label">Total Cost</div><div class="value yellow">$${totalCost.toFixed(4)}</div></div>
+    <div class="stat"><div class="label">Tokens</div><div class="value">${(totalTokens/1000).toFixed(0)}k</div></div>
   `;
 
   if (total > 0) {
@@ -757,7 +776,7 @@ function renderTable() {
 
   let html = `<table><thead><tr>
     <th>ID</th><th>Status</th><th>Context</th><th>Size</th>
-    <th>Facts</th><th>LLM</th><th>Ingest</th><th>Total</th>
+    <th>Facts</th><th>Cost</th><th>Tokens</th><th>LLM</th><th>Ingest</th><th>Total</th>
     <th>Tiers</th><th>Created</th>
   </tr></thead><tbody>`;
 
@@ -768,12 +787,17 @@ function renderTable() {
       return `<span class="tier ${v?'has':''}" title="T${i}: ${v}">T${i}:${v}</span>`;
     }).join('');
 
+    const cost = j.usage && j.usage.cost ? '$'+j.usage.cost.toFixed(4) : '-';
+    const tokens = j.usage && j.usage.total_tokens ? (j.usage.total_tokens/1000).toFixed(1)+'k' : '-';
+
     html += `<tr onclick="showDetail('${j.id}')" style="cursor:pointer">
       <td class="mono">${j.id}</td>
       <td><span class="badge ${j.status}">${j.status}</span></td>
       <td class="mono" style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${j.context||''}">${(j.context||'').replace('ctx:genes/trove-cooktown/','')}</td>
       <td>${j.text_length ? (j.text_length/1000).toFixed(1)+'k' : '-'}</td>
       <td style="font-weight:600">${j.facts_extracted||'-'}</td>
+      <td class="mono" style="color:#d29922">${cost}</td>
+      <td class="elapsed">${tokens}</td>
       <td class="elapsed">${fmt(j.llm_ms)}</td>
       <td class="elapsed">${fmt(j.ingest_ms)}</td>
       <td class="elapsed">${fmt(j.total_ms)}</td>
@@ -781,7 +805,7 @@ function renderTable() {
       <td class="elapsed">${ago(j.created_at)}</td>
     </tr>`;
     if (j.error) {
-      html += `<tr><td colspan="10"><div class="error-text" title="${j.error.replace(/"/g,'&quot;')}">${j.error}</div></td></tr>`;
+      html += `<tr><td colspan="12"><div class="error-text" title="${j.error.replace(/"/g,'&quot;')}">${j.error}</div></td></tr>`;
     }
   }
   html += '</tbody></table>';
@@ -844,7 +868,7 @@ async def extract(req: ExtractRequest):
     """
     start = time.time()
     model = resolve_model(req.model)
-    facts = await call_openrouter(req.text, model)
+    facts, llm_meta = await call_openrouter(req.text, model)
 
     tiers = {f"t{i}": 0 for i in range(1, 9)}
     for f in facts:
