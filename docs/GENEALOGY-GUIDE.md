@@ -55,16 +55,35 @@ Search these in order of reliability:
 
 | Priority | Source Type | Where | What You Get |
 |----------|-----------|-------|-------------|
-| 1 | Birth/Death/Marriage records | State BDM registries, FamilySearch | Exact dates, parents, witnesses |
-| 2 | Church records | FamilySearch, parish archives | Baptisms, marriages, burials, godparents |
-| 3 | Census records | Ancestry, FamilySearch | Household, ages, occupations, birthplaces |
-| 4 | Obituaries | newspapers.com, local papers | Family relationships, dates, locations, achievements |
-| 5 | Immigration records | National archives, Ancestry | Ship manifests, arrival dates, ages |
-| 6 | Wills & probate | State archives, probate courts | Family relationships, property |
-| 7 | Newspaper articles | Trove (AU), newspapers.com, chroniclingamerica (US) | Events, quotes, public activities |
-| 8 | Military records | National Archives, AWM (AU) | Service dates, ranks, next of kin |
-| 9 | DNA results | AncestryDNA, 23andMe | Relative matches, ethnicity estimates |
-| 10 | Wikipedia | wikipedia.org | Biographical summaries |
+**Start with a simple web search.** Google or DuckDuckGo the person's name + location + era. You'll often find:
+- Family history blogs and personal genealogy sites
+- Find A Grave memorials
+- Ancestry/FamilySearch shared trees
+- Local historical society pages
+- Forum posts from other researchers who've already done the work
+
+**Extract from anything you find.** The system handles messy, informal, contradictory sources. A blog post from a distant cousin is still useful data — it gets low maturity and the provenance is tracked.
+
+Some specific sources to check:
+
+| Source | Where | What You Get |
+|--------|-------|-------------|
+| Google/DuckDuckGo | `"firstname lastname" family history` | Blogs, shared trees, forum posts, memorials |
+| Find A Grave | findagrave.com | Burial records, photos, family links, obituaries |
+| Ancestry shared trees | ancestry.com | Other researchers' trees (treat as unverified) |
+| FamilySearch | familysearch.org | Free records: BDM, census, church, immigration |
+| Obituaries | newspapers.com, legacy.com, local papers | Family relationships, dates, locations |
+| Newspaper archives | Trove (AU), newspapers.com, chroniclingamerica (US) | Articles, notices, court reports |
+| Census records | Ancestry, FamilySearch | Household, ages, occupations |
+| BDM registries | State government sites | Official birth/death/marriage records |
+| Church records | FamilySearch, parish archives | Baptisms, marriages, burials |
+| Immigration records | National archives, Ancestry | Ship manifests, arrival dates |
+| Wills & probate | State archives | Family relationships, property |
+| Military records | National Archives, AWM (AU) | Service, ranks, next of kin |
+| DNA results | AncestryDNA, 23andMe | Matches, ethnicity estimates |
+| Wikipedia | wikipedia.org | Biographical summaries for notable people |
+| Historical societies | Local society websites | Journals, bulletins, transcriptions |
+| Reddit/forums | r/Genealogy, rootschat.com | Other researchers, tips, shared findings |
 
 ### Extract from each source
 
