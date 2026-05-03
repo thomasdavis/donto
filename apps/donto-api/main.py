@@ -303,7 +303,24 @@ async def call_openrouter(text: str, model: str) -> list[dict]:
     try:
         return json.loads(cleaned)["facts"]
     except (json.JSONDecodeError, KeyError) as e:
-        raise HTTPException(502, f"Failed to parse extraction output: {e}. First 300 chars: {cleaned[:300]}")
+        # Try to repair common LLM JSON errors
+        repaired = cleaned
+        # Fix trailing commas before ] or }
+        repaired = re.sub(r',\s*([}\]])', r'\1', repaired)
+        # Fix missing commas between objects: }{ → },{
+        repaired = re.sub(r'}\s*{', '},{', repaired)
+        # Fix missing commas between } and "
+        repaired = re.sub(r'}\s*"', '},"', repaired)
+        # Truncate at last complete object if JSON is cut off
+        if repaired.count('{') > repaired.count('}'):
+            last_brace = repaired.rfind('}')
+            if last_brace > 0:
+                repaired = repaired[:last_brace+1] + ']}'
+        try:
+            return json.loads(repaired)["facts"]
+        except (json.JSONDecodeError, KeyError):
+            logger.error(f"JSON repair failed. First 500 chars: {cleaned[:500]}")
+            raise HTTPException(502, f"Failed to parse extraction output: {e}. First 300 chars: {cleaned[:300]}")
 
 
 async def ingest_facts(facts: list[dict], context: str) -> int:
