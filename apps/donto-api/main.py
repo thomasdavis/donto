@@ -17,7 +17,7 @@ import httpx
 
 # No subprocess, no CLI — this API talks directly to dontosrv and OpenRouter.
 from fastapi import FastAPI, HTTPException, Query
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, Response
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
@@ -2492,3 +2492,19 @@ POST https://genes.apexpots.com/extract-and-ingest
 async def simple_docs():
     """Simple step-by-step guide. Copy-paste instructions. No theory. For agents with limited reasoning."""
     return SIMPLE_DOCS_HTML
+
+
+@app.get("/guide", tags=["System"], summary="Genealogy research guide (Markdown)")
+async def genealogy_guide():
+    """Complete genealogy research guide in Markdown. Covers the entire workflow from
+    finding sources to building a family knowledge graph with entity resolution,
+    predicate alignment, temporal reasoning, and contradiction handling."""
+    import pathlib
+    guide_paths = [
+        pathlib.Path("/mnt/donto-data/workspace/donto/docs/GENEALOGY-GUIDE.md"),
+        pathlib.Path(__file__).parent.parent.parent / "docs" / "GENEALOGY-GUIDE.md",
+    ]
+    for p in guide_paths:
+        if p.exists():
+            return Response(content=p.read_text(), media_type="text/markdown; charset=utf-8")
+    raise HTTPException(404, "Guide not found")

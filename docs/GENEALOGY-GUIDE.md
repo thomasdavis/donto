@@ -87,20 +87,6 @@ The extraction engine:
 
 **Repeat for every source you find.** Different sources go in different contexts.
 
-### For scientific papers about genealogical methods
-
-Use the paper-specific endpoint which extracts structured claims with values and units:
-
-```bash
-curl -X POST https://genes.apexpots.com/papers/ingest \
-  -H "Content-Type: application/json" \
-  -d '{
-    "text": "PASTE PAPER TEXT",
-    "title": "DNA Analysis Methods for Colonial-Era Remains",
-    "source_url": "https://doi.org/10.xxxx"
-  }'
-```
-
 ---
 
 ## 3. Search and explore
