@@ -7,10 +7,13 @@ operations, and calls OpenRouter directly for LLM extraction.
 Docs: https://genes.apexpots.com/docs
 """
 
+import asyncio
 import json
+import logging
 import os
 import re
 import time
+import uuid
 from typing import Optional
 
 import httpx
@@ -21,6 +24,9 @@ from fastapi.responses import HTMLResponse, Response
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
+logger = logging.getLogger("donto-api")
+logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+
 DONTOSRV = os.environ.get("DONTOSRV_URL", "http://127.0.0.1:7879")
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
 OPENROUTER_KEY = os.environ.get("OPENROUTER_API_KEY", "")
@@ -30,6 +36,14 @@ FALLBACK_MODEL = "mistralai/mistral-large-2512"
 
 srv = httpx.AsyncClient(base_url=DONTOSRV, timeout=600.0)
 openrouter = httpx.AsyncClient(timeout=600.0)
+
+# ── Job Queue ────────────────────────────────────────────────────────────
+# In-memory job store for async extraction. Jobs survive the request cycle
+# but not a server restart. Good enough for batch ingestion.
+
+jobs: dict[str, dict] = {}
+MAX_CONCURRENT_JOBS = 4
+job_semaphore = asyncio.Semaphore(MAX_CONCURRENT_JOBS)
 
 app = FastAPI(
     title="Donto Knowledge Graph API",
@@ -142,16 +156,24 @@ async def srv_get(path: str, params: dict = None):
 
 
 async def srv_post(path: str, body=None):
-    r = await srv.post(path, json=body)
-    if r.status_code >= 400:
-        raise HTTPException(r.status_code, r.json() if r.headers.get("content-type", "").startswith("application/json") else r.text)
-    text = r.text.strip()
-    if not text:
-        return {"ok": True}
-    try:
-        return r.json()
-    except Exception:
-        return {"raw": text}
+    for attempt in range(3):
+        try:
+            r = await srv.post(path, json=body)
+            if r.status_code >= 400:
+                raise HTTPException(r.status_code, r.json() if r.headers.get("content-type", "").startswith("application/json") else r.text)
+            text = r.text.strip()
+            if not text:
+                return {"ok": True}
+            try:
+                return r.json()
+            except Exception:
+                return {"raw": text}
+        except (httpx.ConnectError, httpx.ReadError, httpx.RemoteProtocolError) as e:
+            logger.warning(f"srv_post {path} attempt {attempt+1}/3 failed: {e}")
+            if attempt < 2:
+                await asyncio.sleep(1)
+            else:
+                raise HTTPException(502, f"dontosrv unreachable after 3 attempts: {e}")
 
 
 def resolve_model(name: str) -> str:
@@ -370,23 +392,22 @@ async def extract_and_ingest(req: ExtractIngestRequest):
     4. Ensures the context exists in the database
     5. Batch-inserts all facts via dontosrv /assert/batch (idempotent — duplicates are content-hash deduplicated)
 
-    **Typical workflow:**
-    1. Find text about your research topic (obituary, newspaper article, Wikipedia page, etc.)
-    2. POST it here with a descriptive context like `ctx:genes/person-name/source-type`
-    3. Repeat for additional sources with different contexts
-    4. Call `POST /align/auto` to converge predicates across sources
-    5. Query with `GET /search`, `GET /history/{subject}`, or `GET /match`
-
     **Cost:** ~$0.005 per article via Grok 4.1 Fast. A 500-word article yields 60-150 facts.
 
     **Timing:** 30-120 seconds (LLM call dominates). Set your HTTP client timeout to at least 600 seconds.
+    For long-running batch jobs, use `POST /jobs/extract` instead — it returns immediately with a job ID.
 
     **Returns:** `{model, context, facts_extracted, statements_ingested, tiers: {t1..t8}, elapsed_ms}`
     """
     start = time.time()
     model = resolve_model(req.model)
 
+    logger.info(f"extract-and-ingest: ctx={req.context} text={len(req.text)} chars model={model}")
+
+    t0 = time.time()
     facts = await call_openrouter(req.text, model)
+    llm_ms = int((time.time() - t0) * 1000)
+    logger.info(f"  LLM extraction: {len(facts)} facts in {llm_ms}ms")
 
     tiers = {f"t{i}": 0 for i in range(1, 9)}
     for f in facts:
@@ -397,7 +418,11 @@ async def extract_and_ingest(req: ExtractIngestRequest):
         key = f"t{min(max(t, 1), 8)}"
         tiers[key] = tiers.get(key, 0) + 1
 
+    t1 = time.time()
     ingested = await ingest_facts(facts, req.context)
+    ingest_ms = int((time.time() - t1) * 1000)
+    total_ms = int((time.time() - start) * 1000)
+    logger.info(f"  Ingest: {ingested} statements in {ingest_ms}ms | Total: {total_ms}ms")
 
     return {
         "model": model,
@@ -405,8 +430,142 @@ async def extract_and_ingest(req: ExtractIngestRequest):
         "facts_extracted": len(facts),
         "statements_ingested": ingested,
         "tiers": tiers,
-        "elapsed_ms": int((time.time() - start) * 1000),
+        "elapsed_ms": total_ms,
+        "timing": {"llm_ms": llm_ms, "ingest_ms": ingest_ms},
     }
+
+
+# ── Async Job System ────────────────────────────────────────────────────
+# POST /jobs/extract → returns job_id immediately (no Cloudflare timeout)
+# GET  /jobs/{id}    → poll for status/result
+# GET  /jobs         → list all jobs
+# POST /jobs/batch   → submit multiple texts at once
+
+
+class JobExtractRequest(BaseModel):
+    text: str = Field(..., description="Source text to extract knowledge from.")
+    context: str = Field(..., description="Context IRI for ingested facts.")
+    model: str = Field("grok", description="Model shortcut or full OpenRouter model ID.")
+
+
+class JobBatchRequest(BaseModel):
+    items: list[JobExtractRequest] = Field(..., description="List of texts to extract.")
+
+
+async def _run_extraction_job(job_id: str, text: str, context: str, model: str):
+    """Background task that runs LLM extraction + ingestion."""
+    job = jobs[job_id]
+    try:
+        async with job_semaphore:
+            job["status"] = "extracting"
+            job["started_at"] = time.time()
+            logger.info(f"  job {job_id}: extracting ({len(text)} chars)")
+
+            t0 = time.time()
+            facts = await call_openrouter(text, model)
+            llm_ms = int((time.time() - t0) * 1000)
+            job["llm_ms"] = llm_ms
+            job["facts_extracted"] = len(facts)
+            logger.info(f"  job {job_id}: LLM done, {len(facts)} facts in {llm_ms}ms")
+
+            tiers = {f"t{i}": 0 for i in range(1, 9)}
+            for f in facts:
+                t = f.get("tier", 1)
+                if isinstance(t, str):
+                    try: t = int(t)
+                    except: t = 1
+                key = f"t{min(max(t, 1), 8)}"
+                tiers[key] = tiers.get(key, 0) + 1
+
+            job["status"] = "ingesting"
+            t1 = time.time()
+            ingested = await ingest_facts(facts, context)
+            ingest_ms = int((time.time() - t1) * 1000)
+
+            total_ms = int((time.time() - job["started_at"]) * 1000)
+            job.update({
+                "status": "completed",
+                "statements_ingested": ingested,
+                "ingest_ms": ingest_ms,
+                "total_ms": total_ms,
+                "tiers": tiers,
+                "completed_at": time.time(),
+            })
+            logger.info(f"  job {job_id}: completed. {ingested} statements in {total_ms}ms")
+    except Exception as e:
+        job["status"] = "failed"
+        job["error"] = str(e)
+        job["completed_at"] = time.time()
+        logger.error(f"  job {job_id}: FAILED: {e}")
+
+
+@app.post("/jobs/extract", tags=["Jobs"],
+    summary="Submit an extraction job (returns immediately with job ID)")
+async def submit_extract_job(req: JobExtractRequest):
+    """Submit text for async extraction. Returns immediately with a job_id.
+    Poll `GET /jobs/{job_id}` for status and results.
+    Up to 4 jobs run concurrently; others queue automatically."""
+    job_id = str(uuid.uuid4())[:8]
+    model = resolve_model(req.model)
+    jobs[job_id] = {
+        "id": job_id,
+        "status": "queued",
+        "context": req.context,
+        "model": model,
+        "text_length": len(req.text),
+        "created_at": time.time(),
+    }
+    asyncio.create_task(_run_extraction_job(job_id, req.text, req.context, model))
+    logger.info(f"job {job_id}: queued ({len(req.text)} chars → {req.context})")
+    return {"job_id": job_id, "status": "queued"}
+
+
+@app.post("/jobs/batch", tags=["Jobs"],
+    summary="Submit multiple extraction jobs at once")
+async def submit_batch_jobs(req: JobBatchRequest):
+    """Submit multiple texts for extraction. Each becomes a separate job.
+    Returns list of job IDs. All run concurrently (up to 4 at a time)."""
+    job_ids = []
+    for item in req.items:
+        job_id = str(uuid.uuid4())[:8]
+        model = resolve_model(item.model)
+        jobs[job_id] = {
+            "id": job_id,
+            "status": "queued",
+            "context": item.context,
+            "model": model,
+            "text_length": len(item.text),
+            "created_at": time.time(),
+        }
+        asyncio.create_task(_run_extraction_job(job_id, item.text, item.context, model))
+        job_ids.append(job_id)
+    logger.info(f"batch: {len(job_ids)} jobs queued")
+    return {"job_ids": job_ids, "count": len(job_ids)}
+
+
+@app.get("/jobs", tags=["Jobs"],
+    summary="List all jobs with status")
+async def list_jobs(status: Optional[str] = Query(None, description="Filter by status: queued, extracting, ingesting, completed, failed")):
+    """List all extraction jobs. Optionally filter by status."""
+    result = list(jobs.values())
+    if status:
+        result = [j for j in result if j["status"] == status]
+    result.sort(key=lambda j: j.get("created_at", 0), reverse=True)
+    summary = {}
+    for j in jobs.values():
+        s = j["status"]
+        summary[s] = summary.get(s, 0) + 1
+    return {"jobs": result[:100], "total": len(jobs), "summary": summary}
+
+
+@app.get("/jobs/{job_id}", tags=["Jobs"],
+    summary="Get status and result of a specific job")
+async def get_job(job_id: str):
+    """Poll this endpoint to check if a job is done. Status transitions:
+    queued → extracting → ingesting → completed (or failed at any stage)."""
+    if job_id not in jobs:
+        raise HTTPException(404, f"Job {job_id} not found")
+    return jobs[job_id]
 
 
 class ExtractRequest(BaseModel):
@@ -2152,6 +2311,28 @@ Response:
   "model": "grok",
   "dry_run": true  // returns facts array without ingesting
 }</code></pre>
+
+<h3>Async Job System (for batch ingestion)</h3>
+<p>For bulk operations, use the job system. Jobs return immediately and run in the background — no HTTP timeouts. Up to 4 jobs run concurrently.</p>
+
+<div class="endpoint post">POST /jobs/extract</div>
+<p>Submit a single extraction job. Returns immediately with a job_id.</p>
+<pre><code>{"text": "...", "context": "ctx:genes/topic"}</code></pre>
+<p>→ <code>{"job_id": "a1b2c3d4", "status": "queued"}</code></p>
+
+<div class="endpoint post">POST /jobs/batch</div>
+<p>Submit multiple extraction jobs at once.</p>
+<pre><code>{"items": [
+  {"text": "First article...", "context": "ctx:genes/topic/1"},
+  {"text": "Second article...", "context": "ctx:genes/topic/2"}
+]}</code></pre>
+<p>→ <code>{"job_ids": ["a1b2c3d4", "e5f6g7h8"], "count": 2}</code></p>
+
+<div class="endpoint get">GET /jobs/{job_id}</div>
+<p>Poll for job status. Statuses: queued → extracting → ingesting → completed (or failed).</p>
+
+<div class="endpoint get">GET /jobs</div>
+<p>List all jobs with summary counts. Optional <code>?status=completed</code> filter.</p>
 
 <div class="endpoint post">POST /assert</div>
 <p>Insert a single fact directly (no LLM extraction).</p>

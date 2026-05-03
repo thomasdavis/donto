@@ -106,6 +106,43 @@ The extraction engine:
 
 **Repeat for every source you find.** Different sources go in different contexts.
 
+### Batch extraction with the job system
+
+For bulk ingestion (e.g. hundreds of newspaper articles), use the async job system instead of `/extract-and-ingest`. Jobs return immediately and run in the background — no timeouts.
+
+```bash
+# Submit a single job (returns instantly with a job_id)
+curl -X POST https://genes.apexpots.com/jobs/extract \
+  -H "Content-Type: application/json" \
+  -d '{
+    "text": "PASTE TEXT HERE",
+    "context": "ctx:genes/topic/source"
+  }'
+# → {"job_id": "a1b2c3d4", "status": "queued"}
+
+# Submit multiple jobs at once (up to 4 run concurrently)
+curl -X POST https://genes.apexpots.com/jobs/batch \
+  -H "Content-Type: application/json" \
+  -d '{
+    "items": [
+      {"text": "First article...", "context": "ctx:genes/topic/article-1"},
+      {"text": "Second article...", "context": "ctx:genes/topic/article-2"},
+      {"text": "Third article...", "context": "ctx:genes/topic/article-3"}
+    ]
+  }'
+# → {"job_ids": ["a1b2c3d4", "e5f6g7h8", "i9j0k1l2"], "count": 3}
+
+# Poll for results
+curl https://genes.apexpots.com/jobs/a1b2c3d4
+# → {"id": "a1b2c3d4", "status": "completed", "facts_extracted": 142, ...}
+
+# List all jobs
+curl https://genes.apexpots.com/jobs
+# → {"jobs": [...], "total": 45, "summary": {"completed": 40, "extracting": 3, "queued": 2}}
+```
+
+Job statuses: `queued` → `extracting` → `ingesting` → `completed` (or `failed`).
+
 ---
 
 ## 3. Search and explore
@@ -756,7 +793,11 @@ All of this is stored bitemporally — you can always ask "what did we know on d
 
 | What | Method | URL |
 |------|--------|-----|
-| **Extract** | POST | `/extract-and-ingest` |
+| **Extract (sync)** | POST | `/extract-and-ingest` |
+| **Extract (async)** | POST | `/jobs/extract` |
+| **Batch extract** | POST | `/jobs/batch` |
+| **Job status** | GET | `/jobs/{id}` |
+| **List jobs** | GET | `/jobs` |
 | **Paper extract** | POST | `/papers/ingest` |
 | **Search** | GET | `/search?q=name` |
 | **History** | GET | `/history/{subject}` |
