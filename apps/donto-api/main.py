@@ -1309,6 +1309,245 @@ async def claim_card(statement_id: str):
     return await srv_get(f"/claim/{statement_id}")
 
 
+# ── Entity Resolution Endpoints ─────────────────────────────────────────
+
+
+class EntityRegisterRequest(BaseModel):
+    iri: str = Field(..., description="Entity IRI to register", json_schema_extra={"example": "ctx:genealogy/research-db/iri/3567f2a80a5a"})
+    kind: Optional[str] = Field(None, description="Type hint: person, place, org, event, concept, unknown")
+    label: Optional[str] = Field(None, description="Human-readable label")
+
+
+@app.post("/entity/register", tags=["Entity Resolution"], summary="Register an entity symbol")
+async def entity_register(req: EntityRegisterRequest):
+    """Register an IRI as an entity symbol with provenance. Returns the symbol_id.
+    Idempotent — returns existing symbol_id if already registered."""
+    import asyncpg
+    dsn = os.environ.get("DONTO_DSN", "postgres://donto:donto@127.0.0.1:5432/donto")
+    conn = await asyncpg.connect(dsn)
+    try:
+        sid = await conn.fetchval("SELECT donto_ensure_symbol($1, $2, $3)", req.iri, req.kind, req.label)
+        return {"symbol_id": sid, "iri": req.iri}
+    finally:
+        await conn.close()
+
+
+class EntityBatchRegisterRequest(BaseModel):
+    entities: list[dict] = Field(..., description="Array of {iri, kind, label}")
+
+
+@app.post("/entity/register/batch", tags=["Entity Resolution"], summary="Register multiple entity symbols")
+async def entity_register_batch(req: EntityBatchRegisterRequest):
+    """Register multiple IRIs as entity symbols in one call."""
+    import asyncpg
+    dsn = os.environ.get("DONTO_DSN", "postgres://donto:donto@127.0.0.1:5432/donto")
+    conn = await asyncpg.connect(dsn)
+    try:
+        results = []
+        for e in req.entities:
+            sid = await conn.fetchval("SELECT donto_ensure_symbol($1, $2, $3)",
+                                     e["iri"], e.get("kind"), e.get("label"))
+            results.append({"symbol_id": sid, "iri": e["iri"]})
+        return {"registered": len(results), "symbols": results}
+    finally:
+        await conn.close()
+
+
+class IdentityEdgeRequest(BaseModel):
+    symbol_a: str = Field(..., description="First entity IRI")
+    symbol_b: str = Field(..., description="Second entity IRI")
+    relation: str = Field(..., description="same_referent, possibly_same_referent, distinct_referent, not_enough_information")
+    confidence: float = Field(..., description="0.0-1.0")
+    method: str = Field("human", description="How determined: human, trigram, embedding, neural, import, rule")
+    explanation: Optional[str] = Field(None, description="Why these are/aren't the same")
+
+
+@app.post("/entity/identity", tags=["Entity Resolution"], summary="Assert an identity edge between two entities")
+async def entity_identity(req: IdentityEdgeRequest):
+    """Assert whether two entity symbols refer to the same real-world entity.
+
+    Relations: same_referent, possibly_same_referent, distinct_referent, not_enough_information.
+    Edges are bitemporal — retractable without losing history."""
+    import asyncpg
+    dsn = os.environ.get("DONTO_DSN", "postgres://donto:donto@127.0.0.1:5432/donto")
+    conn = await asyncpg.connect(dsn)
+    try:
+        sid_a = await conn.fetchval("SELECT donto_symbol_id($1)", req.symbol_a)
+        sid_b = await conn.fetchval("SELECT donto_symbol_id($1)", req.symbol_b)
+        if not sid_a:
+            sid_a = await conn.fetchval("SELECT donto_ensure_symbol($1)", req.symbol_a)
+        if not sid_b:
+            sid_b = await conn.fetchval("SELECT donto_ensure_symbol($1)", req.symbol_b)
+        edge_id = await conn.fetchval(
+            "SELECT donto_assert_identity($1, $2, $3::donto_identity_relation, $4, $5, $6)",
+            sid_a, sid_b, req.relation, req.confidence, req.method, req.explanation)
+        return {"edge_id": edge_id, "symbol_a": sid_a, "symbol_b": sid_b, "relation": req.relation}
+    finally:
+        await conn.close()
+
+
+class IdentityBatchRequest(BaseModel):
+    edges: list[dict] = Field(..., description="Array of {symbol_a, symbol_b, relation, confidence, method, explanation}")
+
+
+@app.post("/entity/identity/batch", tags=["Entity Resolution"], summary="Assert multiple identity edges")
+async def entity_identity_batch(req: IdentityBatchRequest):
+    """Assert multiple identity edges in one call."""
+    import asyncpg
+    dsn = os.environ.get("DONTO_DSN", "postgres://donto:donto@127.0.0.1:5432/donto")
+    conn = await asyncpg.connect(dsn)
+    try:
+        results = []
+        for e in req.edges:
+            sid_a = await conn.fetchval("SELECT donto_symbol_id($1)", e["symbol_a"])
+            sid_b = await conn.fetchval("SELECT donto_symbol_id($1)", e["symbol_b"])
+            if not sid_a:
+                sid_a = await conn.fetchval("SELECT donto_ensure_symbol($1)", e["symbol_a"])
+            if not sid_b:
+                sid_b = await conn.fetchval("SELECT donto_ensure_symbol($1)", e["symbol_b"])
+            edge_id = await conn.fetchval(
+                "SELECT donto_assert_identity($1, $2, $3::donto_identity_relation, $4, $5, $6)",
+                sid_a, sid_b, e["relation"], e["confidence"], e.get("method", "human"), e.get("explanation"))
+            results.append({"edge_id": edge_id, "symbol_a": e["symbol_a"], "symbol_b": e["symbol_b"]})
+        return {"asserted": len(results), "edges": results}
+    finally:
+        await conn.close()
+
+
+class MembershipRequest(BaseModel):
+    hypothesis: str = Field("likely", description="Hypothesis name: strict, likely, exploratory")
+    referent_id: int = Field(..., description="Referent cluster ID")
+    symbol_iris: list[str] = Field(..., description="IRIs to assign to this referent")
+
+
+@app.post("/entity/membership", tags=["Entity Resolution"], summary="Assign symbols to a referent cluster")
+async def entity_membership(req: MembershipRequest):
+    """Assign entity symbols to a referent cluster under a named identity hypothesis."""
+    import asyncpg
+    dsn = os.environ.get("DONTO_DSN", "postgres://donto:donto@127.0.0.1:5432/donto")
+    conn = await asyncpg.connect(dsn)
+    try:
+        hyp_id = await conn.fetchval("SELECT hypothesis_id FROM donto_identity_hypothesis WHERE name = $1", req.hypothesis)
+        if not hyp_id:
+            raise HTTPException(404, f"Hypothesis '{req.hypothesis}' not found")
+        count = 0
+        for iri in req.symbol_iris:
+            sid = await conn.fetchval("SELECT donto_symbol_id($1)", iri)
+            if not sid:
+                continue
+            await conn.execute("""
+                INSERT INTO donto_identity_membership (hypothesis_id, referent_id, symbol_id, posterior, membership_reason)
+                VALUES ($1, $2, $3, 0.95, '{}')
+                ON CONFLICT DO NOTHING
+            """, hyp_id, req.referent_id, sid)
+            count += 1
+        return {"assigned": count, "hypothesis": req.hypothesis, "referent_id": req.referent_id}
+    finally:
+        await conn.close()
+
+
+@app.get("/entity/{iri:path}/edges", tags=["Entity Resolution"], summary="List identity edges for an entity")
+async def entity_edges(iri: str):
+    """Get all identity edges (same_referent, distinct_referent, etc.) for an entity."""
+    import asyncpg
+    dsn = os.environ.get("DONTO_DSN", "postgres://donto:donto@127.0.0.1:5432/donto")
+    conn = await asyncpg.connect(dsn)
+    try:
+        sid = await conn.fetchval("SELECT donto_symbol_id($1)", iri)
+        if not sid:
+            return {"edges": [], "iri": iri, "symbol_id": None}
+        rows = await conn.fetch("SELECT * FROM donto_identity_edges_for($1)", sid)
+        return {
+            "iri": iri, "symbol_id": sid,
+            "edges": [{"edge_id": r["edge_id"], "other_iri": r["other_iri"],
+                       "relation": r["relation"], "confidence": r["confidence"],
+                       "method": r["method"], "explanation": r["explanation"]} for r in rows]
+        }
+    finally:
+        await conn.close()
+
+
+@app.get("/entity/cluster/{hypothesis}/{referent_id}", tags=["Entity Resolution"],
+         summary="List all symbols in a referent cluster")
+async def entity_cluster(hypothesis: str, referent_id: int):
+    """Get all entity symbols that belong to a referent cluster under a hypothesis."""
+    import asyncpg
+    dsn = os.environ.get("DONTO_DSN", "postgres://donto:donto@127.0.0.1:5432/donto")
+    conn = await asyncpg.connect(dsn)
+    try:
+        hyp_id = await conn.fetchval("SELECT hypothesis_id FROM donto_identity_hypothesis WHERE name = $1", hypothesis)
+        if not hyp_id:
+            raise HTTPException(404, f"Hypothesis '{hypothesis}' not found")
+        rows = await conn.fetch("SELECT * FROM donto_referent_symbols($1, $2)", hyp_id, referent_id)
+        return {
+            "hypothesis": hypothesis, "referent_id": referent_id,
+            "symbols": [{"symbol_id": r["symbol_id"], "iri": r["iri"], "posterior": r["posterior"]} for r in rows]
+        }
+    finally:
+        await conn.close()
+
+
+@app.get("/entity/resolve/{iri:path}", tags=["Entity Resolution"],
+         summary="Resolve an IRI to its referent under a hypothesis")
+async def entity_resolve(iri: str, hypothesis: str = Query("likely")):
+    """Resolve an entity IRI to its referent ID and co-referring symbols."""
+    import asyncpg
+    dsn = os.environ.get("DONTO_DSN", "postgres://donto:donto@127.0.0.1:5432/donto")
+    conn = await asyncpg.connect(dsn)
+    try:
+        sid = await conn.fetchval("SELECT donto_symbol_id($1)", iri)
+        if not sid:
+            return {"iri": iri, "resolved": False}
+        hyp_id = await conn.fetchval("SELECT hypothesis_id FROM donto_identity_hypothesis WHERE name = $1", hypothesis)
+        if not hyp_id:
+            raise HTTPException(404, f"Hypothesis '{hypothesis}' not found")
+        ref_id = await conn.fetchval("SELECT donto_resolve_referent($1, $2)", hyp_id, sid)
+        if not ref_id:
+            return {"iri": iri, "symbol_id": sid, "resolved": False, "hypothesis": hypothesis}
+        rows = await conn.fetch("SELECT * FROM donto_referent_symbols($1, $2)", hyp_id, ref_id)
+        return {
+            "iri": iri, "symbol_id": sid, "referent_id": ref_id, "hypothesis": hypothesis, "resolved": True,
+            "cluster": [{"symbol_id": r["symbol_id"], "iri": r["iri"], "posterior": r["posterior"]} for r in rows]
+        }
+    finally:
+        await conn.close()
+
+
+@app.get("/entity/family-table", tags=["Entity Resolution"],
+         summary="Get the full family resolution table")
+async def entity_family_table(hypothesis: str = Query("likely")):
+    """Get all referent clusters with symbol counts and total facts — the full resolution table."""
+    import asyncpg
+    dsn = os.environ.get("DONTO_DSN", "postgres://donto:donto@127.0.0.1:5432/donto")
+    conn = await asyncpg.connect(dsn)
+    try:
+        hyp_id = await conn.fetchval("SELECT hypothesis_id FROM donto_identity_hypothesis WHERE name = $1", hypothesis)
+        if not hyp_id:
+            raise HTTPException(404, f"Hypothesis '{hypothesis}' not found")
+        rows = await conn.fetch("""
+            SELECT m.referent_id,
+                   count(*) as symbols,
+                   string_agg(DISTINCT s.normalized_label, ', ' ORDER BY s.normalized_label) as names,
+                   sum(COALESCE(sig.statement_count, 0)) as total_facts
+            FROM donto_identity_membership m
+            JOIN donto_entity_symbol s ON s.symbol_id = m.symbol_id
+            LEFT JOIN donto_entity_signature sig ON sig.symbol_id = m.symbol_id
+            WHERE m.hypothesis_id = $1 AND upper(m.tx_time) IS NULL
+            GROUP BY m.referent_id
+            ORDER BY total_facts DESC NULLS LAST
+        """, hyp_id)
+        return {
+            "hypothesis": hypothesis,
+            "referents": [{"referent_id": r["referent_id"], "symbols": r["symbols"],
+                          "names": r["names"], "total_facts": r["total_facts"]} for r in rows],
+            "total_referents": len(rows),
+            "total_symbols": sum(r["symbols"] for r in rows),
+            "total_facts": sum(r["total_facts"] or 0 for r in rows),
+        }
+    finally:
+        await conn.close()
+
+
 # ── Scientific Paper Endpoints ──────────────────────────────────────────
 
 PAPER_EXTRACTION_PROMPT = """You are a scientific paper claim extractor. Given the text of a scientific paper, extract:
