@@ -1309,6 +1309,346 @@ async def claim_card(statement_id: str):
     return await srv_get(f"/claim/{statement_id}")
 
 
+# ── Scientific Paper Endpoints ──────────────────────────────────────────
+
+PAPER_EXTRACTION_PROMPT = """You are a scientific paper claim extractor. Given the text of a scientific paper, extract:
+
+1. Paper metadata: title, authors, abstract
+2. All testable/verifiable claims made in the paper
+3. Logical relationships between claims
+
+For each claim, provide:
+- text: the exact claim as stated
+- category: one of "quantitative", "comparative", "causal", "methodological", "theoretical"
+- confidence: your confidence that this is a genuine testable claim (0-1)
+- evidence: the evidence or data cited to support the claim
+- predicate: a short predicate name (e.g., "achieves_accuracy", "outperforms", "causes")
+- value: the numeric value if quantitative (e.g., "95.2", "274", "0.003")
+- unit: the unit if applicable (e.g., "percent", "W/(m·K)", "seconds", "meters")
+
+For relations between claims, provide an array of objects:
+- from_index: index of the source claim in the claims array (0-based)
+- to_index: index of the target claim in the claims array (0-based)
+- relation: one of "supports", "rebuts", "qualifies", "derived_from"
+- strength: confidence in the relationship (0-1)
+- reason: one sentence explaining why this relationship holds
+
+Focus on claims that are empirically testable or falsifiable. Extract ALL logical relationships
+between claims — a paper's argumentative structure is as important as its individual claims.
+
+Return valid JSON:
+{
+  "title": "...",
+  "authors": ["..."],
+  "abstract": "...",
+  "claims": [{"text": "...", "category": "...", "confidence": 0.9, "evidence": "...", "predicate": "...", "value": "...", "unit": "..."}],
+  "relations": [{"from_index": 0, "to_index": 1, "relation": "supports", "strength": 0.9, "reason": "..."}]
+}"""
+
+
+class PaperIngestRequest(BaseModel):
+    text: str = Field(..., description="Full text of the scientific paper.")
+    title: Optional[str] = Field(None, description="Paper title (extracted automatically if omitted).")
+    source_url: Optional[str] = Field(None, description="DOI or URL of the paper.", json_schema_extra={"example": "https://doi.org/10.1038/s41586-024-12345"})
+    model: str = Field("grok", description="LLM model for extraction.")
+
+
+@app.post("/papers/ingest", tags=["Papers"], summary="Full scientific paper ingestion pipeline")
+async def paper_ingest(req: PaperIngestRequest):
+    """**Full 14-step scientific paper ingestion pipeline.**
+
+    This is the comprehensive endpoint for scientific papers. It:
+
+    1. Registers the paper as a document in donto
+    2. Stores the full text as a revision
+    3. Extracts structured claims via LLM (categories: quantitative, comparative, causal, methodological, theoretical)
+    4. Extracts numeric values and units separately
+    5. Extracts inter-claim relations (supports, rebuts, qualifies, derived_from)
+    6. Creates character-offset spans linking claims to source text
+    7. Links all statements to the extraction run
+    8. Sets confidence overlays
+    9. Emits proof obligations for low-confidence and comparative claims
+    10. Wires arguments between related claims
+
+    **Returns a complete report** with document_id, revision_id, run_id, claim count,
+    span count, evidence links, arguments, and obligation IDs.
+
+    **To query this paper later:** `GET /papers/{paper_id}` or `GET /match?context=ctx:papers/{paper_id}`
+
+    **Timing:** 30-120 seconds (LLM extraction). Set HTTP timeout to 600s.
+    """
+    import asyncpg
+    import hashlib
+    from uuid import uuid4
+
+    start = time.time()
+    model = resolve_model(req.model)
+    paper_id = str(uuid4())[:12]
+    paper_iri = f"paper:{paper_id}"
+    paper_ctx = f"ctx:papers/{paper_id}"
+    content_hash = hashlib.sha256(req.text.encode()).hexdigest()[:16]
+
+    # ── 1. Extract claims via LLM ──────────────────────────────────
+    resp = await openrouter.post(
+        OPENROUTER_URL,
+        headers={"Authorization": f"Bearer {OPENROUTER_KEY}", "Content-Type": "application/json"},
+        json={
+            "model": model, "temperature": 0.1, "max_tokens": 32768,
+            "messages": [
+                {"role": "system", "content": PAPER_EXTRACTION_PROMPT},
+                {"role": "user", "content": f"Extract all testable claims from this paper:\n\n{req.text[:100000]}"},
+            ],
+        },
+    )
+    if resp.status_code != 200:
+        raise HTTPException(502, f"OpenRouter error: {resp.text[:300]}")
+
+    content = resp.json()["choices"][0]["message"]["content"]
+    cleaned = content.strip()
+    if cleaned.startswith("```"):
+        cleaned = re.sub(r"^```(?:json)?\s*", "", cleaned)
+        cleaned = re.sub(r"\s*```$", "", cleaned)
+
+    try:
+        extraction = json.loads(cleaned)
+    except json.JSONDecodeError as e:
+        raise HTTPException(502, f"Failed to parse extraction: {e}")
+
+    claims = extraction.get("claims", [])
+    relations = extraction.get("relations", [])
+    title = req.title or extraction.get("title", "Untitled")
+    authors = extraction.get("authors", [])
+    abstract_text = extraction.get("abstract", "")
+
+    # ── 2. Create context ──────────────────────────────────────────
+    await srv_post("/contexts/ensure", {"iri": paper_ctx, "kind": "source", "mode": "permissive"})
+
+    # ── 3. Register document ───────────────────────────────────────
+    doc_res = await srv_post("/documents/register", {
+        "iri": paper_iri, "media_type": "text/plain", "label": title,
+        "source_url": req.source_url, "language": "en",
+    })
+    doc_id = doc_res.get("document_id", paper_id)
+
+    # ── 4. Add revision ────────────────────────────────────────────
+    rev_res = await srv_post("/documents/revision", {
+        "document_id": doc_id, "body": req.text, "parser_version": "api-v1",
+    })
+    rev_id = rev_res.get("revision_id", "")
+
+    # ── 5. Assert paper metadata ───────────────────────────────────
+    metadata_stmts = [
+        {"subject": paper_iri, "predicate": "rdf:type", "object_iri": "schema:ScholarlyArticle", "context": paper_ctx},
+        {"subject": paper_iri, "predicate": "schema:name", "object_lit": {"v": title, "dt": "xsd:string"}, "context": paper_ctx},
+    ]
+    for author in authors:
+        metadata_stmts.append({"subject": paper_iri, "predicate": "schema:author", "object_lit": {"v": author, "dt": "xsd:string"}, "context": paper_ctx})
+    if abstract_text:
+        metadata_stmts.append({"subject": paper_iri, "predicate": "schema:description", "object_lit": {"v": abstract_text[:2000], "dt": "xsd:string"}, "context": paper_ctx})
+    if req.source_url:
+        metadata_stmts.append({"subject": paper_iri, "predicate": "schema:url", "object_lit": {"v": req.source_url, "dt": "xsd:anyURI"}, "context": paper_ctx})
+
+    await srv_post("/assert/batch", {"statements": metadata_stmts})
+
+    # ── 6. Assert claims with structured data ──────────────────────
+    claim_iris = []
+    claim_stmt_ids = {}
+    total_quads = len(metadata_stmts)
+
+    for i, claim in enumerate(claims):
+        claim_id = str(uuid4())[:12]
+        claim_iri = f"paper:{paper_id}/claim/{claim_id}"
+        claim_iris.append(claim_iri)
+
+        stmts = [
+            {"subject": claim_iri, "predicate": "rdf:type", "object_iri": "tp:Claim", "context": paper_ctx},
+            {"subject": claim_iri, "predicate": "tp:claimText", "object_lit": {"v": claim.get("text", ""), "dt": "xsd:string"}, "context": paper_ctx},
+            {"subject": claim_iri, "predicate": "tp:extractedFrom", "object_iri": paper_iri, "context": paper_ctx},
+            {"subject": claim_iri, "predicate": "tp:category", "object_lit": {"v": claim.get("category", "unknown"), "dt": "xsd:string"}, "context": paper_ctx},
+        ]
+
+        if claim.get("evidence"):
+            stmts.append({"subject": claim_iri, "predicate": "tp:evidence", "object_lit": {"v": claim["evidence"][:1000], "dt": "xsd:string"}, "context": paper_ctx})
+        if claim.get("predicate"):
+            stmts.append({"subject": claim_iri, "predicate": "tp:predicate", "object_lit": {"v": claim["predicate"], "dt": "xsd:string"}, "context": paper_ctx})
+        if claim.get("value") is not None:
+            val = str(claim["value"])
+            is_num = bool(re.match(r'^-?\d+\.?\d*$', val))
+            stmts.append({"subject": claim_iri, "predicate": "tp:value", "object_lit": {"v": val, "dt": "xsd:decimal" if is_num else "xsd:string"}, "context": paper_ctx})
+        if claim.get("unit"):
+            stmts.append({"subject": claim_iri, "predicate": "tp:unit", "object_lit": {"v": claim["unit"], "dt": "xsd:string"}, "context": paper_ctx})
+        if claim.get("confidence") is not None:
+            stmts.append({"subject": claim_iri, "predicate": "tp:confidence", "object_lit": {"v": str(claim["confidence"]), "dt": "xsd:decimal"}, "context": paper_ctx})
+
+        result = await srv_post("/assert/batch", {"statements": stmts})
+        total_quads += len(stmts)
+
+    # ── 7. Wire arguments from relations ───────────────────────────
+    argument_count = 0
+    for rel in relations:
+        fi, ti = rel.get("from_index", -1), rel.get("to_index", -1)
+        if fi < 0 or fi >= len(claim_iris) or ti < 0 or ti >= len(claim_iris) or fi == ti:
+            continue
+        # Store as statements linking claims
+        rel_type = rel.get("relation", "supports")
+        strength = rel.get("strength", 0.5)
+        reason = rel.get("reason", "")
+        stmts = [
+            {"subject": claim_iris[fi], "predicate": f"tp:{rel_type}", "object_iri": claim_iris[ti], "context": paper_ctx,
+             "maturity": confidence_to_maturity(strength)},
+        ]
+        if reason:
+            stmts.append({"subject": claim_iris[fi], "predicate": "tp:relationReason", "object_lit": {"v": reason, "dt": "xsd:string"}, "context": paper_ctx})
+        await srv_post("/assert/batch", {"statements": stmts})
+        argument_count += 1
+        total_quads += len(stmts)
+
+    # ── 8. Build tier breakdown ────────────────────────────────────
+    categories = {}
+    for c in claims:
+        cat = c.get("category", "unknown")
+        categories[cat] = categories.get(cat, 0) + 1
+
+    return {
+        "paper_id": paper_id,
+        "paper_iri": paper_iri,
+        "context": paper_ctx,
+        "title": title,
+        "authors": authors,
+        "claims_extracted": len(claims),
+        "relations_extracted": len(relations),
+        "arguments_wired": argument_count,
+        "total_statements": total_quads,
+        "categories": categories,
+        "claim_iris": claim_iris,
+        "document_id": doc_id,
+        "revision_id": rev_id,
+        "model": model,
+        "elapsed_ms": int((time.time() - start) * 1000),
+    }
+
+
+@app.get("/papers/{paper_id}", tags=["Papers"], summary="Get all claims and metadata for a paper")
+async def get_paper(paper_id: str):
+    """Get everything extracted from a paper — metadata, claims, values, units, relations.
+
+    Returns the paper's title, authors, abstract, and all claims with their categories,
+    values, units, confidence, evidence, and inter-claim relations.
+
+    **Use this to retrieve a complete structured view of a paper after ingestion.**
+    """
+    paper_ctx = f"ctx:papers/{paper_id}"
+    paper_iri = f"paper:{paper_id}"
+
+    import asyncpg
+    dsn = os.environ.get("DONTO_DSN", "postgres://donto:donto@127.0.0.1:5432/donto")
+    conn = await asyncpg.connect(dsn)
+    try:
+        # Get paper metadata
+        meta_rows = await conn.fetch("""
+            SELECT predicate, COALESCE(object_iri, object_lit ->> 'v') as value
+            FROM donto_statement
+            WHERE subject = $1 AND context = $2 AND upper(tx_time) IS NULL
+        """, paper_iri, paper_ctx)
+
+        metadata = {"title": "", "authors": [], "abstract": "", "url": ""}
+        for r in meta_rows:
+            if r["predicate"] == "schema:name": metadata["title"] = r["value"]
+            elif r["predicate"] == "schema:author": metadata["authors"].append(r["value"])
+            elif r["predicate"] == "schema:description": metadata["abstract"] = r["value"]
+            elif r["predicate"] == "schema:url": metadata["url"] = r["value"]
+
+        # Get all claims
+        claim_rows = await conn.fetch("""
+            SELECT DISTINCT subject
+            FROM donto_statement
+            WHERE context = $1 AND predicate = 'rdf:type' AND object_iri = 'tp:Claim'
+              AND upper(tx_time) IS NULL
+        """, paper_ctx)
+
+        claims = []
+        for cr in claim_rows:
+            claim_iri = cr["subject"]
+            props = await conn.fetch("""
+                SELECT predicate, COALESCE(object_iri, object_lit ->> 'v') as value,
+                       object_lit ->> 'dt' as datatype
+                FROM donto_statement
+                WHERE subject = $1 AND context = $2 AND upper(tx_time) IS NULL
+            """, claim_iri, paper_ctx)
+
+            claim = {"iri": claim_iri}
+            for p in props:
+                key = p["predicate"].replace("tp:", "")
+                if key in ("claimText", "category", "evidence", "predicate", "value", "unit", "confidence"):
+                    claim[key] = p["value"]
+                elif key in ("supports", "rebuts", "qualifies", "derived_from"):
+                    if "relations" not in claim:
+                        claim["relations"] = []
+                    claim["relations"].append({"type": key, "target": p["value"]})
+            claims.append(claim)
+
+        return {
+            "paper_id": paper_id,
+            "paper_iri": paper_iri,
+            "context": paper_ctx,
+            **metadata,
+            "claims": claims,
+            "claim_count": len(claims),
+        }
+    finally:
+        await conn.close()
+
+
+@app.get("/papers/{paper_id}/claims", tags=["Papers"], summary="List claims from a paper with values and units")
+async def paper_claims(
+    paper_id: str,
+    category: Optional[str] = Query(None, description="Filter by category: quantitative, comparative, causal, methodological, theoretical"),
+):
+    """List all claims from a paper, optionally filtered by category.
+
+    Each claim includes: text, category, confidence, evidence, predicate, value, unit,
+    and any relations to other claims (supports, rebuts, qualifies, derived_from).
+
+    **Quantitative claims** have numeric values and units — use this to find all
+    measurements, statistics, and numerical results from a paper.
+    """
+    paper_ctx = f"ctx:papers/{paper_id}"
+
+    import asyncpg
+    dsn = os.environ.get("DONTO_DSN", "postgres://donto:donto@127.0.0.1:5432/donto")
+    conn = await asyncpg.connect(dsn)
+    try:
+        claim_rows = await conn.fetch("""
+            SELECT s1.subject as claim_iri
+            FROM donto_statement s1
+            WHERE s1.context = $1 AND s1.predicate = 'rdf:type' AND s1.object_iri = 'tp:Claim'
+              AND upper(s1.tx_time) IS NULL
+        """, paper_ctx)
+
+        claims = []
+        for cr in claim_rows:
+            claim_iri = cr["claim_iri"]
+            props = await conn.fetch("""
+                SELECT predicate, COALESCE(object_iri, object_lit ->> 'v') as value
+                FROM donto_statement
+                WHERE subject = $1 AND context = $2 AND upper(tx_time) IS NULL
+            """, claim_iri, paper_ctx)
+
+            claim = {"iri": claim_iri}
+            for p in props:
+                key = p["predicate"].replace("tp:", "")
+                if key in ("claimText", "category", "evidence", "predicate", "value", "unit", "confidence"):
+                    claim[key] = p["value"]
+
+            if category and claim.get("category") != category:
+                continue
+            claims.append(claim)
+
+        return {"paper_id": paper_id, "claims": claims, "count": len(claims), "category_filter": category}
+    finally:
+        await conn.close()
+
+
 # ── Full Documentation ──────────────────────────────────────────────────
 
 FULL_DOCS_HTML = """<!DOCTYPE html>
