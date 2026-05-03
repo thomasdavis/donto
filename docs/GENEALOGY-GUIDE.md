@@ -758,4 +758,60 @@ All of this is stored bitemporally — you can always ask "what did we know on d
 
 ---
 
+---
+
+## Glossary
+
+| Term | What it means |
+|------|--------------|
+| **Statement** | A single fact in the graph: `(subject, predicate, object, context)` plus polarity, maturity, valid-time, and transaction-time. The atomic unit of knowledge. |
+| **Subject** | The entity a fact is about. An IRI like `ex:mary-watson`. Always kebab-lower-case. |
+| **Predicate** | The relationship or property. A name like `bornIn`, `marriedTo`, `hasBirthYear`. Always camelCase. LLMs mint these freely during extraction. |
+| **Object** | The value of a fact. Either an **IRI** (another entity, like `ex:cornwall`) or a **literal** (a typed value, like `{"v": 1860, "dt": "xsd:integer"}`). |
+| **Context** | A scope that groups facts by source, research question, or extraction run. Like `ctx:genes/mary-watson/obituary`. Facts in different contexts can be queried, compared, and retracted independently. |
+| **IRI** | Internationalized Resource Identifier. The unique name for an entity, like `ex:mary-watson` or `ctx:genes/topic`. Not a URL — just a stable identifier. |
+| **Quad** | A statement with four parts: subject + predicate + object + context. Donto stores quads, not triples. |
+| **Polarity** | Whether a fact is `asserted` (claimed true), `negated` (claimed false), `absent` (explicitly missing), or `unknown`. |
+| **Maturity** | How well-supported a fact is. L0 = raw/unverified, L1 = registered predicate, L2 = has evidence, L3 = shape-validated, L4 = certified/verified. |
+| **Valid-time** | When a fact was true in the real world. `(married, 1879-1881)` means the marriage lasted from 1879 to 1881. |
+| **Transaction-time** | When a fact was recorded or retracted in the database. Used for "what did we know at time T?" queries. |
+| **Bitemporal** | Having both valid-time and transaction-time. Every statement in donto is bitemporal. |
+| **Paraconsistent** | A system that tolerates contradictions without exploding. Two sources saying different birth years? Both are stored. Neither is automatically rejected. |
+| **Retraction** | Soft-deleting a fact by closing its transaction-time. The row stays in the database for historical queries. Nothing is ever physically deleted. |
+| **Extraction** | The process of sending text to an LLM (Grok 4.1 Fast) which returns structured facts (subject/predicate/object with tier and confidence). |
+| **Tier** | The analytical depth of an extracted fact. T1 = surface facts, T2 = relational, T3 = opinions, T4 = epistemic, T5 = rhetorical, T6 = presuppositions, T7 = philosophical, T8 = intertextual. |
+| **Predicate alignment** | Mapping different predicate names to each other so queries work across sources. `bornIn` ↔ `birthplaceOf` ↔ `bornInPlace` are all aligned. |
+| **Closure** | The materialized expansion index for predicate alignment. Pre-computes all transitive chains so queries are fast. Rebuilt with `POST /align/rebuild`. |
+| **Entity symbol** | A registered IRI in the symbol table with provenance (who created it, when, from what source). Every subject and object IRI should be a symbol. |
+| **Entity mention** | An occurrence of a symbol in a specific document, span, or extraction run. Tracks surface text and confidence. |
+| **Entity signature** | A derived feature profile for a symbol (name features, type distribution, temporal features, etc.) used for candidate generation during entity resolution. |
+| **Identity edge** | A weighted assertion that two symbols refer to the same real-world entity (`same_referent`), might (`possibly_same_referent`), definitely don't (`distinct_referent`), or we don't know (`not_enough_information`). |
+| **Identity hypothesis** | A named clustering solution over identity edges. Three defaults: `strict` (≥0.98), `likely` (≥0.85), `exploratory` (≥0.60). Determines which symbols are treated as the same entity at query time. |
+| **Referent** | The hypothesized real-world entity that one or more symbols point to, within a specific identity hypothesis. |
+| **Shadow projection** | A materialized view that applies predicate alignment + identity resolution + literal canonicalization to produce a "resolved" view of the graph for fast querying. |
+| **Literal** | A typed value that isn't an entity. Has three parts: `v` (the value), `dt` (the datatype like `xsd:string` or `xsd:integer`), and optionally `lang` (language tag). |
+| **Literal canonicalization** | Normalizing different representations of the same value. "5 feet 10 inches" and "178 cm" map to the same canonical quantity. |
+| **Time expression** | An EDTF-compatible temporal value with grain (day/month/year), uncertainty, approximation, and probability model. "circa 1860" is a year-grain approximate expression, not "1860-01-01". |
+| **Allen interval relation** | One of 13 possible temporal relationships between two events: before, meets, overlaps, starts, during, finishes, equals, and their inverses. Stored as a bitset. |
+| **Class** | A type in the ontology hierarchy. `donto:Person`, `donto:Place`, `donto:Event`, etc. Entities are typed with `rdf:type`. |
+| **Subclass** | A hierarchical relationship: `donto:Person` is a subclass of `donto:Agent`, which is a subclass of `donto:Entity`. Used for type reasoning. |
+| **Disjointness** | A constraint that two classes cannot overlap. Agent ≠ Place ≠ Event. If something is typed as both Person and Place, that's a detected contradiction. |
+| **Property constraint** | A formal rule on a predicate: domain class, range class, range datatype, functional, symmetric, transitive, etc. Violations generate proof obligations, not rejections. |
+| **Inference rule** | A registered rule that derives new facts from existing ones. Example: `parentOf(x,y) → childOf(y,x)`. Rules have confidence policies and temporal policies. |
+| **Derivation** | A new fact produced by applying an inference rule to premises. Tracks which rule, which premises, and what confidence. |
+| **Rule agenda** | A queue of pending rule evaluations triggered by new or changed statements. |
+| **Proof obligation** | An open research task. Types: `needs-source-support`, `needs-entity-disambiguation`, `needs-temporal-grounding`, `needs-coref`, `needs-human-review`, `needs-confidence-boost`. |
+| **Evidence link** | A connection between a statement and its source: the document, text span, extraction run, or other statement that supports it. Types: `extracted_from`, `supported_by`, `contradicted_by`, `produced_by`. |
+| **Claim card** | The full view of a statement: the fact itself plus all evidence, arguments, obligations, and blockers. Retrieved with `GET /claim/{id}`. |
+| **Argument** | A relationship between two statements: `supports`, `rebuts`, `undercuts`, `endorses`, `supersedes`, `qualifies`, `potentially_same`, `same_referent`, `same_event`. |
+| **Document** | A registered source text (article, obituary, record, transcript) with an IRI, media type, and immutable revisions. |
+| **Span** | A character-offset range within a document revision. Links extracted facts to the exact text that supports them. |
+| **Extraction run** | A tracked LLM extraction session with model identity, parameters, source revision, and output counts. PROV-O compatible. |
+| **Epistemic sweep** | A batch process that validates shapes, fires derivation rules, detects contradictions, emits proof obligations, and promotes maturity. |
+| **DontoQL** | Donto's query language. `MATCH ?s ?p ?o LIMIT 20`. Simpler than SPARQL, designed for the donto data model. |
+| **dontosrv** | The Rust HTTP server (Axum) that provides the graph query and mutation API. Runs on port 7879. |
+| **OpenRouter** | The LLM API gateway used for extraction. Routes to Grok 4.1 Fast ($0.005/article) or other models. |
+
+---
+
 *This guide describes donto as of May 2026. Database: 36M+ statements, 67 migrations, 14 new tables for entity resolution + ontology + temporal reasoning + inference. API: https://genes.apexpots.com*
