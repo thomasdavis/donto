@@ -42,7 +42,7 @@ openrouter = httpx.AsyncClient(timeout=600.0)
 # but not a server restart. Good enough for batch ingestion.
 
 jobs: dict[str, dict] = {}
-MAX_CONCURRENT_JOBS = 4
+MAX_CONCURRENT_JOBS = 5
 job_semaphore = asyncio.Semaphore(MAX_CONCURRENT_JOBS)
 
 app = FastAPI(
