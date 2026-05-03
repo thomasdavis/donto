@@ -132,6 +132,17 @@ pub const MIGRATIONS: &[(&str, &str)] = &[
     ("0054_event_frames", include_str!("../../sql/migrations/0054_event_frames.sql")),
     ("0055_match_alignment_integration", include_str!("../../sql/migrations/0055_match_alignment_integration.sql")),
     ("0056_lexical_normalizer", include_str!("../../sql/migrations/0056_lexical_normalizer.sql")),
+    ("0057_entity_symbol", include_str!("../../sql/migrations/0057_entity_symbol.sql")),
+    ("0058_entity_mention", include_str!("../../sql/migrations/0058_entity_mention.sql")),
+    ("0059_entity_signature", include_str!("../../sql/migrations/0059_entity_signature.sql")),
+    ("0060_identity_edge", include_str!("../../sql/migrations/0060_identity_edge.sql")),
+    ("0061_identity_hypothesis", include_str!("../../sql/migrations/0061_identity_hypothesis.sql")),
+    ("0062_literal_canonical", include_str!("../../sql/migrations/0062_literal_canonical.sql")),
+    ("0063_time_expression", include_str!("../../sql/migrations/0063_time_expression.sql")),
+    ("0064_temporal_relation", include_str!("../../sql/migrations/0064_temporal_relation.sql")),
+    ("0065_property_constraint", include_str!("../../sql/migrations/0065_property_constraint.sql")),
+    ("0066_class_hierarchy", include_str!("../../sql/migrations/0066_class_hierarchy.sql")),
+    ("0067_rule_engine", include_str!("../../sql/migrations/0067_rule_engine.sql")),
 ];
 
 fn sha256_of(s: &str) -> Vec<u8> {
