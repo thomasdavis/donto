@@ -23,27 +23,23 @@ from fastapi import FastAPI, HTTPException, Query
 from fastapi.responses import HTMLResponse, Response
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
+from temporalio.client import Client
+from temporalio.service import RPCError
+
+from helpers import (
+    DONTOSRV, OPENROUTER_URL, OPENROUTER_KEY, DEFAULT_MODEL, FALLBACK_MODEL,
+    srv, openrouter, resolve_model, confidence_to_maturity, parse_fact_object,
+    EXTRACTION_PROMPT, srv_post, call_openrouter, ingest_facts, compute_tiers,
+)
+from workflows import ExtractionWorkflow
 
 logger = logging.getLogger("donto-api")
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 
-DONTOSRV = os.environ.get("DONTOSRV_URL", "http://127.0.0.1:7879")
-OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
-OPENROUTER_KEY = os.environ.get("OPENROUTER_API_KEY", "")
+TEMPORAL_ADDRESS = os.environ.get("TEMPORAL_ADDRESS", "localhost:7233")
+TASK_QUEUE = "donto-extraction"
 
-DEFAULT_MODEL = "x-ai/grok-4.1-fast"
-FALLBACK_MODEL = "mistralai/mistral-large-2512"
-
-srv = httpx.AsyncClient(base_url=DONTOSRV, timeout=600.0)
-openrouter = httpx.AsyncClient(timeout=600.0)
-
-# ── Job Queue ────────────────────────────────────────────────────────────
-# In-memory job store for async extraction. Jobs survive the request cycle
-# but not a server restart. Good enough for batch ingestion.
-
-jobs: dict[str, dict] = {}
-MAX_CONCURRENT_JOBS = 5
-job_semaphore = asyncio.Semaphore(MAX_CONCURRENT_JOBS)
+temporal_client: Client | None = None
 
 app = FastAPI(
     title="Donto Knowledge Graph API",
@@ -141,6 +137,16 @@ app.add_middleware(
 )
 
 
+@app.on_event("startup")
+async def startup():
+    global temporal_client
+    try:
+        temporal_client = await Client.connect(TEMPORAL_ADDRESS)
+        logger.info(f"connected to Temporal at {TEMPORAL_ADDRESS}")
+    except Exception as e:
+        logger.error(f"failed to connect to Temporal: {e} — job endpoints will be unavailable")
+
+
 # ── Helpers ─────────────────────────────────────────────────────────────
 
 
@@ -153,251 +159,6 @@ async def srv_get(path: str, params: dict = None):
         return r.json()
     except Exception:
         return {"raw": r.text}
-
-
-async def srv_post(path: str, body=None):
-    for attempt in range(3):
-        try:
-            r = await srv.post(path, json=body)
-            if r.status_code >= 400:
-                raise HTTPException(r.status_code, r.json() if r.headers.get("content-type", "").startswith("application/json") else r.text)
-            text = r.text.strip()
-            if not text:
-                return {"ok": True}
-            try:
-                return r.json()
-            except Exception:
-                return {"raw": text}
-        except (httpx.ConnectError, httpx.ReadError, httpx.RemoteProtocolError) as e:
-            logger.warning(f"srv_post {path} attempt {attempt+1}/3 failed: {e}")
-            if attempt < 2:
-                await asyncio.sleep(1)
-            else:
-                raise HTTPException(502, f"dontosrv unreachable after 3 attempts: {e}")
-
-
-def resolve_model(name: str) -> str:
-    return {"grok": DEFAULT_MODEL, "fast": DEFAULT_MODEL, "default": DEFAULT_MODEL,
-            "mistral": FALLBACK_MODEL, "fallback": FALLBACK_MODEL}.get(name, name)
-
-
-def confidence_to_maturity(c: float) -> int:
-    if c >= 0.95: return 4
-    if c >= 0.8: return 3
-    if c >= 0.6: return 2
-    if c >= 0.4: return 1
-    return 0
-
-
-def parse_fact_object(obj):
-    """Parse LLM extraction output object into dontosrv assert format."""
-    if isinstance(obj, dict):
-        if "iri" in obj:
-            return obj["iri"], None
-        if "literal" in obj:
-            lit = obj["literal"]
-            return None, {"v": lit.get("v"), "dt": lit.get("dt", "xsd:string"), "lang": lit.get("lang")}
-        if "v" in obj:
-            return None, {"v": obj["v"], "dt": obj.get("dt", "xsd:string"), "lang": obj.get("lang")}
-    if isinstance(obj, str):
-        if obj.startswith("ex:") or obj.startswith("http") or obj.startswith("ctx:"):
-            return obj, None
-        return None, {"v": obj, "dt": "xsd:string"}
-    return None, {"v": obj, "dt": "xsd:string"}
-
-
-EXTRACTION_PROMPT = """You are a predicate extraction engine. Given a source text (article, transcript,
-essay, interview, etc.), extract the MAXIMUM CONCEIVABLE number of atomic
-predicates — (subject, predicate, object) triples.
-
-Your goal is TOTAL EXTRACTION. Not a summary. Not the "main points." Every
-single relationship, claim, implication, presupposition, rhetorical move,
-and philosophical commitment expressed or implied by the text becomes a triple.
-
-You must INVENT predicate names yourself. Use camelCase. Be specific — prefer
-"graduatedFrom" over "relatedTo". Mint as many novel predicates as the text demands.
-
-## EXTRACTION TIERS — work through ALL of these. Do not stop at Tier 1.
-
-### Tier 1 — Surface facts (what the text explicitly states)
-Identity, classification, biography, affiliation, education, location, temporal,
-authorship, quantitative, attribution predicates.
-
-### Tier 2 — Relational and structural (how things connect)
-Causal, temporal ordering, mereological, spatial, comparison, dependency,
-contrast, succession predicates.
-
-### Tier 3 — Opinions, stances, and evaluative claims
-Evaluation, preference, advocacy, criticism, agreement, emotional stance.
-
-### Tier 4 — Epistemic and modal (known, possible, necessary)
-Certainty, uncertainty, evidence, knowledge source, possibility, necessity, belief.
-
-### Tier 5 — Pragmatic and rhetorical (what the text DOES)
-Speech acts, rhetorical moves, hedging, emphasis, framing, audience.
-
-### Tier 6 — Presuppositions and implicature (assumed without stating)
-Presuppositions, implicature, existential commitments, absence.
-
-### Tier 7 — Philosophical and ontological (deep structure)
-Ontological, teleological, axiological, deontic, counterfactual, essentialism.
-
-### Tier 8 — Intertextual and contextual (beyond the text itself)
-References, cultural context, genre, historical.
-
-## OUTPUT FORMAT
-
-Return a JSON object with a single "facts" array. Each fact:
-
-{
-  "subject": "ex:<kebab-case-subject>",
-  "predicate": "<camelCase predicate you invented>",
-  "object": { "iri": "ex:<kebab-case>" } OR { "literal": { "v": <value>, "dt": "<xsd type>" } },
-  "tier": <1-8>,
-  "confidence": <0.0-1.0>,
-  "notes": "<brief justification>"
-}
-
-## CRITICAL RULES
-
-1. ALL IRIs must be kebab-lower-case: "ex:mrs-watson", NOT "ex:MrsWatson".
-2. NEVER use boolean objects. Use predicates instead.
-3. Prefer IRIs over string literals for entities.
-4. String literals must be SHORT (name, date, quote, number — not sentences).
-5. Confidence: 1.0 = directly stated, 0.9 = minor inference, 0.7 = significant, 0.5 = speculative.
-6. Tier labels must be honest — article metadata is Tier 1, not Tier 8.
-7. 15-30+ distinct subjects per 500-word article.
-8. Decompose aggressively. Mint predicates freely.
-9. Bias toward MORE triples. Target 100-500+ depending on article length.
-10. EVERY predicate must be grounded in the text.
-
-Return ONLY the JSON. No commentary before or after."""
-
-
-async def call_openrouter(text: str, model: str) -> tuple[list[dict], dict]:
-    """Call OpenRouter and return (parsed_facts, metadata)."""
-    resp = await openrouter.post(
-        OPENROUTER_URL,
-        headers={"Authorization": f"Bearer {OPENROUTER_KEY}", "Content-Type": "application/json"},
-        json={
-            "model": model,
-            "temperature": 0.1,
-            "max_tokens": 32768,
-            "messages": [
-                {"role": "system", "content": EXTRACTION_PROMPT},
-                {"role": "user", "content": f"Extract all predicates from the following text:\n\n---\n{text}\n---"},
-            ],
-        },
-    )
-    if resp.status_code != 200:
-        raise HTTPException(502, f"OpenRouter returned {resp.status_code}: {resp.text[:500]}")
-
-    raw_response = resp.json()
-    usage = raw_response.get("usage", {})
-    metadata = {
-        "openrouter_id": raw_response.get("id"),
-        "model_used": raw_response.get("model"),
-        "prompt_tokens": usage.get("prompt_tokens", 0),
-        "completion_tokens": usage.get("completion_tokens", 0),
-        "total_tokens": usage.get("total_tokens", 0),
-        "cost": usage.get("total_cost") or usage.get("cost"),
-        "native_tokens_prompt": usage.get("native_tokens_prompt"),
-        "native_tokens_completion": usage.get("native_tokens_completion"),
-    }
-
-    content = raw_response["choices"][0]["message"]["content"]
-
-    # Strip markdown fences
-    cleaned = content.strip()
-    if cleaned.startswith("```"):
-        cleaned = re.sub(r"^```(?:json)?\s*", "", cleaned)
-        cleaned = re.sub(r"\s*```$", "", cleaned)
-
-    try:
-        return json.loads(cleaned)["facts"], metadata
-    except (json.JSONDecodeError, KeyError) as e:
-        # Try to repair common LLM JSON errors
-        repaired = cleaned
-        # Fix trailing commas before ] or }
-        repaired = re.sub(r',\s*([}\]])', r'\1', repaired)
-        # Fix double-close then comma: }},"tier" → },"tier" (Grok common error)
-        repaired = re.sub(r'}}\s*,\s*"', '},"', repaired)
-        # Fix missing opening brace between facts: },"subject" → },{"subject"
-        repaired = re.sub(r'},\s*"subject"\s*:', '},{"subject":', repaired)
-        # Fix missing commas between objects: }{ → },{
-        repaired = re.sub(r'}\s*{', '},{', repaired)
-        # Fix missing commas between } and " (but not inside arrays/objects)
-        repaired = re.sub(r'}\s*"(?!:)', '},"', repaired)
-        # Fix }}] at end → }]
-        repaired = re.sub(r'}}\s*]', '}]', repaired)
-        # Truncate at last complete object if JSON is cut off
-        if repaired.count('{') > repaired.count('}'):
-            last_brace = repaired.rfind('}')
-            if last_brace > 0:
-                repaired = repaired[:last_brace+1] + ']}'
-        try:
-            return json.loads(repaired)["facts"], metadata
-        except (json.JSONDecodeError, KeyError) as e2:
-            # Last resort: extract individual fact objects with regex
-            try:
-                fact_pattern = r'\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}'
-                raw_facts = re.findall(fact_pattern, repaired)
-                parsed = []
-                for rf in raw_facts:
-                    try:
-                        obj = json.loads(rf)
-                        if 'subject' in obj and 'predicate' in obj:
-                            parsed.append(obj)
-                    except json.JSONDecodeError:
-                        continue
-                if parsed:
-                    logger.warning(f"JSON repair partial: recovered {len(parsed)} facts from regex extraction")
-                    return parsed, metadata
-            except Exception:
-                pass
-            logger.error(f"JSON repair failed completely. First 500 chars: {cleaned[:500]}")
-            raise HTTPException(502, f"Failed to parse extraction output: {e}. First 300 chars: {cleaned[:300]}")
-
-
-async def ingest_facts(facts: list[dict], context: str) -> int:
-    """Convert extracted facts to dontosrv assert format and batch-insert."""
-    # Ensure context exists
-    await srv_post("/contexts/ensure", {"iri": context, "kind": "custom", "mode": "permissive"})
-
-    # Convert facts to assert format
-    statements = []
-    for f in facts:
-        subj = f.get("subject")
-        pred = f.get("predicate")
-        if not subj or not pred:
-            continue
-        obj_iri, obj_lit = parse_fact_object(f.get("object"))
-        if not obj_iri and not obj_lit:
-            continue
-        confidence = f.get("confidence", 0.7)
-        if isinstance(confidence, str):
-            try: confidence = float(confidence)
-            except: confidence = 0.7
-        tier = f.get("tier", 1)
-        if isinstance(tier, str):
-            try: tier = int(tier)
-            except: tier = 1
-
-        statements.append({
-            "subject": subj,
-            "predicate": pred,
-            "object_iri": obj_iri,
-            "object_lit": obj_lit,
-            "context": context,
-            "polarity": "asserted",
-            "maturity": confidence_to_maturity(confidence),
-        })
-
-    # Batch insert via dontosrv
-    if statements:
-        result = await srv_post("/assert/batch", {"statements": statements})
-        return result if isinstance(result, int) else len(statements)
-    return 0
 
 
 # ── System ──────────────────────────────────────────────────────────────
@@ -462,14 +223,7 @@ async def extract_and_ingest(req: ExtractIngestRequest):
     llm_ms = int((time.time() - t0) * 1000)
     logger.info(f"  LLM extraction: {len(facts)} facts in {llm_ms}ms cost={llm_meta.get('cost')}")
 
-    tiers = {f"t{i}": 0 for i in range(1, 9)}
-    for f in facts:
-        t = f.get("tier", 1)
-        if isinstance(t, str):
-            try: t = int(t)
-            except: t = 1
-        key = f"t{min(max(t, 1), 8)}"
-        tiers[key] = tiers.get(key, 0) + 1
+    tiers = compute_tiers(facts)
 
     t1 = time.time()
     ingested = await ingest_facts(facts, req.context)
@@ -489,11 +243,9 @@ async def extract_and_ingest(req: ExtractIngestRequest):
     }
 
 
-# ── Async Job System ────────────────────────────────────────────────────
-# POST /jobs/extract → returns job_id immediately (no Cloudflare timeout)
-# GET  /jobs/{id}    → poll for status/result
-# GET  /jobs         → list all jobs
-# POST /jobs/batch   → submit multiple texts at once
+# ── Async Job System (Temporal-backed) ─────────────────────────────────
+# Jobs are durable Temporal workflows. Survives restarts, has retries,
+# and concurrency is controlled by the worker's max_concurrent_activities.
 
 
 class JobExtractRequest(BaseModel):
@@ -506,52 +258,22 @@ class JobBatchRequest(BaseModel):
     items: list[JobExtractRequest] = Field(..., description="List of texts to extract.")
 
 
-async def _run_extraction_job(job_id: str, text: str, context: str, model: str):
-    """Background task that runs LLM extraction + ingestion."""
-    job = jobs[job_id]
-    try:
-        async with job_semaphore:
-            job["status"] = "extracting"
-            job["started_at"] = time.time()
-            logger.info(f"  job {job_id}: extracting ({len(text)} chars)")
+def _require_temporal():
+    if temporal_client is None:
+        raise HTTPException(503, "Temporal is not connected — job endpoints unavailable")
+    return temporal_client
 
-            t0 = time.time()
-            facts, llm_meta = await call_openrouter(text, model)
-            llm_ms = int((time.time() - t0) * 1000)
-            job["llm_ms"] = llm_ms
-            job["facts_extracted"] = len(facts)
-            job["usage"] = llm_meta
-            logger.info(f"  job {job_id}: LLM done, {len(facts)} facts in {llm_ms}ms cost={llm_meta.get('cost')}")
 
-            tiers = {f"t{i}": 0 for i in range(1, 9)}
-            for f in facts:
-                t = f.get("tier", 1)
-                if isinstance(t, str):
-                    try: t = int(t)
-                    except: t = 1
-                key = f"t{min(max(t, 1), 8)}"
-                tiers[key] = tiers.get(key, 0) + 1
-
-            job["status"] = "ingesting"
-            t1 = time.time()
-            ingested = await ingest_facts(facts, context)
-            ingest_ms = int((time.time() - t1) * 1000)
-
-            total_ms = int((time.time() - job["started_at"]) * 1000)
-            job.update({
-                "status": "completed",
-                "statements_ingested": ingested,
-                "ingest_ms": ingest_ms,
-                "total_ms": total_ms,
-                "tiers": tiers,
-                "completed_at": time.time(),
-            })
-            logger.info(f"  job {job_id}: completed. {ingested} statements in {total_ms}ms")
-    except Exception as e:
-        job["status"] = "failed"
-        job["error"] = str(e)
-        job["completed_at"] = time.time()
-        logger.error(f"  job {job_id}: FAILED: {e}")
+def _temporal_status_to_job_status(wf_status) -> str:
+    from temporalio.client import WorkflowExecutionStatus
+    return {
+        WorkflowExecutionStatus.RUNNING: "extracting",
+        WorkflowExecutionStatus.COMPLETED: "completed",
+        WorkflowExecutionStatus.FAILED: "failed",
+        WorkflowExecutionStatus.CANCELED: "failed",
+        WorkflowExecutionStatus.TERMINATED: "failed",
+        WorkflowExecutionStatus.TIMED_OUT: "failed",
+    }.get(wf_status, "queued")
 
 
 @app.post("/jobs/extract", tags=["Jobs"],
@@ -559,18 +281,16 @@ async def _run_extraction_job(job_id: str, text: str, context: str, model: str):
 async def submit_extract_job(req: JobExtractRequest):
     """Submit text for async extraction. Returns immediately with a job_id.
     Poll `GET /jobs/{job_id}` for status and results.
-    Up to 4 jobs run concurrently; others queue automatically."""
+    Jobs are durable Temporal workflows — they survive server restarts."""
+    client = _require_temporal()
     job_id = str(uuid.uuid4())[:8]
     model = resolve_model(req.model)
-    jobs[job_id] = {
-        "id": job_id,
-        "status": "queued",
-        "context": req.context,
-        "model": model,
-        "text_length": len(req.text),
-        "created_at": time.time(),
-    }
-    asyncio.create_task(_run_extraction_job(job_id, req.text, req.context, model))
+    await client.start_workflow(
+        ExtractionWorkflow.run,
+        args=[req.text, req.context, model],
+        id=f"extraction-{job_id}",
+        task_queue=TASK_QUEUE,
+    )
     logger.info(f"job {job_id}: queued ({len(req.text)} chars → {req.context})")
     return {"job_id": job_id, "status": "queued"}
 
@@ -578,21 +298,19 @@ async def submit_extract_job(req: JobExtractRequest):
 @app.post("/jobs/batch", tags=["Jobs"],
     summary="Submit multiple extraction jobs at once")
 async def submit_batch_jobs(req: JobBatchRequest):
-    """Submit multiple texts for extraction. Each becomes a separate job.
-    Returns list of job IDs. All run concurrently (up to 4 at a time)."""
+    """Submit multiple texts for extraction. Each becomes a separate durable
+    Temporal workflow. Concurrency controlled by the worker process."""
+    client = _require_temporal()
     job_ids = []
     for item in req.items:
         job_id = str(uuid.uuid4())[:8]
         model = resolve_model(item.model)
-        jobs[job_id] = {
-            "id": job_id,
-            "status": "queued",
-            "context": item.context,
-            "model": model,
-            "text_length": len(item.text),
-            "created_at": time.time(),
-        }
-        asyncio.create_task(_run_extraction_job(job_id, item.text, item.context, model))
+        await client.start_workflow(
+            ExtractionWorkflow.run,
+            args=[item.text, item.context, model],
+            id=f"extraction-{job_id}",
+            task_queue=TASK_QUEUE,
+        )
         job_ids.append(job_id)
     logger.info(f"batch: {len(job_ids)} jobs queued")
     return {"job_ids": job_ids, "count": len(job_ids)}
@@ -601,16 +319,37 @@ async def submit_batch_jobs(req: JobBatchRequest):
 @app.get("/jobs", tags=["Jobs"],
     summary="List all jobs with status")
 async def list_jobs(status: Optional[str] = Query(None, description="Filter by status: queued, extracting, ingesting, completed, failed")):
-    """List all extraction jobs. Optionally filter by status."""
-    result = list(jobs.values())
+    """List extraction jobs from Temporal. Optionally filter by status."""
+    client = _require_temporal()
+    result_jobs = []
+    async for wf in client.list_workflows('WorkflowType = "ExtractionWorkflow"'):
+        job_id = wf.id.removeprefix("extraction-")
+        wf_status = _temporal_status_to_job_status(wf.status)
+        job_entry = {
+            "id": job_id,
+            "status": wf_status,
+            "created_at": wf.start_time.timestamp() if wf.start_time else None,
+        }
+        if wf.status is not None:
+            from temporalio.client import WorkflowExecutionStatus
+            if wf.status == WorkflowExecutionStatus.RUNNING:
+                try:
+                    handle = client.get_workflow_handle(wf.id)
+                    detail = await handle.query(ExtractionWorkflow.status)
+                    job_entry.update(detail)
+                except Exception:
+                    pass
+        result_jobs.append(job_entry)
+
     if status:
-        result = [j for j in result if j["status"] == status]
-    result.sort(key=lambda j: j.get("created_at", 0), reverse=True)
+        result_jobs = [j for j in result_jobs if j.get("status") == status]
+    result_jobs.sort(key=lambda j: j.get("created_at") or 0, reverse=True)
+
     summary = {}
-    for j in jobs.values():
-        s = j["status"]
+    for j in result_jobs:
+        s = j.get("status", "unknown")
         summary[s] = summary.get(s, 0) + 1
-    return {"jobs": result[:100], "total": len(jobs), "summary": summary}
+    return {"jobs": result_jobs[:100], "total": len(result_jobs), "summary": summary}
 
 
 @app.get("/jobs/{job_id}", tags=["Jobs"],
@@ -618,9 +357,30 @@ async def list_jobs(status: Optional[str] = Query(None, description="Filter by s
 async def get_job(job_id: str):
     """Poll this endpoint to check if a job is done. Status transitions:
     queued → extracting → ingesting → completed (or failed at any stage)."""
-    if job_id not in jobs:
+    client = _require_temporal()
+    handle = client.get_workflow_handle(f"extraction-{job_id}")
+    try:
+        desc = await handle.describe()
+        from temporalio.client import WorkflowExecutionStatus
+        if desc.status in (WorkflowExecutionStatus.COMPLETED, WorkflowExecutionStatus.FAILED,
+                           WorkflowExecutionStatus.CANCELED, WorkflowExecutionStatus.TERMINATED):
+            result = {
+                "id": job_id,
+                "status": _temporal_status_to_job_status(desc.status),
+                "created_at": desc.start_time.timestamp() if desc.start_time else None,
+            }
+            if desc.status == WorkflowExecutionStatus.COMPLETED:
+                try:
+                    result.update(await handle.result())
+                except Exception:
+                    pass
+            return result
+        detail = await handle.query(ExtractionWorkflow.status)
+        detail["id"] = job_id
+        detail["created_at"] = desc.start_time.timestamp() if desc.start_time else None
+        return detail
+    except RPCError:
         raise HTTPException(404, f"Job {job_id} not found")
-    return jobs[job_id]
 
 
 @app.get("/queue", response_class=HTMLResponse, tags=["Jobs"],
