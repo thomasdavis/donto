@@ -1,0 +1,32 @@
+{"s": "concept:lean-copilot", "p": "ml:finding", "o": {"iri": "https://orcid.org/0000-0002-4010-0001"}, "c": "ctx:papers/arxiv/arx-2404-12534", "pol": "asserted", "maturity": 2}
+{"s": "concept:lean-copilot", "p": "ml:finding", "o": {"iri": "https://arxiv.org/abs/2305.14224"}, "c": "ctx:papers/arxiv/arx-2404-12534", "pol": "asserted", "maturity": 2}
+{"s": "concept:lean-copilot", "p": "ml:relation", "o": {"iri": "https://orcid.org/0000-0002-6000-0000"}, "c": "ctx:papers/arxiv/arx-2404-12534", "pol": "asserted", "maturity": 2}
+{"s": "concept:lean-copilot", "p": "ml:relation", "o": {"iri": "https://github.com/lean-dojo/LeanCopilot"}, "c": "ctx:papers/arxiv/arx-2404-12534", "pol": "asserted", "maturity": 2}
+{"s": "concept:lean-copilot", "p": "ml:finding", "o": {"iri": "concept:reprover"}, "c": "ctx:papers/arxiv/arx-2404-12534", "pol": "asserted", "maturity": 2}
+{"s": "concept:lean-copilot", "p": "ml:finding", "o": {"v": "2.08", "dt": "xsd:decimal"}, "c": "ctx:papers/arxiv/arx-2404-12534", "pol": "asserted", "maturity": 2}
+{"s": "concept:lean-copilot", "p": "ml:finding", "o": {"iri": "https://orcid.org/0000-0002-6019-0001"}, "c": "ctx:papers/arxiv/arx-2404-12534", "pol": "asserted", "maturity": 2}
+{"s": "concept:lean-copilot", "p": "ml:finding", "o": {"iri": "https://github.com/lean-dojo/LeanCopilot"}, "c": "ctx:papers/arxiv/arx-2404-12534", "pol": "asserted", "maturity": 2}
+{"s": "concept:lean-copilot", "p": "rdfs:comment", "o": {"iri": "https://orcid.org/0000-0002-6000-0000"}, "c": "ctx:papers/arxiv/arx-2404-12534", "pol": "asserted", "maturity": 2}
+{"s": "concept:lean-copilot", "p": "rdfs:comment", "o": {"iri": "https://orcid.org/0000-0002-6000-0000"}, "c": "ctx:papers/arxiv/arx-2404-12534", "pol": "asserted", "maturity": 2}
+{"s": "concept:lean-copilot", "p": "rdfs:comment", "o": {"iri": "https://doi.org/10.48550/arXiv.2309.04066"}, "c": "ctx:papers/arxiv/arx-2404-12534", "pol": "asserted", "maturity": 2}
+{"s": "concept:lean-copilot", "p": "rdfs:comment", "o": {"iri": "https://doi.org/10.48550/arXiv.2309.04066"}, "c": "ctx:papers/arxiv/arx-2404-12534", "pol": "asserted", "maturity": 2}
+{"s": "concept:lean-copilot", "p": "rdfs:comment", "o": {"iri": "ontology:framework"}, "c": "ctx:papers/arxiv/arx-2404-12534", "pol": "asserted", "maturity": 2}
+{"s": "concept:lean-copilot", "p": "rdfs:comment", "o": {"iri": "ontology:tool"}, "c": "ctx:papers/arxiv/arx-2404-12534", "pol": "asserted", "maturity": 2}
+{"s": "concept:lean-copilot", "p": "schema:citation", "o": {"iri": "https://github.com/lean-dojo/LeanCopilot"}, "c": "ctx:papers/arxiv/arx-2404-12534", "pol": "asserted", "maturity": 2}
+{"s": "concept:lean-copilot", "p": "schema:citation", "o": {"iri": "concept:lean-copilot"}, "c": "ctx:papers/arxiv/arx-2404-12534", "pol": "asserted", "maturity": 2}
+{"s": "concept:clear", "p": "ml:finding", "o": {"iri": "https://github.com/OpenCausalLab/CLEAR"}, "c": "This paper provides a comprehensive and in-depth exploration on the question: Can language models really understand causal graphs?", "pol": "asserted", "maturity": 2}
+{"s": "concept:clear", "p": "ml:finding", "o": {"v": "CLEAR", "dt": "xsd:string"}, "c": "ctx:papers/arxiv/arx-2406-16605", "pol": "asserted", "maturity": 2}
+{"s": "concept:clear", "p": "ml:relation", "o": {"iri": "https://github.com/OpenCausalLab/CLEAR"}, "c": "This paper provides a comprehensive and in-depth exploration on the question: Can language models really understand causal graphs?", "pol": "asserted", "maturity": 2}
+{"s": "concept:clear", "p": "ml:relation", "o": {"v": "https://github.com/OpenCausalLab/CLEAR", "dt": "xsd:string"}, "c": "ctx:papers/arxiv/arx-2406-16605", "pol": "asserted", "maturity": 2}
+{"s": "concept:clear", "p": "ml:finding", "o": {"iri": "https://github.com/OpenCausalLab/CLEAR"}, "c": "This project website is at https://github.com/OpenCausalLab/CLEAR.", "pol": "asserted", "maturity": 2}
+{"s": "concept:clear", "p": "ml:finding", "o": {"v": "https://github.com/OpenCausalLab/CLEAR", "dt": "xsd:string"}, "c": "ctx:papers/arxiv/arx-2406-16605", "pol": "asserted", "maturity": 2}
+{"s": "concept:opencausallab", "p": "ml:finding", "o": {"iri": "https://github.com/OpenCausalLab/CLEAR"}, "c": "This project website is at https://github.com/OpenCausalLab/CLEAR.", "pol": "asserted", "maturity": 2}
+{"s": "concept:clear", "p": "ml:finding", "o": {"v": "https://github.com/OpenCausalLab/CLEAR", "dt": "xsd:string"}, "c": "ctx:papers/arxiv/arx-2406-16605", "pol": "asserted", "maturity": 2}
+{"s": "concept:clear", "p": "rdfs:comment", "o": {"iri": "concept:llama2-chat-70b"}, "c": "ctx:papers/arxiv/arx-2406-16605", "pol": "asserted", "maturity": 2}
+{"s": "concept:clear", "p": "rdfs:comment", "o": {"iri": "concept:mixtral-8-7b"}, "c": "ctx:papers/arxiv/arx-2406-16605", "pol": "asserted", "maturity": 2}
+{"s": "concept:llama2-chat-70b", "p": "rdfs:comment", "o": {"iri": "concept:llama2-chat-70b"}, "c": "We evaluate six leading models: Llama2-Chat-70B, Mixtral-8×7B, Qwen2.5-72B-Instruct, DeepSeek-R1-Distill-Qwen-32B, Qwen2.5-32B-Instruct, and Qwen2.5-14B-Instruct.", "pol": "asserted", "maturity": 2}
+{"s": "concept:clear", "p": "rdfs:comment", "o": {"iri": "concept:clear"}, "c": "ctx:papers/arxiv/arx-2406-16605", "pol": "asserted", "maturity": 2}
+{"s": "concept:language-models", "p": "rdfs:comment", "o": {"iri": "concept:causal-graphs"}, "c": "ctx:papers/arxiv/arx-2406-16605", "pol": "asserted", "maturity": 2}
+{"s": "concept:language-models", "p": "rdfs:comment", "o": {"iri": "concept:causal-graphs"}, "c": "ctx:papers/arxiv/arx-2406-16605", "pol": "asserted", "maturity": 2}
+{"s": "concept:clear", "p": "schema:citation", "o": {"iri": "https://github.com/OpenCausalLab/CLEAR"}, "c": "This project website is at https://github.com/OpenCausalLab/CLEAR.", "pol": "asserted", "maturity": 2}
+{"s": "concept:clear", "p": "schema:citation", "o": {"v": "CLEAR", "dt": "xsd:string"}, "c": "ctx:papers/arxiv/arx-2406-16605", "pol": "asserted", "maturity": 2}
