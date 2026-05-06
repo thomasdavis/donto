@@ -725,7 +725,8 @@ async def get_job_source(job_id: str):
         row = await conn.fetchrow(
             "SELECT dr.body, dr.parser_version, d.label "
             "FROM donto_document d JOIN donto_document_revision dr ON d.document_id = dr.document_id "
-            "WHERE d.iri = $1 ORDER BY dr.created_at DESC LIMIT 1",
+            "WHERE d.iri = $1 AND dr.parser_version NOT LIKE '%/extraction' "
+            "ORDER BY dr.created_at DESC LIMIT 1",
             doc_iri
         )
         await conn.close()
