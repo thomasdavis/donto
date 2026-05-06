@@ -24,7 +24,7 @@ from fastapi.responses import HTMLResponse, Response
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from temporalio.client import Client, WorkflowExecutionStatus
-from temporalio.common import WorkflowIDConflictPolicy
+from temporalio.common import WorkflowIDConflictPolicy, WorkflowIDReusePolicy
 from temporalio.service import RPCError
 
 from helpers import (
@@ -315,6 +315,7 @@ async def submit_extract_job(req: JobExtractRequest):
             id=wf_id,
             task_queue=TASK_QUEUE,
             id_conflict_policy=WorkflowIDConflictPolicy.FAIL,
+            id_reuse_policy=WorkflowIDReusePolicy.REJECT_DUPLICATE,
         )
     except RPCError as e:
         if "already started" in str(e).lower() or "already exists" in str(e).lower():
@@ -344,6 +345,7 @@ async def submit_batch_jobs(req: JobBatchRequest):
                 id=wf_id,
                 task_queue=TASK_QUEUE,
                 id_conflict_policy=WorkflowIDConflictPolicy.FAIL,
+            id_reuse_policy=WorkflowIDReusePolicy.REJECT_DUPLICATE,
             )
             job_ids.append(wf_id.removeprefix("extraction-"))
         except RPCError as e:
