@@ -140,52 +140,30 @@ app.add_middleware(
 )
 
 
-from starlette.middleware.base import BaseHTTPMiddleware
 from agent_instructions import generate_instructions
 
 
-class AgentInstructionsMiddleware(BaseHTTPMiddleware):
-    async def dispatch(self, request, call_next):
-        response = await call_next(request)
-        content_type = response.headers.get("content-type", "")
-        if "application/json" not in content_type:
-            return response
-        # Collect the response body
-        body_chunks = []
-        async for chunk in response.body_iterator:
-            if isinstance(chunk, bytes):
-                body_chunks.append(chunk)
-            else:
-                body_chunks.append(chunk.encode())
-        body_bytes = b"".join(body_chunks)
-        try:
-            body = json.loads(body_bytes)
-            if isinstance(body, dict):
-                instructions = generate_instructions(
-                    request.url.path, request.method, response.status_code, body
-                )
-                body["agent_instructions"] = instructions
-                new_body = json.dumps(body).encode()
-                from starlette.responses import Response as StarletteResponse
-                headers = {k: v for k, v in response.headers.items()
-                           if k.lower() not in ("content-length", "content-type")}
-                return StarletteResponse(
-                    content=new_body,
-                    status_code=response.status_code,
-                    headers=headers,
-                    media_type="application/json",
-                )
-        except (json.JSONDecodeError, Exception):
-            pass
-        from starlette.responses import Response as StarletteResponse
-        return StarletteResponse(
-            content=body_bytes,
-            status_code=response.status_code,
-            headers=dict(response.headers),
-        )
-
-
-app.add_middleware(AgentInstructionsMiddleware)
+@app.middleware("http")
+async def agent_instructions_middleware(request, call_next):
+    response = await call_next(request)
+    ct = response.headers.get("content-type", "")
+    if "application/json" not in ct or "text/event-stream" in ct:
+        return response
+    body_parts = []
+    async for chunk in response.body_iterator:
+        body_parts.append(chunk if isinstance(chunk, bytes) else chunk.encode())
+    raw = b"".join(body_parts)
+    try:
+        data = json.loads(raw)
+        if isinstance(data, dict):
+            data["agent_instructions"] = generate_instructions(
+                request.url.path, request.method, response.status_code, data
+            )
+            raw = json.dumps(data, default=str).encode()
+    except Exception:
+        pass
+    return Response(content=raw, status_code=response.status_code,
+                    media_type="application/json")
 
 
 @app.on_event("startup")
