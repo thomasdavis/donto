@@ -16,7 +16,10 @@ from temporalio.client import Client
 from temporalio.worker import Worker
 
 from workflows import ExtractionWorkflow
-from activities import extract_facts_activity, ingest_facts_activity
+from activities import (
+    extract_facts_activity, ingest_facts_activity,
+    align_predicates_activity, resolve_entities_activity,
+)
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 logger = logging.getLogger("donto-worker")
@@ -34,7 +37,8 @@ async def main():
         client,
         task_queue=TASK_QUEUE,
         workflows=[ExtractionWorkflow],
-        activities=[extract_facts_activity, ingest_facts_activity],
+        activities=[extract_facts_activity, ingest_facts_activity,
+                   align_predicates_activity, resolve_entities_activity],
         max_concurrent_activities=MAX_CONCURRENT,
         max_concurrent_workflow_tasks=MAX_CONCURRENT,
     )

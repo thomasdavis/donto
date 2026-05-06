@@ -5,7 +5,10 @@ from temporalio import workflow
 from temporalio.common import RetryPolicy
 
 with workflow.unsafe.imports_passed_through():
-    from activities import extract_facts_activity, ingest_facts_activity
+    from activities import (
+        extract_facts_activity, ingest_facts_activity,
+        align_predicates_activity, resolve_entities_activity,
+    )
 
 
 @workflow.defn
@@ -23,6 +26,8 @@ class ExtractionWorkflow:
         self._llm_ms = 0
         self._ingest_ms = 0
         self._total_ms = 0
+        self._alignments_created = 0
+        self._entities_resolved = 0
 
     @workflow.run
     async def run(self, text: str, context: str, model: str) -> dict:
@@ -54,8 +59,26 @@ class ExtractionWorkflow:
             )
             self._statements_ingested = ingest_result["statements_ingested"]
             self._ingest_ms = ingest_result["ingest_ms"]
-            self._total_ms = int(workflow.now().timestamp() - start) * 1000
 
+            self._status = "aligning"
+            align_result = await workflow.execute_activity(
+                align_predicates_activity,
+                args=[context],
+                start_to_close_timeout=timedelta(minutes=5),
+                retry_policy=RetryPolicy(maximum_attempts=2),
+            )
+            self._alignments_created = align_result.get("alignments_created", 0)
+
+            self._status = "resolving"
+            resolve_result = await workflow.execute_activity(
+                resolve_entities_activity,
+                args=[context],
+                start_to_close_timeout=timedelta(minutes=5),
+                retry_policy=RetryPolicy(maximum_attempts=2),
+            )
+            self._entities_resolved = resolve_result.get("entities_resolved", 0)
+
+            self._total_ms = int(workflow.now().timestamp() - start) * 1000
             self._status = "completed"
             return self._build_result()
 
@@ -83,4 +106,6 @@ class ExtractionWorkflow:
             "llm_ms": self._llm_ms,
             "ingest_ms": self._ingest_ms,
             "total_ms": self._total_ms,
+            "alignments_created": self._alignments_created,
+            "entities_resolved": self._entities_resolved,
         }

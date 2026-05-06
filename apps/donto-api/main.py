@@ -1097,6 +1097,163 @@ async def retract(statement_id: str):
 # ── Alignment (direct to dontosrv) ──────────────────────────────────────
 
 
+# ── Connections (bidirectional entity edges) ────────────────────────────
+
+
+@app.get("/connections/{entity:path}", tags=["Graph"],
+    summary="Get all connections for an entity (both incoming and outgoing)")
+async def get_connections(
+    entity: str,
+    limit: int = Query(500, description="Max edges to return"),
+    context: Optional[str] = Query(None, description="Filter to this context"),
+    min_maturity: int = Query(0, description="Minimum maturity (0-4)"),
+):
+    """Bidirectional edge list for an entity — returns both outgoing edges (where entity
+    is the subject) and incoming edges (where entity is the object_iri).
+
+    This is the primary endpoint for AI agents traversing the graph. Unlike `/history/{subject}`
+    which only returns outgoing edges, this shows the full picture of how an entity relates
+    to the rest of the graph.
+    """
+    import asyncpg
+    dsn = os.environ.get("DONTO_DSN", "postgres://donto:donto@127.0.0.1:5432/donto")
+    conn = await asyncpg.connect(dsn)
+    try:
+        ctx_filter = "AND context = $4" if context else ""
+        params = [entity, min_maturity, limit]
+        if context:
+            params.append(context)
+
+        rows = await conn.fetch(f"""
+            SELECT subject, predicate, object_iri,
+                   COALESCE(object_iri, object_lit ->> 'v') as object_value,
+                   object_iri IS NOT NULL as object_is_iri,
+                   context, (flags >> 2 & 7) as maturity,
+                   CASE WHEN subject = $1 THEN 'outgoing' ELSE 'incoming' END as direction
+            FROM donto_statement
+            WHERE (subject = $1 OR object_iri = $1)
+              AND upper(tx_time) IS NULL
+              AND (flags >> 2 & 7) >= $2
+              {ctx_filter}
+            ORDER BY (flags >> 2 & 7) DESC
+            LIMIT $3
+        """, *params)
+
+        outgoing = []
+        incoming = []
+        connected_entities = set()
+        for r in rows:
+            edge = {
+                "subject": r["subject"],
+                "predicate": r["predicate"],
+                "object": r["object_value"],
+                "object_is_iri": r["object_is_iri"],
+                "context": r["context"],
+                "maturity": r["maturity"],
+            }
+            if r["direction"] == "outgoing":
+                outgoing.append(edge)
+                if r["object_is_iri"]:
+                    connected_entities.add(r["object_value"])
+            else:
+                incoming.append(edge)
+                connected_entities.add(r["subject"])
+
+        return {
+            "entity": entity,
+            "outgoing": outgoing,
+            "incoming": incoming,
+            "total_outgoing": len(outgoing),
+            "total_incoming": len(incoming),
+            "connected_entities": sorted(connected_entities),
+        }
+    except Exception as e:
+        raise HTTPException(500, f"Database query failed: {e}")
+    finally:
+        await conn.close()
+
+
+# ── Context Analytics ────────────────────────────────────────────────────
+
+
+@app.get("/context/analytics/{context:path}", tags=["Analytics"],
+    summary="Get analytics for a context — subjects, predicates, new entities")
+async def context_analytics(
+    context: str,
+):
+    """Detailed analytics for a context: what was extracted, what subjects are new
+    (only appear in this context), predicate distribution, and cross-context overlap.
+
+    Use this to evaluate extraction quality and find gaps.
+    """
+    import asyncpg
+    dsn = os.environ.get("DONTO_DSN", "postgres://donto:donto@127.0.0.1:5432/donto")
+    conn = await asyncpg.connect(dsn)
+    try:
+        stats = await conn.fetchrow("""
+            SELECT
+                count(*) as total_statements,
+                count(DISTINCT subject) as distinct_subjects,
+                count(DISTINCT predicate) as distinct_predicates,
+                count(DISTINCT object_iri) FILTER (WHERE object_iri IS NOT NULL) as distinct_object_iris
+            FROM donto_statement
+            WHERE context = $1 AND upper(tx_time) IS NULL
+        """, context)
+
+        top_subjects = await conn.fetch("""
+            SELECT subject, count(*) as fact_count
+            FROM donto_statement
+            WHERE context = $1 AND upper(tx_time) IS NULL
+            GROUP BY subject ORDER BY fact_count DESC LIMIT 20
+        """, context)
+
+        top_predicates = await conn.fetch("""
+            SELECT predicate, count(*) as usage_count
+            FROM donto_statement
+            WHERE context = $1 AND upper(tx_time) IS NULL
+            GROUP BY predicate ORDER BY usage_count DESC LIMIT 30
+        """, context)
+
+        new_subjects = await conn.fetch("""
+            SELECT s.subject, count(*) as fact_count
+            FROM donto_statement s
+            WHERE s.context = $1 AND upper(s.tx_time) IS NULL
+              AND NOT EXISTS (
+                  SELECT 1 FROM donto_statement s2
+                  WHERE s2.subject = s.subject AND s2.context != $1
+                  AND upper(s2.tx_time) IS NULL
+              )
+            GROUP BY s.subject ORDER BY fact_count DESC LIMIT 20
+        """, context)
+
+        shared_subjects = await conn.fetch("""
+            SELECT s.subject, count(DISTINCT s2.context) as other_context_count
+            FROM donto_statement s
+            JOIN donto_statement s2 ON s2.subject = s.subject AND s2.context != $1
+                                    AND upper(s2.tx_time) IS NULL
+            WHERE s.context = $1 AND upper(s.tx_time) IS NULL
+            GROUP BY s.subject ORDER BY other_context_count DESC LIMIT 20
+        """, context)
+
+        return {
+            "context": context,
+            "stats": {
+                "total_statements": stats["total_statements"],
+                "distinct_subjects": stats["distinct_subjects"],
+                "distinct_predicates": stats["distinct_predicates"],
+                "distinct_object_iris": stats["distinct_object_iris"],
+            },
+            "top_subjects": [{"subject": r["subject"], "fact_count": r["fact_count"]} for r in top_subjects],
+            "top_predicates": [{"predicate": r["predicate"], "usage_count": r["usage_count"]} for r in top_predicates],
+            "new_subjects": [{"subject": r["subject"], "fact_count": r["fact_count"]} for r in new_subjects],
+            "shared_subjects": [{"subject": r["subject"], "other_context_count": r["other_context_count"]} for r in shared_subjects],
+        }
+    except Exception as e:
+        raise HTTPException(500, f"Database query failed: {e}")
+    finally:
+        await conn.close()
+
+
 # ── Graph Visualization Endpoints ───────────────────────────────────────
 
 
