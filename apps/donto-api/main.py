@@ -29,8 +29,9 @@ from temporalio.service import RPCError
 from helpers import (
     DONTOSRV, OPENROUTER_URL, OPENROUTER_KEY, DEFAULT_MODEL, FALLBACK_MODEL,
     srv, openrouter, resolve_model, confidence_to_maturity, parse_fact_object,
-    EXTRACTION_PROMPT, srv_post, call_openrouter, ingest_facts, compute_tiers,
+    EXTRACTION_PROMPT, call_openrouter, ingest_facts, compute_tiers,
 )
+from helpers import srv_post as _helpers_srv_post
 from workflows import ExtractionWorkflow
 
 logger = logging.getLogger("donto-api")
@@ -161,6 +162,14 @@ async def srv_get(path: str, params: dict = None):
         return {"raw": r.text}
 
 
+async def srv_post(path: str, body=None):
+    """Wrapper around helpers.srv_post that converts exceptions to HTTPException."""
+    try:
+        return await _helpers_srv_post(path, body)
+    except Exception as e:
+        raise HTTPException(502, str(e))
+
+
 # ── System ──────────────────────────────────────────────────────────────
 
 
@@ -219,7 +228,10 @@ async def extract_and_ingest(req: ExtractIngestRequest):
     logger.info(f"extract-and-ingest: ctx={req.context} text={len(req.text)} chars model={model}")
 
     t0 = time.time()
-    facts, llm_meta = await call_openrouter(req.text, model)
+    try:
+        facts, llm_meta = await call_openrouter(req.text, model)
+    except Exception as e:
+        raise HTTPException(502, str(e))
     llm_ms = int((time.time() - t0) * 1000)
     logger.info(f"  LLM extraction: {len(facts)} facts in {llm_ms}ms cost={llm_meta.get('cost')}")
 
