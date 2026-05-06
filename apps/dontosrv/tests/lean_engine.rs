@@ -11,7 +11,7 @@
 //!   2. <repo>/lean/.lake/build/bin/donto_engine (default for `cargo test`
 //!      invoked from the repo root after `cd lean && lake build`)
 
-use donto_client::{DontoClient, Object, Polarity, StatementInput};
+use donto_client::{DontoClient, Object, StatementInput};
 use serde_json::Value;
 use std::path::PathBuf;
 use std::sync::Arc;

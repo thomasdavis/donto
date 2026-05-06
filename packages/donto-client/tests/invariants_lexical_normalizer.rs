@@ -8,7 +8,7 @@
 
 mod common;
 
-use common::{connect, tag};
+use common::connect;
 
 async fn register_predicate(client: &donto_client::DontoClient, iri: &str) {
     let c = client.pool().get().await.unwrap();
@@ -96,8 +96,8 @@ async fn suggest_alignments_returns_candidates() {
     let token = format!("xq{}", uuid::Uuid::new_v4().simple());
 
     let source = format!("test:ln-suggest/{token}Source");
-    let near = format!("test:ln-suggest/was{}Source", token); // shares "<token>Source"
-    let far = format!("test:ln-suggest/totallyUnrelated");
+    let near = format!("test:ln-suggest/was{token}Source"); // shares "<token>Source"
+    let far = "test:ln-suggest/totallyUnrelated".to_string();
 
     register_predicate(&client, &source).await;
     register_predicate(&client, &near).await;

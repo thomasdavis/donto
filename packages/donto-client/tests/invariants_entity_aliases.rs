@@ -129,7 +129,7 @@ async fn query_aliases_both_directions() {
         .query("select * from donto_entity_aliases($1)", &[&alias1])
         .await
         .unwrap();
-    assert!(rows.len() >= 1);
+    assert!(!rows.is_empty());
 }
 
 #[tokio::test]

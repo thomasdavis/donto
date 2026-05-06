@@ -42,7 +42,7 @@ async fn chunk_lifecycle() {
                 &[
                     &run_id,
                     &rev_id,
-                    &(i as i32),
+                    &i,
                     &(i * 100i32),
                     &((i + 1) * 100i32),
                     &500i32,
