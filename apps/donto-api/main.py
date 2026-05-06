@@ -23,7 +23,8 @@ from fastapi import FastAPI, HTTPException, Query
 from fastapi.responses import HTMLResponse, Response
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
-from temporalio.client import Client
+from temporalio.client import Client, WorkflowExecutionStatus
+from temporalio.common import WorkflowIDConflictPolicy
 from temporalio.service import RPCError
 
 from helpers import (
@@ -277,7 +278,6 @@ def _require_temporal():
 
 
 def _temporal_status_to_job_status(wf_status) -> str:
-    from temporalio.client import WorkflowExecutionStatus
     return {
         WorkflowExecutionStatus.RUNNING: "extracting",
         WorkflowExecutionStatus.COMPLETED: "completed",
@@ -314,6 +314,7 @@ async def submit_extract_job(req: JobExtractRequest):
             args=[req.text, req.context, model],
             id=wf_id,
             task_queue=TASK_QUEUE,
+            id_conflict_policy=WorkflowIDConflictPolicy.FAIL,
         )
     except RPCError as e:
         if "already started" in str(e).lower() or "already exists" in str(e).lower():
@@ -342,6 +343,7 @@ async def submit_batch_jobs(req: JobBatchRequest):
                 args=[item.text, item.context, model],
                 id=wf_id,
                 task_queue=TASK_QUEUE,
+                id_conflict_policy=WorkflowIDConflictPolicy.FAIL,
             )
             job_ids.append(wf_id.removeprefix("extraction-"))
         except RPCError as e:
@@ -368,8 +370,7 @@ async def list_jobs(status: Optional[str] = Query(None, description="Filter by s
             "created_at": wf.start_time.timestamp() if wf.start_time else None,
         }
         if wf.status is not None:
-            from temporalio.client import WorkflowExecutionStatus
-            if wf.status == WorkflowExecutionStatus.RUNNING:
+                    if wf.status == WorkflowExecutionStatus.RUNNING:
                 try:
                     handle = client.get_workflow_handle(wf.id)
                     detail = await handle.query(ExtractionWorkflow.status)
@@ -398,8 +399,7 @@ async def get_job(job_id: str):
     handle = client.get_workflow_handle(f"extraction-{job_id}")
     try:
         desc = await handle.describe()
-        from temporalio.client import WorkflowExecutionStatus
-        if desc.status in (WorkflowExecutionStatus.COMPLETED, WorkflowExecutionStatus.FAILED,
+            if desc.status in (WorkflowExecutionStatus.COMPLETED, WorkflowExecutionStatus.FAILED,
                            WorkflowExecutionStatus.CANCELED, WorkflowExecutionStatus.TERMINATED):
             result = {
                 "id": job_id,
