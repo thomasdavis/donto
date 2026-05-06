@@ -1,8 +1,8 @@
 # donto
 
-A bitemporal, paraconsistent quad store with a full evidence substrate.
-Postgres 16 + Rust + Go TUI. Optional Lean 4 sidecar for shape
-validation, derivations, and machine-checkable certificates.
+An evidence operating system for contested knowledge. Postgres 16 +
+Rust + Go TUI. Optional Lean 4 sidecar for shape validation,
+derivations, and machine-checkable certificates.
 
 **donto is a database for claims that may be wrong.**
 
@@ -10,6 +10,13 @@ It stores what was said, who said it, when it was said, what it was
 based on, what contradicts it, what remains unresolved, and what has
 been formally certified. Traditional databases assume clean facts.
 donto is for the messy interval between evidence and knowledge.
+
+The canonical product spec is [`docs/DONTO-V1000-PRD.md`](docs/DONTO-V1000-PRD.md).
+v1000 lands the **Trust Kernel** (policies, attestations, audit), the
+**E0–E5 maturity ladder**, **modality** and **extraction-level**
+overlays separate from confidence, the **eleven-relation alignment
+layer** with safety flags, **n-ary frame model** with indexed roles,
+and the **release builder** with reproducible manifests.
 
 ```text
 claim = (subject, predicate, object, context,
@@ -38,10 +45,32 @@ Retraction closes `tx_time` — nothing is ever deleted.
 → document revision → source document → agent, with span-level
 anchoring to exact character offsets in the source text.
 
-**Epistemic maturity ladder.** Claims climb from raw (Level 0) through
-registry-curated (1), evidenced (2), validated (3), to
-certified (4). The system tells you exactly why each claim hasn't
-reached the next level.
+**Epistemic maturity ladder.** Claims climb from raw (E0) through
+candidate (E1), evidence-supported (E2), reviewed (E3), corroborated
+(E4), to certified (E5). The system tells you exactly why each claim
+hasn't reached the next level. Auto-promotion is gated by the
+extraction level of the originating act — `model_hypothesis` cannot
+auto-promote past E1, no matter how high the model confidence.
+
+**Trust Kernel.** Source registration requires a policy. Policies
+declare 15 typed actions (`read_metadata`, `read_content`, `quote`,
+`view_anchor_location`, `derive_claims`, `derive_embeddings`,
+`translate`, `summarize`, `export_claims`, `export_sources`,
+`export_anchors`, `train_model`, `publish_release`,
+`share_with_third_party`, `federated_query`). Caller authorisation
+requires a non-revoked, non-expired attestation with a written
+rationale. Inheritance defaults to max-restriction: a derived claim
+takes the most restrictive policy of its source anchors. Every
+restricted-action check goes into the audit log.
+
+**Modality and extraction level as separate dimensions.** A claim
+carries (a) machine confidence, (b) calibrated confidence, (c) human
+confidence, (d) source reliability, (e) modality
+(`descriptive | reconstructed | inferred | corpus_observed |
+typological_summary | ...`), (f) extraction level
+(`quoted | table_read | source_generalization | model_hypothesis |
+human_hypothesis | ...`), and (g) maturity. None collapses into the
+others.
 
 **Predicate alignment.** LLM extractors freely mint predicates —
 `bornIn`, `wasBornIn`, `birthplaceOf` all mean the same thing. The
@@ -61,15 +90,21 @@ input, not just test cases.
 
 | Component | Count |
 |-----------|-------|
-| SQL migrations | 56 |
-| Tables | 60+ |
-| SQL functions | 141 |
-| HTTP endpoints | 44 |
-| Rust test files | 57 |
+| SQL migrations | 95 (28 new in v1000) |
+| Tables | 80+ |
+| SQL functions | 200+ |
+| HTTP endpoints | 44 (v1000 adds Trust Kernel surface) |
+| donto-client tests | 455 (212 new in v1000, all green) |
 | Lean modules | 21 |
 | Lean theorems | 62 |
 | Ingestion formats | 8 |
-| Registered predicates | 1,300+ |
+| Anchor kinds | 13 (typed, validated) |
+| Alignment relations | 11 (with safety flags) |
+| Frame types | 24 seeded (18 linguistic + 6 cross-domain) |
+| Default access policies | 4 |
+| Modality values | 14 |
+| Extraction levels | 10 |
+| Maturity ladder | E0–E5 |
 
 ---
 
@@ -111,6 +146,68 @@ cargo run -p donto-migrate -- \
   --dsn postgres://donto:donto@127.0.0.1:55432/donto \
   genealogy-relink /path/to/research.db \
   --root ctx:genealogy/research-db
+```
+
+---
+
+## v1000 Trust Kernel — a worked example
+
+```sql
+-- 1. Register a source. Policy is required (PRD I2: no source without policy).
+SELECT donto_register_source_v1000(
+    'src:fieldnotes/2024-recording-A.eaf',
+    'audio',
+    'policy:default/community_restricted'
+);
+
+-- 2. Assign the policy to the source.
+SELECT donto_assign_policy(
+    'document', 'src:fieldnotes/2024-recording-A.eaf',
+    'policy:default/community_restricted',
+    'community-council'
+);
+
+-- 3. Default-deny. Without an attestation, no one reads content.
+SELECT donto_action_allowed(
+    'document', 'src:fieldnotes/2024-recording-A.eaf',
+    'read_content'
+);  -- returns false
+
+-- 4. Issue an attestation (rationale required).
+SELECT donto_issue_attestation(
+    'agent:researcher-jane',
+    'community-council',
+    'policy:default/community_restricted',
+    array['read_content','derive_claims']::text[],
+    'community_curation',
+    'Approved for community curation under MoU 2024-03.',
+    NULL,    -- no expiry
+    NULL     -- no VC reference yet
+);
+
+-- 5. Authorisation now succeeds for the listed actions only.
+SELECT donto_authorise(
+    'agent:researcher-jane',
+    'document', 'src:fieldnotes/2024-recording-A.eaf',
+    'read_content'
+);  -- returns true
+
+SELECT donto_authorise(
+    'agent:researcher-jane',
+    'document', 'src:fieldnotes/2024-recording-A.eaf',
+    'train_model'
+);  -- returns false — train_model is a separate action
+
+-- 6. Revocation is immediate for new authorisation checks.
+SELECT donto_revoke_attestation('att_xyz', 'community-council', 'project ended');
+
+-- 7. Every step lands in donto_event_log for audit.
+SELECT event_type, occurred_at, actor, payload
+FROM donto_event_history(
+    'access_assignment',
+    'src:fieldnotes/2024-recording-A.eaf',
+    100
+);
 ```
 
 ---
@@ -159,16 +256,29 @@ The predicate alignment layer (PAL) solves this without constraining
 extraction. Extractors keep minting whatever feels natural; PAL
 converges them after the fact.
 
-### Alignment relations
+### Alignment relations (v1000 — 11 kinds)
 
 | Relation | Meaning | Example |
 |----------|---------|---------|
-| `exact_equivalent` | Same meaning, interchangeable | `bornIn` ↔ `wasBornIn` |
-| `inverse_equivalent` | Same meaning, swaps subject/object | `parentOf` ↔ `childOf` |
-| `sub_property_of` | Source is a narrower case of target | `birthPlace` → `associatedPlace` |
-| `close_match` | Fuzzy, human-review tier | `workedAt` ≈ `employedBy` |
-| `decomposition` | Decomposes into an event frame | `workedAt` → EmploymentEvent roles |
-| `not_equivalent` | Explicit negative: do not align | `birthDate` ✗ `deathDate` |
+| `exact_match` | Same meaning, interchangeable | `bornIn` ↔ `wasBornIn` |
+| `close_match` | Fuzzy, retrieve-together but not logically equal | `workedAt` ≈ `employedBy` |
+| `broad_match` | Left is broader than right | `livedIn` ⊃ `bornIn` |
+| `narrow_match` | Left is narrower than right | `birthPlace` ⊂ `associatedPlace` |
+| `inverse_of` | Same relation, swaps subject and object | `parentOf` ↔ `childOf` |
+| `decomposes_to` | Concept decomposes into multiple claims | `workedAt` → EmploymentEvent roles |
+| `has_value_mapping` | Equivalence depends on a value mapping | WALS feature 98 ↔ Grambank GBxxx (with value-pair table) |
+| `incompatible_with` | Should not be aligned | `birthDate` ✗ `deathDate` |
+| `derived_from` | One schema feature designed from another |   |
+| `local_specialization` | Language- or project-specific refinement |   |
+| `not_equivalent` | Explicit negative: do not align (legacy alias of `incompatible_with`) |   |
+
+Each alignment edge carries three safety flags: `safe_for_query_expansion`,
+`safe_for_export`, `safe_for_logical_inference`. A typological-to-token
+`close_match` may be safe for query but never for logical inference.
+
+Legacy v0 relation names (`exact_equivalent`, `inverse_equivalent`,
+`sub_property_of`, `decomposition`, `not_equivalent`) remain accepted
+as aliases for one release window.
 
 ### Register an alignment
 
@@ -514,7 +624,7 @@ packages/
   donto-ingest/              8 ingestion format parsers
   donto-migrate/             External store migrators (genealogy SQLite)
   pg_donto/                  pgrx Postgres extension
-  sql/migrations/            56 idempotent SQL migrations (source of truth)
+  sql/migrations/            95 idempotent SQL migrations (source of truth)
   sql/fixtures/              Example data for smoke tests
   sql/scripts/               Epistemic sweep and batch operations
   lean/                      21 Lean 4 modules, 62 theorems
@@ -530,12 +640,17 @@ turbo.json                   Turborepo pipeline config
 
 ## Documentation
 
-- [`PRD.md`](PRD.md) — design specification. Read §3 (principles) and
-  §2 (maturity ladder) before contributing.
+- [`PRD.md`](PRD.md) — top-level pointer to the canonical PRD.
+- [`docs/DONTO-V1000-PRD.md`](docs/DONTO-V1000-PRD.md) — **canonical
+  product requirements**. The single reference of record for v1000.
 - [`apps/docs`](apps/docs) — Starlight documentation site with
   migration reference, schema gap audit, and guides.
 - [`ANTHROPOLOGY_README.md`](ANTHROPOLOGY_README.md) — research
   philosophy and domain context.
+- Historical (superseded by the canonical PRD; kept for provenance):
+  [`docs/LANGUAGE-EXTRACTION-PLAN.md`](docs/LANGUAGE-EXTRACTION-PLAN.md),
+  [`docs/V1000-REFACTOR-PLAN.md`](docs/V1000-REFACTOR-PLAN.md),
+  [`docs/ATLAS-ZERO-FRONTIER.md`](docs/ATLAS-ZERO-FRONTIER.md).
 
 ---
 

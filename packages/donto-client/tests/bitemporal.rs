@@ -21,8 +21,12 @@ async fn retract_closes_tx_time_and_history_is_recoverable() {
     let s = StatementInput::new(&subj, "ex:p", Object::iri("ex:b")).with_context(&ctx);
     let id = client.assert(&s).await.unwrap();
 
-    // Visible before retraction.
+    // Visible before retraction. Sleep briefly to ensure clear timestamp
+    // ordering between Tokio's Utc::now() (nanosecond) and Postgres now()
+    // (microsecond rounding).
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
     let before = Utc::now();
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
     let rows = client
         .match_pattern(
             Some(&subj),
