@@ -368,13 +368,6 @@ async def list_jobs(status: Optional[str] = Query(None, description="Filter by s
             "status": wf_status,
             "created_at": wf.start_time.timestamp() if wf.start_time else None,
         }
-        if wf.status is not None and wf.status == WorkflowExecutionStatus.RUNNING:
-            try:
-                handle = client.get_workflow_handle(wf.id)
-                detail = await handle.query(ExtractionWorkflow.status)
-                job_entry.update(detail)
-            except Exception:
-                pass
         result_jobs.append(job_entry)
 
     if status:
@@ -385,6 +378,20 @@ async def list_jobs(status: Optional[str] = Query(None, description="Filter by s
     for j in result_jobs:
         s = j.get("status", "unknown")
         summary[s] = summary.get(s, 0) + 1
+
+    # Enrich the top 100 with full workflow data
+    for job_entry in result_jobs[:100]:
+        try:
+            handle = client.get_workflow_handle(f"extraction-{job_entry['id']}")
+            if job_entry["status"] == "completed":
+                detail = await handle.result()
+                job_entry.update(detail)
+            elif job_entry["status"] in ("extracting", "ingesting", "queued"):
+                detail = await handle.query(ExtractionWorkflow.status)
+                job_entry.update(detail)
+        except Exception:
+            pass
+
     return {"jobs": result_jobs[:100], "total": len(result_jobs), "summary": summary}
 
 
