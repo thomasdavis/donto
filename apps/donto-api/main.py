@@ -167,10 +167,12 @@ class AgentInstructionsMiddleware(BaseHTTPMiddleware):
                 body["agent_instructions"] = instructions
                 new_body = json.dumps(body).encode()
                 from starlette.responses import Response as StarletteResponse
+                headers = {k: v for k, v in response.headers.items()
+                           if k.lower() not in ("content-length", "content-type")}
                 return StarletteResponse(
                     content=new_body,
                     status_code=response.status_code,
-                    headers=dict(response.headers),
+                    headers=headers,
                     media_type="application/json",
                 )
         except (json.JSONDecodeError, Exception):
