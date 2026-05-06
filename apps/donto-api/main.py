@@ -25,6 +25,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from temporalio.client import Client, WorkflowExecutionStatus
 from temporalio.common import WorkflowIDConflictPolicy, WorkflowIDReusePolicy
+from temporalio.exceptions import WorkflowAlreadyStartedError
 from temporalio.service import RPCError
 
 from helpers import (
@@ -317,10 +318,8 @@ async def submit_extract_job(req: JobExtractRequest):
             id_conflict_policy=WorkflowIDConflictPolicy.FAIL,
             id_reuse_policy=WorkflowIDReusePolicy.REJECT_DUPLICATE,
         )
-    except RPCError as e:
-        if "already started" in str(e).lower() or "already exists" in str(e).lower():
-            return {"job_id": wf_id, "status": "duplicate", "message": f"Extraction for {req.context} already exists"}
-        raise
+    except (RPCError, WorkflowAlreadyStartedError) as e:
+        return {"job_id": wf_id, "status": "duplicate", "message": f"Extraction for {req.context} already exists"}
     job_id = wf_id.removeprefix("extraction-")
     logger.info(f"job {job_id}: queued ({len(req.text)} chars → {req.context})")
     return {"job_id": job_id, "status": "queued"}
@@ -348,11 +347,9 @@ async def submit_batch_jobs(req: JobBatchRequest):
             id_reuse_policy=WorkflowIDReusePolicy.REJECT_DUPLICATE,
             )
             job_ids.append(wf_id.removeprefix("extraction-"))
-        except RPCError as e:
-            if "already started" in str(e).lower() or "already exists" in str(e).lower():
-                skipped += 1
-                continue
-            raise
+        except (RPCError, WorkflowAlreadyStartedError):
+            skipped += 1
+            continue
     logger.info(f"batch: {len(job_ids)} queued, {skipped} skipped (duplicate)")
     return {"job_ids": job_ids, "count": len(job_ids), "skipped_duplicates": skipped}
 
