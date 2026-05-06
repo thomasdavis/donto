@@ -584,7 +584,6 @@ async def queue_dashboard():
 </div>
 <div id="progress-container" style="margin-bottom:16px"></div>
 <div id="table-container"></div>
-<div id="detail-panel" class="detail-panel"><pre id="detail-json"></pre></div>
 
 <script>
 let currentFilter = 'all';
@@ -674,7 +673,7 @@ function renderTable() {
     const cost = j.usage && j.usage.cost ? '$'+j.usage.cost.toFixed(4) : '-';
     const tokens = j.usage && j.usage.total_tokens ? (j.usage.total_tokens/1000).toFixed(1)+'k' : '-';
 
-    html += `<tr onclick="showDetail('${j.id}')" style="cursor:pointer">
+    html += `<tr onclick="showDetail('${j.id}', this)" style="cursor:pointer">
       <td class="mono">${j.id}</td>
       <td><span class="badge ${j.status}">${j.status}</span></td>
       <td class="mono" style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${j.context||''}">${(j.context||'').replace('ctx:genes/trove-cooktown/','')}</td>
@@ -696,24 +695,26 @@ function renderTable() {
   document.getElementById('table-container').innerHTML = html;
 }
 
-async function showDetail(id) {
+async function showDetail(id, clickedRow) {
   const j = allJobs.find(x => x.id === id);
   if (!j) return;
-  const panel = document.getElementById('detail-panel');
-  if (panel.dataset.activeId === id && panel.classList.contains('open')) {
-    panel.classList.remove('open');
-    panel.dataset.activeId = '';
-    return;
-  }
-  panel.dataset.activeId = id;
-  panel.classList.add('open');
+  const existing = document.getElementById('detail-row-' + id);
+  if (existing) { existing.remove(); return; }
+  document.querySelectorAll('.detail-row').forEach(r => r.remove());
 
-  let html = '<div style="margin-bottom:12px"><strong>Job Details</strong></div>';
-  html += '<pre style="margin-bottom:16px;max-height:120px;overflow:auto">' + JSON.stringify(j, null, 2) + '</pre>';
+  const detailRow = document.createElement('tr');
+  detailRow.id = 'detail-row-' + id;
+  detailRow.className = 'detail-row';
+  const td = document.createElement('td');
+  td.colSpan = 12;
+  td.style.cssText = 'padding:16px;background:#0d1117;border:1px solid #30363d;';
+  td.innerHTML = '<div style="color:#8b949e">Loading...</div>';
+  detailRow.appendChild(td);
+  clickedRow.parentNode.insertBefore(detailRow, clickedRow.nextSibling);
+
+  let html = '<pre style="margin-bottom:12px;max-height:100px;overflow:auto">' + JSON.stringify(j, null, 2) + '</pre>';
 
   if (j.status === 'completed' && j.context) {
-    html += '<div style="margin-bottom:8px"><strong>Loading facts and source...</strong></div>';
-    document.getElementById('detail-json').innerHTML = html;
     try {
       const [factsResp, sourceResp] = await Promise.all([
         fetch('/jobs/' + encodeURIComponent(id) + '/facts'),
@@ -722,28 +723,21 @@ async function showDetail(id) {
       const factsData = await factsResp.json();
       const sourceData = await sourceResp.json();
       const facts = Array.isArray(factsData.facts) ? factsData.facts : [];
-      html = '<div style="margin-bottom:12px"><strong>Job Details</strong></div>';
-      html += '<pre style="margin-bottom:16px;max-height:100px;overflow:auto">' + JSON.stringify(j, null, 2) + '</pre>';
       if (sourceData.source) {
         html += '<div style="margin-bottom:8px"><strong>Source Text</strong> <span class="elapsed">(' + (sourceData.source.length/1000).toFixed(1) + 'k chars, model: ' + (sourceData.model||'?') + ')</span></div>';
-        html += '<pre style="margin-bottom:16px;max-height:200px;overflow:auto;white-space:pre-wrap;color:#8b949e">' + sourceData.source.substring(0, 5000).replace(/</g,'&lt;') + (sourceData.source.length > 5000 ? '\\n... (truncated)' : '') + '</pre>';
+        html += '<pre style="margin-bottom:12px;max-height:200px;overflow:auto;white-space:pre-wrap;color:#8b949e">' + sourceData.source.substring(0, 5000).replace(/</g,'&lt;') + (sourceData.source.length > 5000 ? '\n... (truncated)' : '') + '</pre>';
       }
-      html += '<div style="margin-bottom:8px"><strong>Extracted Facts</strong> <span class="elapsed">(' + facts.length + ' statements in ' + (j.context||'') + ')</span></div>';
+      html += '<div style="margin-bottom:8px"><strong>Extracted Facts</strong> <span class="elapsed">(' + facts.length + ' statements)</span></div>';
       html += '<table style="font-size:12px;width:100%"><thead><tr><th>Subject</th><th>Predicate</th><th>Object</th><th>Mat</th><th>Pol</th></tr></thead><tbody>';
       for (const f of facts.slice(0, 200)) {
-        const subj = f.subject || '';
-        const pred = f.predicate || '';
-        const obj = f.object || '';
-        const mat = f.maturity != null ? 'L' + f.maturity : '';
-        const pol = f.polarity || '';
-        html += '<tr><td class="mono">' + subj + '</td><td class="mono" style="color:#58a6ff">' + pred + '</td><td class="mono">' + String(obj).substring(0,80) + '</td><td>' + mat + '</td><td>' + pol + '</td></tr>';
+        html += '<tr><td class="mono">' + (f.subject||'') + '</td><td class="mono" style="color:#58a6ff">' + (f.predicate||'') + '</td><td class="mono">' + String(f.object||'').substring(0,80) + '</td><td>L' + (f.maturity||0) + '</td><td>' + (f.polarity||'') + '</td></tr>';
       }
       html += '</tbody></table>';
     } catch(e) {
       html += '<div style="color:#f85149">Failed to load: ' + e.message + '</div>';
     }
   }
-  document.getElementById('detail-json').innerHTML = html;
+  td.innerHTML = html;
 }
 
 async function refresh() {
