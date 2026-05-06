@@ -440,19 +440,22 @@ async def get_job_facts(job_id: str, limit: int = Query(200, description="Max fa
     try:
         conn = await asyncpg.connect(dsn)
         rows = await conn.fetch(
-            "SELECT subject, predicate, object_iri, object_lit, maturity, polarity "
-            "FROM donto_statement WHERE context = $1 LIMIT $2",
+            "SELECT subject, predicate, object_iri, object_lit, flags "
+            "FROM donto_statement WHERE context = $1 AND upper(tx_time) IS NULL LIMIT $2",
             context, limit
         )
         await conn.close()
         facts = []
         for r in rows:
+            obj_val = r["object_iri"] or (r["object_lit"].get("v") if r["object_lit"] else None)
+            polarity_map = {0: "asserted", 1: "negated", 2: "absent", 3: "unknown"}
+            flags = r["flags"] or 0
             facts.append({
                 "subject": r["subject"],
                 "predicate": r["predicate"],
-                "object": r["object_iri"] or (r["object_lit"]["v"] if r["object_lit"] else None),
-                "maturity": r["maturity"],
-                "polarity": r["polarity"],
+                "object": obj_val,
+                "maturity": (flags >> 2) & 0x07,
+                "polarity": polarity_map.get(flags & 0x03, "asserted"),
             })
         return {"context": context, "facts": facts, "count": len(facts)}
     except Exception as e:
