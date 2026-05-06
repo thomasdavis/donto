@@ -13,6 +13,11 @@ import time
 
 import httpx
 
+try:
+    import trafilatura
+except ImportError:
+    trafilatura = None
+
 logger = logging.getLogger("donto-api")
 
 DONTOSRV = os.environ.get("DONTOSRV_URL", "http://127.0.0.1:7879")
@@ -108,6 +113,19 @@ Return a JSON object with a single "facts" array. Each fact:
   "notes": "<brief justification>"
 }
 
+## CONTENT FOCUS
+
+IGNORE website boilerplate entirely. Do NOT extract facts about:
+- Navigation menus, footer links, sidebar items
+- "Read more", "Learn more", "Visit", "Subscribe" UI elements
+- Cookie notices, privacy policies, copyright statements
+- Website section structure (hasMenuSection, hasFooterLink, etc.)
+- Generic CMS metadata (page layout, breadcrumbs, social links)
+
+Focus ONLY on the substantive article/document content. If the text is a
+web page, extract from the main body content only — the actual article,
+report, record, or document. Website chrome is noise.
+
 ## CRITICAL RULES
 
 1. ALL IRIs must be kebab-lower-case: "ex:mrs-watson", NOT "ex:MrsWatson".
@@ -145,8 +163,95 @@ async def srv_post(path: str, body=None):
                 raise Exception(f"dontosrv unreachable after 3 attempts: {e}")
 
 
+def clean_web_content(text: str) -> str:
+    """Strip web boilerplate from text before LLM extraction.
+
+    Three layers:
+    1. trafilatura — best-in-class content extraction (if installed)
+    2. Heuristic stripping — remove nav-like patterns
+    3. The LLM prompt itself also instructs ignoring boilerplate
+    """
+    # Preserve YAML frontmatter (metadata header from our agents)
+    frontmatter = ""
+    body = text
+    if text.startswith("---"):
+        parts = text.split("---", 2)
+        if len(parts) >= 3:
+            frontmatter = f"---{parts[1]}---\n\n"
+            body = parts[2]
+
+    # Layer 1: trafilatura (if the content looks like HTML or has HTML artifacts)
+    if trafilatura is not None:
+        has_html_signs = any(marker in body for marker in ["<html", "<div", "<nav", "<footer"])
+        has_nav_patterns = body.count("\n \n") > 10 or body.count("\n\n\n") > 5
+        if has_html_signs or has_nav_patterns:
+            try:
+                extracted = trafilatura.extract(
+                    body,
+                    include_comments=False,
+                    include_tables=True,
+                    favor_recall=True,
+                    output_format="txt",
+                )
+                if extracted and len(extracted) > 50:
+                    body = extracted
+                    return frontmatter + body
+            except Exception:
+                pass
+
+    # Layer 2: heuristic stripping for plain-text nav boilerplate
+    lines = body.split("\n")
+    cleaned_lines = []
+    consecutive_short = 0
+    nav_block = False
+
+    for line in lines:
+        stripped = line.strip()
+
+        # Skip empty lines in sequences (compress whitespace)
+        if not stripped:
+            if cleaned_lines and cleaned_lines[-1] != "":
+                cleaned_lines.append("")
+            continue
+
+        # Detect nav-like patterns: short lines (< 40 chars) in long runs
+        if len(stripped) < 40 and not any(c in stripped for c in ".,:;!?()[]"):
+            consecutive_short += 1
+            if consecutive_short >= 3:
+                nav_block = True
+                continue
+        else:
+            if nav_block and len(stripped) < 40:
+                continue
+            consecutive_short = 0
+            nav_block = False
+
+        # Skip common boilerplate phrases
+        boilerplate = [
+            "skip to content", "skip to main", "toggle navigation",
+            "cookie", "privacy policy", "terms of use", "all rights reserved",
+            "© ", "copyright ", "powered by", "back to top",
+            "sign in", "sign up", "log in", "subscribe",
+            "read more", "learn more", "view all",
+        ]
+        if any(stripped.lower().startswith(bp) for bp in boilerplate):
+            continue
+        if stripped.lower() in [bp for bp in boilerplate]:
+            continue
+
+        cleaned_lines.append(line)
+
+    body = "\n".join(cleaned_lines)
+
+    # Collapse excessive whitespace
+    body = re.sub(r'\n{4,}', '\n\n\n', body)
+
+    return frontmatter + body.strip()
+
+
 async def call_openrouter(text: str, model: str) -> tuple[list[dict], dict]:
     """Call OpenRouter and return (parsed_facts, metadata)."""
+    cleaned_text = clean_web_content(text)
     resp = await openrouter.post(
         OPENROUTER_URL,
         headers={"Authorization": f"Bearer {OPENROUTER_KEY}", "Content-Type": "application/json"},
@@ -156,7 +261,7 @@ async def call_openrouter(text: str, model: str) -> tuple[list[dict], dict]:
             "max_tokens": 32768,
             "messages": [
                 {"role": "system", "content": EXTRACTION_PROMPT},
-                {"role": "user", "content": f"Extract all predicates from the following text:\n\n---\n{text}\n---"},
+                {"role": "user", "content": f"Extract all predicates from the following text:\n\n---\n{cleaned_text}\n---"},
             ],
         },
     )
