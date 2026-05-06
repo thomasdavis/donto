@@ -276,21 +276,38 @@ def _temporal_status_to_job_status(wf_status) -> str:
     }.get(wf_status, "queued")
 
 
+def _context_to_workflow_id(context: str) -> str:
+    """Deterministic workflow ID from context IRI. Prevents duplicate extractions
+    for the same context — Temporal rejects starting a workflow whose ID already exists."""
+    import hashlib
+    slug = context.replace("/", "_").replace(":", "_")
+    if len(slug) > 80:
+        slug = slug[:60] + "-" + hashlib.sha256(context.encode()).hexdigest()[:12]
+    return f"extraction-{slug}"
+
+
 @app.post("/jobs/extract", tags=["Jobs"],
     summary="Submit an extraction job (returns immediately with job ID)")
 async def submit_extract_job(req: JobExtractRequest):
     """Submit text for async extraction. Returns immediately with a job_id.
     Poll `GET /jobs/{job_id}` for status and results.
-    Jobs are durable Temporal workflows — they survive server restarts."""
+    Jobs are durable Temporal workflows — they survive server restarts.
+    Duplicate submissions for the same context are rejected."""
     client = _require_temporal()
-    job_id = str(uuid.uuid4())[:8]
     model = resolve_model(req.model)
-    await client.start_workflow(
-        ExtractionWorkflow.run,
-        args=[req.text, req.context, model],
-        id=f"extraction-{job_id}",
-        task_queue=TASK_QUEUE,
-    )
+    wf_id = _context_to_workflow_id(req.context)
+    try:
+        await client.start_workflow(
+            ExtractionWorkflow.run,
+            args=[req.text, req.context, model],
+            id=wf_id,
+            task_queue=TASK_QUEUE,
+        )
+    except RPCError as e:
+        if "already started" in str(e).lower() or "already exists" in str(e).lower():
+            return {"job_id": wf_id, "status": "duplicate", "message": f"Extraction for {req.context} already exists"}
+        raise
+    job_id = wf_id.removeprefix("extraction-")
     logger.info(f"job {job_id}: queued ({len(req.text)} chars → {req.context})")
     return {"job_id": job_id, "status": "queued"}
 
@@ -299,21 +316,29 @@ async def submit_extract_job(req: JobExtractRequest):
     summary="Submit multiple extraction jobs at once")
 async def submit_batch_jobs(req: JobBatchRequest):
     """Submit multiple texts for extraction. Each becomes a separate durable
-    Temporal workflow. Concurrency controlled by the worker process."""
+    Temporal workflow. Concurrency controlled by the worker process.
+    Duplicates (same context) are skipped and reported."""
     client = _require_temporal()
     job_ids = []
+    skipped = 0
     for item in req.items:
-        job_id = str(uuid.uuid4())[:8]
         model = resolve_model(item.model)
-        await client.start_workflow(
-            ExtractionWorkflow.run,
-            args=[item.text, item.context, model],
-            id=f"extraction-{job_id}",
-            task_queue=TASK_QUEUE,
-        )
-        job_ids.append(job_id)
-    logger.info(f"batch: {len(job_ids)} jobs queued")
-    return {"job_ids": job_ids, "count": len(job_ids)}
+        wf_id = _context_to_workflow_id(item.context)
+        try:
+            await client.start_workflow(
+                ExtractionWorkflow.run,
+                args=[item.text, item.context, model],
+                id=wf_id,
+                task_queue=TASK_QUEUE,
+            )
+            job_ids.append(wf_id.removeprefix("extraction-"))
+        except RPCError as e:
+            if "already started" in str(e).lower() or "already exists" in str(e).lower():
+                skipped += 1
+                continue
+            raise
+    logger.info(f"batch: {len(job_ids)} queued, {skipped} skipped (duplicate)")
+    return {"job_ids": job_ids, "count": len(job_ids), "skipped_duplicates": skipped}
 
 
 @app.get("/jobs", tags=["Jobs"],
