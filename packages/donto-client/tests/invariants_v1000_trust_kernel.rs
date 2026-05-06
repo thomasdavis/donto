@@ -191,10 +191,7 @@ async fn attestation_can_override_denial_for_specific_holder() {
         .await
         .unwrap()
         .get(0);
-    assert!(
-        now_allowed,
-        "attestation must grant the holder the action"
-    );
+    assert!(now_allowed, "attestation must grant the holder the action");
 
     // Revoke the attestation; access denied immediately.
     c.execute(

@@ -11,12 +11,19 @@ async fn proposal_kinds_accepted() {
     let prefix = tag("idp-kinds");
 
     for kind in &[
-        "same_as", "different_from",
-        "broader_than", "narrower_than",
-        "split_candidate", "merge_candidate",
-        "successor_of", "alias_of",
+        "same_as",
+        "different_from",
+        "broader_than",
+        "narrower_than",
+        "split_candidate",
+        "merge_candidate",
+        "successor_of",
+        "alias_of",
     ] {
-        let refs = vec![format!("ent:{prefix}/{kind}/a"), format!("ent:{prefix}/{kind}/b")];
+        let refs = vec![
+            format!("ent:{prefix}/{kind}/a"),
+            format!("ent:{prefix}/{kind}/b"),
+        ];
         c.query_one(
             "select donto_register_identity_proposal($1, $2::text[])",
             &[kind, &refs],
@@ -120,8 +127,15 @@ async fn cluster_hypothesis_v2_method_default() {
         .get(0);
     // Pre-existing rows may default to 'rule' after migration.
     assert!(
-        ["rule", "human", "model", "registry_match", "cross_source_evidence", "mixed"]
-            .contains(&method.as_str()),
+        [
+            "rule",
+            "human",
+            "model",
+            "registry_match",
+            "cross_source_evidence",
+            "mixed"
+        ]
+        .contains(&method.as_str()),
         "method on existing strict hypothesis is in v1000 enum: {method}"
     );
 }

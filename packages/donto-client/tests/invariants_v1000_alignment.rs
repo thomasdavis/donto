@@ -3,9 +3,12 @@
 mod common;
 use common::{connect, tag};
 
-async fn register(client: &donto_client::DontoClient, src: &str, tgt: &str, rel: &str)
-    -> Result<uuid::Uuid, donto_client::Error>
-{
+async fn register(
+    client: &donto_client::DontoClient,
+    src: &str,
+    tgt: &str,
+    rel: &str,
+) -> Result<uuid::Uuid, donto_client::Error> {
     let c = client.pool().get().await.unwrap();
     let row = c
         .query_one(
@@ -110,7 +113,10 @@ async fn safety_flags_default_correctly() {
     let (q, e, l): (bool, bool, bool) = (row.get(0), row.get(1), row.get(2));
     assert!(q, "safe_for_query_expansion defaults true");
     assert!(!e, "safe_for_export defaults false (caller opts in)");
-    assert!(!l, "safe_for_logical_inference defaults false (caller opts in)");
+    assert!(
+        !l,
+        "safe_for_logical_inference defaults false (caller opts in)"
+    );
 }
 
 #[tokio::test]
@@ -202,10 +208,7 @@ async fn relation_view_has_eleven_rows() {
     let client = pg_or_skip!(connect().await);
     let c = client.pool().get().await.unwrap();
     let n: i64 = c
-        .query_one(
-            "select count(*) from donto_v_alignment_relation_v1000",
-            &[],
-        )
+        .query_one("select count(*) from donto_v_alignment_relation_v1000", &[])
         .await
         .unwrap()
         .get(0);
@@ -272,5 +275,8 @@ async fn scope_must_be_real_context() {
             &[&id],
         )
         .await;
-    assert!(res.is_err(), "FK violation: scope must reference real context");
+    assert!(
+        res.is_err(),
+        "FK violation: scope must reference real context"
+    );
 }

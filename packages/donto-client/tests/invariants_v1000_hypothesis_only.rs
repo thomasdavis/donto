@@ -162,10 +162,7 @@ async fn unmarked_can_promote_freely() {
             .await
             .unwrap()
             .get(0);
-        assert!(
-            allowed,
-            "unmarked statement may promote to level {level}"
-        );
+        assert!(allowed, "unmarked statement may promote to level {level}");
     }
 }
 

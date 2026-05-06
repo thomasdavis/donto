@@ -118,10 +118,7 @@ async fn frame_roles_indexed_by_role_name() {
     .unwrap();
 
     let rows = c
-        .query(
-            "select role from donto_frame_roles($1)",
-            &[&id],
-        )
+        .query("select role from donto_frame_roles($1)", &[&id])
         .await
         .unwrap();
     assert_eq!(rows.len(), 3);
@@ -247,12 +244,18 @@ async fn cross_domain_frame_types_present() {
     let client = pg_or_skip!(connect().await);
     let c = client.pool().get().await.unwrap();
     for ft in &[
-        "diagnosis", "legal_precedent", "experiment_result",
-        "clinical_observation", "schema_mapping",
+        "diagnosis",
+        "legal_precedent",
+        "experiment_result",
+        "clinical_observation",
+        "schema_mapping",
         "access_policy_inheritance",
     ] {
         let n: i64 = c
-            .query_one("select count(*) from donto_frame_type where frame_type = $1", &[ft])
+            .query_one(
+                "select count(*) from donto_frame_type where frame_type = $1",
+                &[ft],
+            )
             .await
             .unwrap()
             .get(0);

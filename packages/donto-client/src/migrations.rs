@@ -183,6 +183,20 @@ fn sha256_of(s: &str) -> Vec<u8> {
 pub async fn apply_migrations(pool: &Pool) -> Result<()> {
     let mut client = pool.get().await?;
 
+    // Serialize concurrent migrate() callers (e.g., parallel cargo test
+    // binaries). Without this, two callers can both see ledger_exists=false
+    // on a fresh DB and race through the loop. Because some migrations use
+    // `create or replace function` (notably 0006_predicate redefining
+    // donto_assert), the LAST writer wins — and the loser may be running an
+    // earlier migration whose `create or replace` clobbers a later one's
+    // overlay. The advisory lock makes the apply path one-at-a-time.
+    //
+    // Lock id is a random constant for donto migrations; it's released
+    // automatically when the connection is returned to the pool.
+    client
+        .execute("select pg_advisory_lock(8836428012345678901::bigint)", &[])
+        .await?;
+
     // Detect first-time install: the ledger table only exists after 0004 has
     // run at least once. On first install we run every migration in order;
     // on subsequent runs we consult the ledger for *every* migration so that
@@ -235,5 +249,29 @@ pub async fn apply_migrations(pool: &Pool) -> Result<()> {
 
         tx.commit().await?;
     }
+
+    // Backfill real SHAs for the bootstrap migrations 0001/0002/0003.
+    // Migration 0004 seeds them with sha=`decode('00','hex')` placeholder
+    // because SQL has no access to the Rust-side hash. Without this fixup,
+    // every subsequent migrate() call sees a sha mismatch on those three
+    // and re-applies them — and the re-apply of 0003 silently overwrites
+    // the donto_assert defined by 0006_predicate (which adds the
+    // implicit-predicate-registration path). Update them in place.
+    for (name, sql) in MIGRATIONS.iter() {
+        if matches!(*name, "0001_core" | "0002_flags" | "0003_functions") {
+            let hash = sha256_of(sql);
+            client
+                .execute(
+                    "update donto_migration set sha256 = $2 where name = $1 and sha256 = decode('00','hex')",
+                    &[&name, &hash],
+                )
+                .await?;
+        }
+    }
+
+    // Explicit release; would also happen on connection return.
+    client
+        .execute("select pg_advisory_unlock(8836428012345678901::bigint)", &[])
+        .await?;
     Ok(())
 }

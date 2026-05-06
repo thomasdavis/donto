@@ -5,20 +5,30 @@ use donto_client::{Object, StatementInput};
 mod common;
 use common::{cleanup_prefix, connect, ctx, tag};
 
-async fn make_two_statements(client: &donto_client::DontoClient, prefix: &str, ctx: &str)
-    -> (uuid::Uuid, uuid::Uuid)
-{
+async fn make_two_statements(
+    client: &donto_client::DontoClient,
+    prefix: &str,
+    ctx: &str,
+) -> (uuid::Uuid, uuid::Uuid) {
     let s1 = client
         .assert(
-            &StatementInput::new(format!("{prefix}/s1"), "ex:p", Object::iri(format!("{prefix}/o1")))
-                .with_context(ctx),
+            &StatementInput::new(
+                format!("{prefix}/s1"),
+                "ex:p",
+                Object::iri(format!("{prefix}/o1")),
+            )
+            .with_context(ctx),
         )
         .await
         .unwrap();
     let s2 = client
         .assert(
-            &StatementInput::new(format!("{prefix}/s2"), "ex:p", Object::iri(format!("{prefix}/o2")))
-                .with_context(ctx),
+            &StatementInput::new(
+                format!("{prefix}/s2"),
+                "ex:p",
+                Object::iri(format!("{prefix}/o2")),
+            )
+            .with_context(ctx),
         )
         .await
         .unwrap();
@@ -129,7 +139,10 @@ async fn review_state_default_and_constraint() {
             &[&arg_id],
         )
         .await;
-    assert!(res.is_err(), "review_state CHECK must reject unknown values");
+    assert!(
+        res.is_err(),
+        "review_state CHECK must reject unknown values"
+    );
 }
 
 #[tokio::test]
@@ -167,10 +180,7 @@ async fn relation_v1000_view_has_all_kinds() {
     let client = pg_or_skip!(connect().await);
     let c = client.pool().get().await.unwrap();
     let n: i64 = c
-        .query_one(
-            "select count(*) from donto_v_argument_relation_v1000",
-            &[],
-        )
+        .query_one("select count(*) from donto_v_argument_relation_v1000", &[])
         .await
         .unwrap()
         .get(0);

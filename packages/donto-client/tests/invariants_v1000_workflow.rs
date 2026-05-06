@@ -14,10 +14,15 @@ async fn v1000_obligation_kinds_accepted() {
     let ctx_iri = ctx(&client, "ob-v2-kinds").await;
 
     for kind in &[
-        "needs_evidence", "needs_policy", "needs_review",
-        "needs_identity_resolution", "needs_alignment_review",
-        "needs_anchor_repair", "needs_contradiction_review",
-        "needs_formal_validation", "needs_community_authority",
+        "needs_evidence",
+        "needs_policy",
+        "needs_review",
+        "needs_identity_resolution",
+        "needs_alignment_review",
+        "needs_anchor_repair",
+        "needs_contradiction_review",
+        "needs_formal_validation",
+        "needs_community_authority",
     ] {
         c.query_one(
             "select donto_emit_v1000_obligation(null, $1, $2, 0::smallint, null, null)",
@@ -34,8 +39,10 @@ async fn v0_obligation_kinds_still_accepted() {
     let c = client.pool().get().await.unwrap();
     let ctx_iri = ctx(&client, "ob-v0-kinds").await;
     for kind in &[
-        "needs-coref", "needs-temporal-grounding",
-        "needs-source-support", "needs-human-review",
+        "needs-coref",
+        "needs-temporal-grounding",
+        "needs-source-support",
+        "needs-human-review",
     ] {
         c.query_one(
             "select donto_emit_v1000_obligation(null, $1, $2, 0::smallint, null, null)",
@@ -84,10 +91,7 @@ async fn obligation_kind_view_lists_nine() {
     let client = pg_or_skip!(connect().await);
     let c = client.pool().get().await.unwrap();
     let n: i64 = c
-        .query_one(
-            "select count(*) from donto_v_obligation_kind_v1000",
-            &[],
-        )
+        .query_one("select count(*) from donto_v_obligation_kind_v1000", &[])
         .await
         .unwrap()
         .get(0);
@@ -195,10 +199,7 @@ async fn latest_review_returns_most_recent() {
         .get(0);
 
     let latest: uuid::Uuid = c
-        .query_one(
-            "select donto_latest_review('claim', $1)",
-            &[&target],
-        )
+        .query_one("select donto_latest_review('claim', $1)", &[&target])
         .await
         .unwrap()
         .get(0);
@@ -277,8 +278,12 @@ async fn context_multi_parent_role_check() {
     let prefix = tag("ctx-mp-bad");
     let parent = format!("ctx:{prefix}/p");
     let child = format!("ctx:{prefix}/c");
-    c.execute("select donto_ensure_context($1)", &[&parent]).await.unwrap();
-    c.execute("select donto_ensure_context($1)", &[&child]).await.unwrap();
+    c.execute("select donto_ensure_context($1)", &[&parent])
+        .await
+        .unwrap();
+    c.execute("select donto_ensure_context($1)", &[&child])
+        .await
+        .unwrap();
 
     let res = c
         .execute(
@@ -296,7 +301,9 @@ async fn context_multi_parent_no_self_loop() {
     let c = client.pool().get().await.unwrap();
     let prefix = tag("ctx-self");
     let me = format!("ctx:{prefix}/me");
-    c.execute("select donto_ensure_context($1)", &[&me]).await.unwrap();
+    c.execute("select donto_ensure_context($1)", &[&me])
+        .await
+        .unwrap();
 
     let res = c
         .execute(
@@ -321,10 +328,7 @@ async fn query_clauses_seeded() {
         .await
         .unwrap()
         .get(0);
-    assert!(
-        n >= 25,
-        "expected ≥25 v1000 query clauses, got {n}"
-    );
+    assert!(n >= 25, "expected ≥25 v1000 query clauses, got {n}");
 }
 
 #[tokio::test]
@@ -332,8 +336,12 @@ async fn query_clauses_v1000_specific_present() {
     let client = pg_or_skip!(connect().await);
     let c = client.pool().get().await.unwrap();
     for clause in &[
-        "MODALITY", "EXTRACTION_LEVEL", "IDENTITY_LENS",
-        "SCHEMA_LENS", "POLICY_ALLOWS", "AS_OF",
+        "MODALITY",
+        "EXTRACTION_LEVEL",
+        "IDENTITY_LENS",
+        "SCHEMA_LENS",
+        "POLICY_ALLOWS",
+        "AS_OF",
     ] {
         let n: i64 = c
             .query_one(

@@ -16,7 +16,10 @@ async fn register_source_v1000_requires_policy() {
             &[&format!("src:{prefix}/no-policy")],
         )
         .await;
-    assert!(res.is_err(), "policy_id is required for register_source_v1000");
+    assert!(
+        res.is_err(),
+        "policy_id is required for register_source_v1000"
+    );
 }
 
 #[tokio::test]
@@ -188,27 +191,33 @@ async fn anchor_validate_each_kind_passes_minimal_locator() {
 
     // Valid minimal locators per kind.
     let cases: &[(&str, &str)] = &[
-        ("whole_source",   "{}"),
-        ("char_span",      "{\"start\": 0, \"end\": 5}"),
-        ("page_box",       "{\"page\": 1, \"x\": 0.1, \"y\": 0.1, \"w\": 0.1, \"h\": 0.1}"),
-        ("image_box",      "{\"x\": 0, \"y\": 0, \"w\": 100, \"h\": 100}"),
-        ("media_time",     "{\"start_ms\": 0, \"end_ms\": 1000}"),
-        ("table_cell",     "{\"row_id\": \"r1\", \"column\": \"c1\"}"),
-        ("csv_row",        "{\"row_index\": 1, \"columns\": [\"a\",\"b\"]}"),
-        ("json_pointer",   "{\"pointer\": \"/x/0\"}"),
-        ("xml_xpath",      "{\"xpath\": \"//a\"}"),
-        ("html_css",       "{\"selector\": \"div.x\"}"),
-        ("token_range",    "{\"sentence_id\": \"s1\", \"start\": 0, \"end\": 3}"),
-        ("annotation_id",  "{\"annotation_id\": \"a1\"}"),
-        ("archive_field",  "{\"record_id\": \"r1\", \"field_name\": \"title\"}"),
+        ("whole_source", "{}"),
+        ("char_span", "{\"start\": 0, \"end\": 5}"),
+        (
+            "page_box",
+            "{\"page\": 1, \"x\": 0.1, \"y\": 0.1, \"w\": 0.1, \"h\": 0.1}",
+        ),
+        ("image_box", "{\"x\": 0, \"y\": 0, \"w\": 100, \"h\": 100}"),
+        ("media_time", "{\"start_ms\": 0, \"end_ms\": 1000}"),
+        ("table_cell", "{\"row_id\": \"r1\", \"column\": \"c1\"}"),
+        ("csv_row", "{\"row_index\": 1, \"columns\": [\"a\",\"b\"]}"),
+        ("json_pointer", "{\"pointer\": \"/x/0\"}"),
+        ("xml_xpath", "{\"xpath\": \"//a\"}"),
+        ("html_css", "{\"selector\": \"div.x\"}"),
+        (
+            "token_range",
+            "{\"sentence_id\": \"s1\", \"start\": 0, \"end\": 3}",
+        ),
+        ("annotation_id", "{\"annotation_id\": \"a1\"}"),
+        (
+            "archive_field",
+            "{\"record_id\": \"r1\", \"field_name\": \"title\"}",
+        ),
     ];
     for (kind, locator) in cases {
         let v: serde_json::Value = serde_json::from_str(locator).unwrap();
         let valid: bool = c
-            .query_one(
-                "select donto_validate_anchor_locator($1, $2)",
-                &[kind, &v],
-            )
+            .query_one("select donto_validate_anchor_locator($1, $2)", &[kind, &v])
             .await
             .unwrap()
             .get(0);

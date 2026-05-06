@@ -47,7 +47,10 @@ async fn invalid_target_kind_rejected() {
             &[],
         )
         .await;
-    assert!(res.is_err(), "invalid target_kind must be rejected by CHECK");
+    assert!(
+        res.is_err(),
+        "invalid target_kind must be rejected by CHECK"
+    );
 }
 
 #[tokio::test]

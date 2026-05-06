@@ -3,9 +3,10 @@
 mod common;
 use common::{connect, tag};
 
-async fn make_release(client: &donto_client::DontoClient, name: &str)
-    -> Result<uuid::Uuid, donto_client::Error>
-{
+async fn make_release(
+    client: &donto_client::DontoClient,
+    name: &str,
+) -> Result<uuid::Uuid, donto_client::Error> {
     let c = client.pool().get().await.unwrap();
     c.query_one(
         "insert into donto_dataset_release (release_name, release_version, query_spec) \
@@ -80,20 +81,14 @@ async fn release_seal_emits_event() {
     let release_id = make_release(&client, &name).await.unwrap();
 
     let sealed: bool = c
-        .query_one(
-            "select donto_seal_release($1, 'tester')",
-            &[&release_id],
-        )
+        .query_one("select donto_seal_release($1, 'tester')", &[&release_id])
         .await
         .unwrap()
         .get(0);
     assert!(sealed);
 
     let again: bool = c
-        .query_one(
-            "select donto_seal_release($1, 'tester')",
-            &[&release_id],
-        )
+        .query_one("select donto_seal_release($1, 'tester')", &[&release_id])
         .await
         .unwrap()
         .get(0);

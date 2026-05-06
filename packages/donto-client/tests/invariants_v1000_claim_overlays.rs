@@ -32,9 +32,12 @@ async fn modality_set_and_get() {
     let ctx_iri = ctx(&client, "mod-set").await;
     let s = make_stmt(&client, &prefix, &ctx_iri).await;
 
-    c.execute("select donto_set_modality($1, 'descriptive', 'tester')", &[&s])
-        .await
-        .unwrap();
+    c.execute(
+        "select donto_set_modality($1, 'descriptive', 'tester')",
+        &[&s],
+    )
+    .await
+    .unwrap();
 
     let m: String = c
         .query_one("select donto_get_modality($1)", &[&s])
@@ -140,7 +143,10 @@ async fn extraction_level_invalid_rejected() {
     let s = make_stmt(&client, &prefix, &ctx_iri).await;
 
     let res = c
-        .execute("select donto_set_extraction_level($1, 'something_else')", &[&s])
+        .execute(
+            "select donto_set_extraction_level($1, 'something_else')",
+            &[&s],
+        )
         .await;
     assert!(res.is_err());
 }
@@ -153,10 +159,16 @@ async fn extraction_level_all_levels_supported() {
     cleanup_prefix(&client, &prefix).await;
 
     for lvl in &[
-        "quoted", "table_read", "example_observed",
-        "source_generalization", "cross_source_inference",
-        "model_hypothesis", "human_hypothesis",
-        "manual_entry", "registry_import", "adapter_import",
+        "quoted",
+        "table_read",
+        "example_observed",
+        "source_generalization",
+        "cross_source_inference",
+        "model_hypothesis",
+        "human_hypothesis",
+        "manual_entry",
+        "registry_import",
+        "adapter_import",
     ] {
         let ctx_iri = ctx(&client, &format!("xl-all-{lvl}")).await;
         let s = make_stmt(&client, &format!("{prefix}-{lvl}"), &ctx_iri).await;
@@ -177,10 +189,18 @@ async fn confidence_multivalue_lens_resolution() {
     let ctx_iri = ctx(&client, "cm-lens").await;
     let s = make_stmt(&client, &prefix, &ctx_iri).await;
 
-    c.execute("select donto_set_confidence($1, 0.6)", &[&s]).await.unwrap();
-    c.execute("select donto_set_calibrated_confidence($1, 0.8)", &[&s]).await.unwrap();
-    c.execute("select donto_set_human_confidence($1, 0.95)", &[&s]).await.unwrap();
-    c.execute("select donto_set_source_reliability($1, 0.7)", &[&s]).await.unwrap();
+    c.execute("select donto_set_confidence($1, 0.6)", &[&s])
+        .await
+        .unwrap();
+    c.execute("select donto_set_calibrated_confidence($1, 0.8)", &[&s])
+        .await
+        .unwrap();
+    c.execute("select donto_set_human_confidence($1, 0.95)", &[&s])
+        .await
+        .unwrap();
+    c.execute("select donto_set_source_reliability($1, 0.7)", &[&s])
+        .await
+        .unwrap();
 
     let m: f64 = c
         .query_one("select donto_confidence_lens($1, 'machine')", &[&s])
@@ -214,8 +234,8 @@ async fn confidence_multivalue_lens_resolution() {
     assert!((cal - 0.8).abs() < 1e-6);
     assert!((h - 0.95).abs() < 1e-6);
     assert!((sw - 0.7).abs() < 1e-6);
-    assert!(m >= 0.0 && m <= 1.0);
-    assert!(multi >= 0.6 && multi <= 0.95);
+    assert!((0.0..=1.0).contains(&m));
+    assert!((0.6..=0.95).contains(&multi));
 }
 
 #[tokio::test]
@@ -241,8 +261,12 @@ async fn maturity_label_round_trip() {
     let c = client.pool().get().await.unwrap();
 
     let cases: &[(&str, i32)] = &[
-        ("E0", 0), ("E1", 1), ("E2", 2), ("E3", 3),
-        ("E4", 5), ("E5", 4),
+        ("E0", 0),
+        ("E1", 1),
+        ("E2", 2),
+        ("E3", 3),
+        ("E4", 5),
+        ("E5", 4),
     ];
     for (lbl, stored) in cases {
         let from: i32 = c
@@ -265,9 +289,7 @@ async fn maturity_label_round_trip() {
 async fn maturity_legacy_l_names_map() {
     let client = pg_or_skip!(connect().await);
     let c = client.pool().get().await.unwrap();
-    let cases: &[(&str, i32)] = &[
-        ("L0", 0), ("L1", 1), ("L2", 2), ("L3", 3), ("L4", 4),
-    ];
+    let cases: &[(&str, i32)] = &[("L0", 0), ("L1", 1), ("L2", 2), ("L3", 3), ("L4", 4)];
     for (l, stored) in cases {
         let from: i32 = c
             .query_one("select donto_maturity_from_label($1)", &[l])
@@ -297,10 +319,7 @@ async fn e_level_helper_extracts_label_from_flags() {
 
     // pack maturity = 3 (E3 reviewed), polarity = asserted (0)
     let lbl: String = c
-        .query_one(
-            "select donto_e_level(donto_pack_flags('asserted', 3))",
-            &[],
-        )
+        .query_one("select donto_e_level(donto_pack_flags('asserted', 3))", &[])
         .await
         .unwrap()
         .get(0);
@@ -387,7 +406,9 @@ async fn multi_context_role_check_constraint() {
     let ctx_iri = ctx(&client, "mc-bad").await;
     let s = make_stmt(&client, &prefix, &ctx_iri).await;
     let ctx2 = format!("ctx:{prefix}/x");
-    c.execute("select donto_ensure_context($1)", &[&ctx2]).await.unwrap();
+    c.execute("select donto_ensure_context($1)", &[&ctx2])
+        .await
+        .unwrap();
     let res = c
         .execute(
             "insert into donto_statement_context (statement_id, context, role) \

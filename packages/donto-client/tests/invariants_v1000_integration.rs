@@ -143,7 +143,10 @@ async fn end_to_end_extraction_workflow() {
         .get(0);
 
     let sealed: bool = c
-        .query_one("select donto_seal_release($1, 'release-bot')", &[&release_id])
+        .query_one(
+            "select donto_seal_release($1, 'release-bot')",
+            &[&release_id],
+        )
         .await
         .unwrap()
         .get(0);
@@ -305,9 +308,12 @@ async fn paraconsistency_with_modality_preserved() {
         .await
         .unwrap();
 
-    c.execute("select donto_set_modality($1, 'typological_summary')", &[&s1])
-        .await
-        .unwrap();
+    c.execute(
+        "select donto_set_modality($1, 'typological_summary')",
+        &[&s1],
+    )
+    .await
+    .unwrap();
     c.execute("select donto_set_modality($1, 'descriptive')", &[&s2])
         .await
         .unwrap();
@@ -379,10 +385,7 @@ async fn identity_proposal_status_lifecycle() {
     let c = client.pool().get().await.unwrap();
     let prefix = tag("e2e-id-life");
 
-    let refs = vec![
-        format!("ent:{prefix}/A"),
-        format!("ent:{prefix}/B"),
-    ];
+    let refs = vec![format!("ent:{prefix}/A"), format!("ent:{prefix}/B")];
 
     let id: uuid::Uuid = c
         .query_one(
