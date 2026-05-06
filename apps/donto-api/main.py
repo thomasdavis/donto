@@ -359,28 +359,50 @@ async def submit_batch_jobs(req: JobBatchRequest):
 async def list_jobs(status: Optional[str] = Query(None, description="Filter by status: queued, extracting, ingesting, completed, failed")):
     """List extraction jobs from Temporal. Optionally filter by status."""
     client = _require_temporal()
-    result_jobs = []
+
+    # Map our status to Temporal execution status for server-side filtering
+    temporal_status_filter = {
+        "completed": "Completed",
+        "failed": "Failed",
+        "extracting": "Running",
+        "ingesting": "Running",
+        "queued": "Running",
+    }
+
+    base_query = 'WorkflowType = "ExtractionWorkflow"'
+    if status and status in temporal_status_filter:
+        base_query += f' AND ExecutionStatus = "{temporal_status_filter[status]}"'
+
+    # Collect all for summary counts
+    all_jobs = []
     async for wf in client.list_workflows('WorkflowType = "ExtractionWorkflow"'):
+        all_jobs.append(wf)
+
+    summary = {}
+    for wf in all_jobs:
+        s = _temporal_status_to_job_status(wf.status)
+        summary[s] = summary.get(s, 0) + 1
+
+    # Collect filtered results
+    result_jobs = []
+    async for wf in client.list_workflows(base_query):
         job_id = wf.id.removeprefix("extraction-")
         wf_status = _temporal_status_to_job_status(wf.status)
+        if status and wf_status != status:
+            continue
         job_entry = {
             "id": job_id,
             "status": wf_status,
             "created_at": wf.start_time.timestamp() if wf.start_time else None,
         }
         result_jobs.append(job_entry)
+        if len(result_jobs) >= 100:
+            break
 
-    if status:
-        result_jobs = [j for j in result_jobs if j.get("status") == status]
     result_jobs.sort(key=lambda j: j.get("created_at") or 0, reverse=True)
 
-    summary = {}
-    for j in result_jobs:
-        s = j.get("status", "unknown")
-        summary[s] = summary.get(s, 0) + 1
-
-    # Enrich the top 100 with full workflow data
-    for job_entry in result_jobs[:100]:
+    # Enrich with full workflow data
+    for job_entry in result_jobs[:50]:
         try:
             handle = client.get_workflow_handle(f"extraction-{job_entry['id']}")
             if job_entry["status"] == "completed":
@@ -392,7 +414,7 @@ async def list_jobs(status: Optional[str] = Query(None, description="Filter by s
         except Exception:
             pass
 
-    return {"jobs": result_jobs[:100], "total": len(result_jobs), "summary": summary}
+    return {"jobs": result_jobs[:100], "total": len(all_jobs), "summary": summary}
 
 
 @app.get("/jobs/{job_id}", tags=["Jobs"],
