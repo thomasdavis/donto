@@ -26,10 +26,7 @@ async fn normalize_splits_camel_case() {
     let c = client.pool().get().await.unwrap();
 
     let r: String = c
-        .query_one(
-            "select donto_normalize_predicate($1)",
-            &[&"ex:bornIn"],
-        )
+        .query_one("select donto_normalize_predicate($1)", &[&"ex:bornIn"])
         .await
         .unwrap()
         .get(0);
@@ -45,10 +42,7 @@ async fn normalize_handles_auxiliary_prefix() {
     // auxiliaries, just splits + lowercases. Trigram similarity vs "born in"
     // is what carries the recall (verified in the next test).
     let r: String = c
-        .query_one(
-            "select donto_normalize_predicate($1)",
-            &[&"ex:wasBornIn"],
-        )
+        .query_one("select donto_normalize_predicate($1)", &[&"ex:wasBornIn"])
         .await
         .unwrap()
         .get(0);

@@ -70,30 +70,34 @@ pub async fn evaluate(client: &DontoClient, q: &Query) -> Result<Vec<EvalRow>, E
             };
 
             let stmts: Vec<Statement> = match q.predicate_expansion {
-                PredicateExpansion::Expand => client
-                    .match_pattern(
-                        subject.as_deref(),
-                        predicate.as_deref(),
-                        object_iri_filter.as_deref(),
-                        scope.as_ref(),
-                        polarity,
-                        q.min_maturity,
-                        None,
-                        None,
-                    )
-                    .await?,
-                PredicateExpansion::Strict => client
-                    .match_strict(
-                        subject.as_deref(),
-                        predicate.as_deref(),
-                        object_iri_filter.as_deref(),
-                        scope.as_ref(),
-                        polarity,
-                        q.min_maturity,
-                        None,
-                        None,
-                    )
-                    .await?,
+                PredicateExpansion::Expand => {
+                    client
+                        .match_pattern(
+                            subject.as_deref(),
+                            predicate.as_deref(),
+                            object_iri_filter.as_deref(),
+                            scope.as_ref(),
+                            polarity,
+                            q.min_maturity,
+                            None,
+                            None,
+                        )
+                        .await?
+                }
+                PredicateExpansion::Strict => {
+                    client
+                        .match_strict(
+                            subject.as_deref(),
+                            predicate.as_deref(),
+                            object_iri_filter.as_deref(),
+                            scope.as_ref(),
+                            polarity,
+                            q.min_maturity,
+                            None,
+                            None,
+                        )
+                        .await?
+                }
                 PredicateExpansion::ExpandAbove(pct) => client
                     .match_aligned(
                         subject.as_deref(),

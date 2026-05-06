@@ -22,19 +22,19 @@ use crate::AppState;
 #[derive(Debug, Serialize)]
 pub struct HistoryRow {
     pub statement_id: uuid::Uuid,
-    pub subject:   String,
+    pub subject: String,
     pub predicate: String,
     pub object_iri: Option<String>,
     pub object_lit: Option<Value>,
-    pub context:   String,
-    pub polarity:  String,
-    pub maturity:  i32,
-    pub valid_lo:  Option<chrono::NaiveDate>,
-    pub valid_hi:  Option<chrono::NaiveDate>,
-    pub tx_lo:     chrono::DateTime<chrono::Utc>,
-    pub tx_hi:     Option<chrono::DateTime<chrono::Utc>>,
+    pub context: String,
+    pub polarity: String,
+    pub maturity: i32,
+    pub valid_lo: Option<chrono::NaiveDate>,
+    pub valid_hi: Option<chrono::NaiveDate>,
+    pub tx_lo: chrono::DateTime<chrono::Utc>,
+    pub tx_hi: Option<chrono::DateTime<chrono::Utc>>,
     /// statement_ids this row's content was derived from (lineage table).
-    pub lineage:   Vec<uuid::Uuid>,
+    pub lineage: Vec<uuid::Uuid>,
 }
 
 /// Query parameters for `/history/:subject`. All optional; designed so the
@@ -43,19 +43,19 @@ pub struct HistoryRow {
 pub struct HistoryParams {
     /// Cap on the number of rows shipped. Default 2000, max 20000.
     #[serde(default)]
-    pub limit:     Option<i64>,
+    pub limit: Option<i64>,
     /// Restrict to a single context.
     #[serde(default)]
-    pub context:   Option<String>,
+    pub context: Option<String>,
     /// Restrict to a single predicate.
     #[serde(default)]
     pub predicate: Option<String>,
     /// Lower bound on `valid_time` (ISO date), inclusive.
     #[serde(default)]
-    pub from:      Option<chrono::NaiveDate>,
+    pub from: Option<chrono::NaiveDate>,
     /// Upper bound on `valid_time` (ISO date), inclusive.
     #[serde(default)]
-    pub to:        Option<chrono::NaiveDate>,
+    pub to: Option<chrono::NaiveDate>,
     /// Include retracted rows? Default true (the visualisation needs them).
     #[serde(default)]
     pub include_retracted: Option<bool>,
@@ -72,22 +72,27 @@ pub async fn handle(
         Err(e) => return Json(json!({"error": e.to_string()})).into_response(),
     };
 
-    let limit  = p.limit.unwrap_or(2000).clamp(1, 20_000);
+    let limit = p.limit.unwrap_or(2000).clamp(1, 20_000);
     let include_retracted = p.include_retracted.unwrap_or(true);
 
     // Total count (cheap; subject is indexed) so the UI knows whether the
     // result was truncated.
-    let total: i64 = conn.query_one(
-        "select count(*)::bigint from donto_statement
+    let total: i64 = conn
+        .query_one(
+            "select count(*)::bigint from donto_statement
           where subject = $1
             and ($2::boolean or upper(tx_time) is null)
             and ($3::text is null or context = $3)
             and ($4::text is null or predicate = $4)",
-        &[&subject, &include_retracted, &p.context, &p.predicate],
-    ).await.map(|r| r.get(0)).unwrap_or(0);
+            &[&subject, &include_retracted, &p.context, &p.predicate],
+        )
+        .await
+        .map(|r| r.get(0))
+        .unwrap_or(0);
 
-    let rows = match conn.query(
-        "select s.statement_id, s.subject, s.predicate, s.object_iri, s.object_lit,
+    let rows = match conn
+        .query(
+            "select s.statement_id, s.subject, s.predicate, s.object_iri, s.object_lit,
                 s.context,
                 donto_polarity(s.flags), donto_maturity(s.flags),
                 lower(s.valid_time), upper(s.valid_time),
@@ -107,28 +112,40 @@ pub async fn handle(
                  or lower(s.valid_time) <= $6)
           order by lower(s.tx_time) asc
           limit $7",
-        &[&subject, &include_retracted, &p.context, &p.predicate,
-          &p.from, &p.to, &limit],
-    ).await {
+            &[
+                &subject,
+                &include_retracted,
+                &p.context,
+                &p.predicate,
+                &p.from,
+                &p.to,
+                &limit,
+            ],
+        )
+        .await
+    {
         Ok(rs) => rs,
         Err(e) => return Json(json!({"error": format!("history query: {e}")})).into_response(),
     };
 
-    let out: Vec<HistoryRow> = rows.into_iter().map(|r| HistoryRow {
-        statement_id: r.get(0),
-        subject:    r.get(1),
-        predicate:  r.get(2),
-        object_iri: r.get(3),
-        object_lit: r.get(4),
-        context:    r.get(5),
-        polarity:   r.get(6),
-        maturity:   r.get(7),
-        valid_lo:   r.get(8),
-        valid_hi:   r.get(9),
-        tx_lo:      r.get(10),
-        tx_hi:      r.get(11),
-        lineage:    r.get(12),
-    }).collect();
+    let out: Vec<HistoryRow> = rows
+        .into_iter()
+        .map(|r| HistoryRow {
+            statement_id: r.get(0),
+            subject: r.get(1),
+            predicate: r.get(2),
+            object_iri: r.get(3),
+            object_lit: r.get(4),
+            context: r.get(5),
+            polarity: r.get(6),
+            maturity: r.get(7),
+            valid_lo: r.get(8),
+            valid_hi: r.get(9),
+            tx_lo: r.get(10),
+            tx_hi: r.get(11),
+            lineage: r.get(12),
+        })
+        .collect();
 
     Json(json!({
         "subject":    subject,
@@ -144,7 +161,8 @@ pub async fn handle(
             "include_retracted": include_retracted,
         },
         "rows":       out,
-    })).into_response()
+    }))
+    .into_response()
 }
 
 /// GET /subjects → recently-touched subjects, with row counts.
@@ -154,9 +172,7 @@ pub async fn handle(
 /// `donto_audit` for the recent window, find distinct subjects, and look up
 /// their row counts via the indexed (subject, predicate, object_iri) btree.
 /// Bounded by audit-window size, not table size.
-pub async fn list_subjects(
-    State(state): State<Arc<AppState>>,
-) -> impl IntoResponse {
+pub async fn list_subjects(State(state): State<Arc<AppState>>) -> impl IntoResponse {
     let pool = state.client.pool();
     let conn = match pool.get().await {
         Ok(c) => c,
@@ -165,8 +181,9 @@ pub async fn list_subjects(
 
     // Distinct subjects touched in the last 30 days, capped at 5000 audit
     // rows. Both bounds keep this O(small).
-    let recent = match conn.query(
-        "with recent_audit as (
+    let recent = match conn
+        .query(
+            "with recent_audit as (
              select statement_id from donto_audit
               where at > now() - interval '30 days'
               order by at desc
@@ -177,10 +194,14 @@ pub async fn list_subjects(
            join donto_statement s on s.statement_id = ra.statement_id
            order by 1
            limit 50",
-        &[],
-    ).await {
+            &[],
+        )
+        .await
+    {
         Ok(rs) => rs,
-        Err(e) => return Json(json!({"error": format!("/subjects audit scan: {e}")})).into_response(),
+        Err(e) => {
+            return Json(json!({"error": format!("/subjects audit scan: {e}")})).into_response()
+        }
     };
 
     // Per-subject row count via the indexed (subject, predicate, object_iri)
@@ -188,18 +209,24 @@ pub async fn list_subjects(
     let mut subs: Vec<Value> = Vec::with_capacity(recent.len());
     for r in &recent {
         let s: String = r.get(0);
-        let n: i64 = match conn.query_one(
-            "select count(*)::bigint from donto_statement where subject = $1",
-            &[&s],
-        ).await {
+        let n: i64 = match conn
+            .query_one(
+                "select count(*)::bigint from donto_statement where subject = $1",
+                &[&s],
+            )
+            .await
+        {
             Ok(row) => row.get(0),
-            Err(_)  => 0,
+            Err(_) => 0,
         };
         subs.push(json!({"subject": s, "count": n}));
     }
-    subs.sort_by(|a, b|
-        b["count"].as_i64().unwrap_or(0).cmp(&a["count"].as_i64().unwrap_or(0))
-    );
+    subs.sort_by(|a, b| {
+        b["count"]
+            .as_i64()
+            .unwrap_or(0)
+            .cmp(&a["count"].as_i64().unwrap_or(0))
+    });
 
     Json(json!({"subjects": subs})).into_response()
 }
@@ -241,8 +268,9 @@ pub async fn search(
     //   3. any literal object that matches ilike (cheap fallback; lets a
     //      search for e.g. "IMDb" find subjects cited by IMDb even when the
     //      label statement isn't there yet).
-    let rows = match conn.query(
-        "with label_hits as (
+    let rows = match conn
+        .query(
+            "with label_hits as (
              select distinct on (subject)
                     subject,
                     object_lit ->> 'v' as label
@@ -295,18 +323,23 @@ pub async fn search(
            from (select distinct subject, max(label) as label from hits group by subject) h
           order by row_count desc, h.subject
           limit $2",
-        &[&needle, &limit],
-    ).await {
+            &[&needle, &limit],
+        )
+        .await
+    {
         Ok(rs) => rs,
         Err(e) => return Json(json!({"error": format!("/search: {e}")})).into_response(),
     };
 
-    let matches: Vec<Value> = rows.iter().map(|r| {
-        let subject: String = r.get(0);
-        let label: Option<String> = r.get(1);
-        let n: i64 = r.get(2);
-        json!({"subject": subject, "label": label, "count": n})
-    }).collect();
+    let matches: Vec<Value> = rows
+        .iter()
+        .map(|r| {
+            let subject: String = r.get(0);
+            let label: Option<String> = r.get(1);
+            let n: i64 = r.get(2);
+            json!({"subject": subject, "label": label, "count": n})
+        })
+        .collect();
 
     Json(json!({"q": q, "matches": matches})).into_response()
 }
@@ -331,8 +364,9 @@ pub async fn statement_detail(
     };
 
     // 1. The statement itself.
-    let row = match conn.query_opt(
-        "select s.statement_id, s.subject, s.predicate, s.object_iri, s.object_lit,
+    let row = match conn
+        .query_opt(
+            "select s.statement_id, s.subject, s.predicate, s.object_iri, s.object_lit,
                 s.context,
                 donto_polarity(s.flags), donto_maturity(s.flags),
                 lower(s.valid_time), upper(s.valid_time),
@@ -343,11 +377,13 @@ pub async fn statement_detail(
                     '{}'::uuid[]) as lineage
            from donto_statement s
           where s.statement_id = $1",
-        &[&id],
-    ).await {
+            &[&id],
+        )
+        .await
+    {
         Ok(Some(r)) => r,
-        Ok(None)    => return Json(json!({"error": "not found", "id": id_str})).into_response(),
-        Err(e)      => return Json(json!({"error": format!("statement query: {e}")})).into_response(),
+        Ok(None) => return Json(json!({"error": "not found", "id": id_str})).into_response(),
+        Err(e) => return Json(json!({"error": format!("statement query: {e}")})).into_response(),
     };
 
     let row_json = json!({
@@ -368,23 +404,27 @@ pub async fn statement_detail(
 
     // 2. Lineage sources (full statement rows for each id this row was
     //    derived from). Indexed lookup, fast.
-    let sources: Vec<Value> = match conn.query(
-        "select s.statement_id, s.subject, s.predicate, s.object_iri, s.object_lit,
+    let sources: Vec<Value> = match conn
+        .query(
+            "select s.statement_id, s.subject, s.predicate, s.object_iri, s.object_lit,
                 s.context, donto_polarity(s.flags), donto_maturity(s.flags),
                 lower(s.valid_time), upper(s.valid_time),
                 lower(s.tx_time),    upper(s.tx_time)
            from donto_stmt_lineage l
            join donto_statement   s on s.statement_id = l.source_stmt
           where l.statement_id = $1",
-        &[&id],
-    ).await {
+            &[&id],
+        )
+        .await
+    {
         Ok(rs) => rs.iter().map(brief_row).collect(),
         Err(_) => vec![],
     };
 
     // 3. Reverse lineage — statements that were derived FROM this one.
-    let derived: Vec<Value> = match conn.query(
-        "select s.statement_id, s.subject, s.predicate, s.object_iri, s.object_lit,
+    let derived: Vec<Value> = match conn
+        .query(
+            "select s.statement_id, s.subject, s.predicate, s.object_iri, s.object_lit,
                 s.context, donto_polarity(s.flags), donto_maturity(s.flags),
                 lower(s.valid_time), upper(s.valid_time),
                 lower(s.tx_time),    upper(s.tx_time)
@@ -392,37 +432,50 @@ pub async fn statement_detail(
            join donto_statement   s on s.statement_id = l.statement_id
           where l.source_stmt = $1
           limit 50",
-        &[&id],
-    ).await {
+            &[&id],
+        )
+        .await
+    {
         Ok(rs) => rs.iter().map(brief_row).collect(),
         Err(_) => vec![],
     };
 
     // 4. Audit log entries for this statement.
-    let audit: Vec<Value> = match conn.query(
-        "select at, actor, action, detail
+    let audit: Vec<Value> = match conn
+        .query(
+            "select at, actor, action, detail
            from donto_audit
           where statement_id = $1
           order by at asc",
-        &[&id],
-    ).await {
-        Ok(rs) => rs.iter().map(|r| json!({
-            "at":     r.get::<_, chrono::DateTime<chrono::Utc>>(0),
-            "actor":  r.get::<_, Option<String>>(1),
-            "action": r.get::<_, String>(2),
-            "detail": r.get::<_, Value>(3),
-        })).collect(),
+            &[&id],
+        )
+        .await
+    {
+        Ok(rs) => rs
+            .iter()
+            .map(|r| {
+                json!({
+                    "at":     r.get::<_, chrono::DateTime<chrono::Utc>>(0),
+                    "actor":  r.get::<_, Option<String>>(1),
+                    "action": r.get::<_, String>(2),
+                    "detail": r.get::<_, Value>(3),
+                })
+            })
+            .collect(),
         Err(_) => vec![],
     };
 
     // 5. Certificate (if any).
-    let certificate = match conn.query_opt(
-        "select kind, rule_iri, inputs, body, signature, produced_at,
+    let certificate = match conn
+        .query_opt(
+            "select kind, rule_iri, inputs, body, signature, produced_at,
                 verified_at, verifier, verified_ok
            from donto_stmt_certificate
           where statement_id = $1",
-        &[&id],
-    ).await {
+            &[&id],
+        )
+        .await
+    {
         Ok(Some(r)) => Some(json!({
             "kind":        r.get::<_, String>(0),
             "rule_iri":    r.get::<_, Option<String>>(1),
@@ -439,8 +492,9 @@ pub async fn statement_detail(
 
     // 6. Sibling statements: same subject + same predicate, all polarities,
     //    all contexts. Useful for "what else has been said about this?"
-    let siblings: Vec<Value> = match conn.query(
-        "select statement_id, subject, predicate, object_iri, object_lit,
+    let siblings: Vec<Value> = match conn
+        .query(
+            "select statement_id, subject, predicate, object_iri, object_lit,
                 context, donto_polarity(flags), donto_maturity(flags),
                 lower(valid_time), upper(valid_time),
                 lower(tx_time),    upper(tx_time)
@@ -450,10 +504,14 @@ pub async fn statement_detail(
             and statement_id <> $3
           order by lower(tx_time) desc
           limit 50",
-        &[&row_json["subject"].as_str().unwrap_or(""),
-          &row_json["predicate"].as_str().unwrap_or(""),
-          &id],
-    ).await {
+            &[
+                &row_json["subject"].as_str().unwrap_or(""),
+                &row_json["predicate"].as_str().unwrap_or(""),
+                &id,
+            ],
+        )
+        .await
+    {
         Ok(rs) => rs.iter().map(brief_row).collect(),
         Err(_) => vec![],
     };
@@ -464,7 +522,8 @@ pub async fn statement_detail(
         "audit":       audit,
         "certificate": certificate,
         "siblings":    siblings,
-    })).into_response()
+    }))
+    .into_response()
 }
 
 /// Brief row encoder (no lineage column — saves a join per row).

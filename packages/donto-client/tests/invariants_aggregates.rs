@@ -36,12 +36,8 @@ async fn endorsement_weight_over_a_scope() {
 
     let s_id = client
         .assert(
-            &StatementInput::new(
-                format!("{prefix}/claim"),
-                "ex:says",
-                Object::iri("ex:fact"),
-            )
-            .with_context(&author),
+            &StatementInput::new(format!("{prefix}/claim"), "ex:says", Object::iri("ex:fact"))
+                .with_context(&author),
         )
         .await
         .unwrap();
@@ -103,7 +99,10 @@ async fn endorsement_weight_over_a_scope() {
         .await
         .unwrap()
         .get(0);
-    assert_eq!(lineage_count, 3, "lineage must point at all 3 input reactions");
+    assert_eq!(
+        lineage_count, 3,
+        "lineage must point at all 3 input reactions"
+    );
 }
 
 #[tokio::test]
@@ -180,7 +179,10 @@ async fn recomputation_is_idempotent_and_tracks_changes() {
         .await
         .unwrap()
         .get(0);
-    assert_eq!(total_history, 2, "prior weight row must persist in tx-history");
+    assert_eq!(
+        total_history, 2,
+        "prior weight row must persist in tx-history"
+    );
 
     let current: i64 = pool
         .query_one(

@@ -63,7 +63,10 @@ async fn endorsement_is_a_sibling_not_a_mutation() {
         .await
         .unwrap()
         .get(0);
-    assert_eq!(hash_before, hash_after, "reacted-to statement must not change");
+    assert_eq!(
+        hash_before, hash_after,
+        "reacted-to statement must not change"
+    );
 
     // reactions_for reports it under the reader's context.
     let reactions = client.reactions_for(s_id).await.unwrap();
@@ -83,12 +86,8 @@ async fn rejection_carries_negated_polarity() {
 
     let s_id = client
         .assert(
-            &StatementInput::new(
-                format!("{prefix}/claim"),
-                "ex:p",
-                Object::iri("ex:o"),
-            )
-            .with_context(&ctx),
+            &StatementInput::new(format!("{prefix}/claim"), "ex:p", Object::iri("ex:o"))
+                .with_context(&ctx),
         )
         .await
         .unwrap();

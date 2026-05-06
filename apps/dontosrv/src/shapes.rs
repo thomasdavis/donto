@@ -143,10 +143,13 @@ async fn forward_to_lean(state: &AppState, req: &ValidateReq) -> axum::response:
     // and can use the (context) btree index. Inlining donto_resolve_scope into
     // the query forces a hash join over the whole statement table because the
     // function is opaque to the planner.
-    let resolved: Vec<String> = match conn.query(
-        "select context_iri from donto_resolve_scope($1::jsonb)",
-        &[&req.scope],
-    ).await {
+    let resolved: Vec<String> = match conn
+        .query(
+            "select context_iri from donto_resolve_scope($1::jsonb)",
+            &[&req.scope],
+        )
+        .await
+    {
         Ok(rs) => rs.into_iter().map(|r| r.get::<_, String>(0)).collect(),
         Err(e) => return Json(json!({"error": format!("scope resolution: {e}")})).into_response(),
     };
@@ -155,39 +158,50 @@ async fn forward_to_lean(state: &AppState, req: &ValidateReq) -> axum::response:
             "shape_iri": req.shape_iri,
             "source":    "lean",
             "report":    {"focus_count":0,"violations":[]},
-        })).into_response();
+        }))
+        .into_response();
     }
-    let rows = match conn.query(
-        "select s.statement_id, s.subject, s.predicate, s.object_iri, s.object_lit, s.context,
+    let rows = match conn
+        .query(
+            "select s.statement_id, s.subject, s.predicate, s.object_iri, s.object_lit, s.context,
                 donto_polarity(s.flags), donto_maturity(s.flags),
                 lower(s.valid_time), upper(s.valid_time)
            from donto_statement s
           where s.context = any($1::text[])
             and upper(s.tx_time) is null",
-        &[&resolved.as_slice()],
-    ).await {
-        Ok(r)  => r,
+            &[&resolved.as_slice()],
+        )
+        .await
+    {
+        Ok(r) => r,
         Err(e) => return Json(json!({"error": format!("scope resolution: {e}")})).into_response(),
     };
 
-    let stmts: Vec<serde_json::Value> = rows.iter().map(|r| {
-        let id: uuid::Uuid = r.get(0);
-        let subject:   String = r.get(1);
-        let predicate: String = r.get(2);
-        let object_iri: Option<String> = r.get(3);
-        let object_lit: Option<serde_json::Value> = r.get(4);
-        let context:   String = r.get(5);
-        let polarity:  String = r.get(6);
-        let mut o = serde_json::Map::new();
-        o.insert("id".into(), serde_json::Value::String(id.to_string()));
-        o.insert("subject".into(), serde_json::Value::String(subject));
-        o.insert("predicate".into(), serde_json::Value::String(predicate));
-        o.insert("context".into(), serde_json::Value::String(context));
-        o.insert("polarity".into(), serde_json::Value::String(polarity));
-        if let Some(i) = object_iri { o.insert("object_iri".into(), serde_json::Value::String(i)); }
-        if let Some(l) = object_lit { o.insert("object_lit".into(), l); }
-        serde_json::Value::Object(o)
-    }).collect();
+    let stmts: Vec<serde_json::Value> = rows
+        .iter()
+        .map(|r| {
+            let id: uuid::Uuid = r.get(0);
+            let subject: String = r.get(1);
+            let predicate: String = r.get(2);
+            let object_iri: Option<String> = r.get(3);
+            let object_lit: Option<serde_json::Value> = r.get(4);
+            let context: String = r.get(5);
+            let polarity: String = r.get(6);
+            let mut o = serde_json::Map::new();
+            o.insert("id".into(), serde_json::Value::String(id.to_string()));
+            o.insert("subject".into(), serde_json::Value::String(subject));
+            o.insert("predicate".into(), serde_json::Value::String(predicate));
+            o.insert("context".into(), serde_json::Value::String(context));
+            o.insert("polarity".into(), serde_json::Value::String(polarity));
+            if let Some(i) = object_iri {
+                o.insert("object_iri".into(), serde_json::Value::String(i));
+            }
+            if let Some(l) = object_lit {
+                o.insert("object_lit".into(), l);
+            }
+            serde_json::Value::Object(o)
+        })
+        .collect();
 
     let envelope = json!({
         "version": "0.1.0-json",
@@ -201,12 +215,14 @@ async fn forward_to_lean(state: &AppState, req: &ValidateReq) -> axum::response:
             "shape_iri": req.shape_iri,
             "source":    "lean",
             "report":    v,
-        })).into_response(),
+        }))
+        .into_response(),
         Err(e) => Json(json!({
             "error": "sidecar_unavailable",
             "shape_iri": req.shape_iri,
             "detail": e.to_string(),
-        })).into_response(),
+        }))
+        .into_response(),
     }
 }
 

@@ -35,7 +35,7 @@ pub struct AppState {
     /// Optional Lean engine. `None` means the binary wasn't configured;
     /// `lean:` shape IRIs return `sidecar_unavailable` in that case
     /// (PRD §15 sidecar contract).
-    pub lean:   Option<lean::LeanClient>,
+    pub lean: Option<lean::LeanClient>,
 }
 
 pub fn router(state: Arc<AppState>) -> Router {
@@ -108,9 +108,15 @@ async fn cors(
 }
 
 fn cors_headers(headers: &mut axum::http::HeaderMap) {
-    headers.insert("access-control-allow-origin",  "*".parse().unwrap());
-    headers.insert("access-control-allow-methods", "GET, POST, OPTIONS".parse().unwrap());
-    headers.insert("access-control-allow-headers", "content-type".parse().unwrap());
+    headers.insert("access-control-allow-origin", "*".parse().unwrap());
+    headers.insert(
+        "access-control-allow-methods",
+        "GET, POST, OPTIONS".parse().unwrap(),
+    );
+    headers.insert(
+        "access-control-allow-headers",
+        "content-type".parse().unwrap(),
+    );
 }
 
 async fn health() -> &'static str {

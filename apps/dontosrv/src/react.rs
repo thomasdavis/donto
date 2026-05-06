@@ -43,15 +43,11 @@ pub struct ReactResp {
     pub reaction_id: Uuid,
 }
 
-pub async fn react(
-    State(s): State<Arc<AppState>>,
-    Json(req): Json<ReactReq>,
-) -> impl IntoResponse {
+pub async fn react(State(s): State<Arc<AppState>>, Json(req): Json<ReactReq>) -> impl IntoResponse {
     let kind = match ReactionKind::parse(&req.kind) {
         Some(k) => k,
         None => {
-            return Json(json!({ "error": format!("bad kind: {:?}", req.kind) }))
-                .into_response();
+            return Json(json!({ "error": format!("bad kind: {:?}", req.kind) })).into_response();
         }
     };
     match s

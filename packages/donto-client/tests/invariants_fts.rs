@@ -70,7 +70,14 @@ async fn websearch_matches_stem_and_phrase() {
 
     // Negation via websearch `-excluded`.
     let hits = client
-        .match_text("intersectional -feminism", None, Some(&scope), None, None, 0)
+        .match_text(
+            "intersectional -feminism",
+            None,
+            Some(&scope),
+            None,
+            None,
+            0,
+        )
         .await
         .unwrap();
     let subjects: std::collections::BTreeSet<String> =
@@ -102,7 +109,10 @@ async fn lang_tag_drives_stemming_config() {
         .match_text("baguette", Some("fr"), Some(&scope), None, None, 0)
         .await
         .unwrap();
-    assert!(!hits.is_empty(), "French stemmer must match baguette→baguettes");
+    assert!(
+        !hits.is_empty(),
+        "French stemmer must match baguette→baguettes"
+    );
 }
 
 #[tokio::test]

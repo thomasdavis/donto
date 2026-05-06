@@ -98,80 +98,299 @@ pub const MIGRATIONS: &[(&str, &str)] = &[
         "0022_context_env",
         include_str!("../../sql/migrations/0022_context_env.sql"),
     ),
-    ("0023_documents", include_str!("../../sql/migrations/0023_documents.sql")),
-    ("0024_document_revisions", include_str!("../../sql/migrations/0024_document_revisions.sql")),
-    ("0025_spans", include_str!("../../sql/migrations/0025_spans.sql")),
-    ("0026_annotations", include_str!("../../sql/migrations/0026_annotations.sql")),
-    ("0027_annotation_edges", include_str!("../../sql/migrations/0027_annotation_edges.sql")),
-    ("0028_extraction_runs", include_str!("../../sql/migrations/0028_extraction_runs.sql")),
-    ("0029_evidence_links", include_str!("../../sql/migrations/0029_evidence_links.sql")),
-    ("0030_agents", include_str!("../../sql/migrations/0030_agents.sql")),
-    ("0031_arguments", include_str!("../../sql/migrations/0031_arguments.sql")),
-    ("0032_proof_obligations", include_str!("../../sql/migrations/0032_proof_obligations.sql")),
-    ("0033_vectors", include_str!("../../sql/migrations/0033_vectors.sql")),
-    ("0034_claim_card", include_str!("../../sql/migrations/0034_claim_card.sql")),
-    ("0035_document_sections", include_str!("../../sql/migrations/0035_document_sections.sql")),
-    ("0036_mentions", include_str!("../../sql/migrations/0036_mentions.sql")),
-    ("0037_extraction_chunks", include_str!("../../sql/migrations/0037_extraction_chunks.sql")),
-    ("0038_confidence", include_str!("../../sql/migrations/0038_confidence.sql")),
-    ("0039_units", include_str!("../../sql/migrations/0039_units.sql")),
-    ("0040_temporal_expressions", include_str!("../../sql/migrations/0040_temporal_expressions.sql")),
-    ("0041_content_regions", include_str!("../../sql/migrations/0041_content_regions.sql")),
-    ("0042_entity_aliases", include_str!("../../sql/migrations/0042_entity_aliases.sql")),
-    ("0043_candidate_contexts", include_str!("../../sql/migrations/0043_candidate_contexts.sql")),
-    ("0044_ontology_seeds", include_str!("../../sql/migrations/0044_ontology_seeds.sql")),
-    ("0045_auto_shape_validation", include_str!("../../sql/migrations/0045_auto_shape_validation.sql")),
-    ("0046_references", include_str!("../../sql/migrations/0046_references.sql")),
-    ("0047_claim_lifecycle", include_str!("../../sql/migrations/0047_claim_lifecycle.sql")),
-    ("0048_predicate_alignment", include_str!("../../sql/migrations/0048_predicate_alignment.sql")),
-    ("0049_predicate_descriptor", include_str!("../../sql/migrations/0049_predicate_descriptor.sql")),
-    ("0050_alignment_run", include_str!("../../sql/migrations/0050_alignment_run.sql")),
-    ("0051_predicate_closure", include_str!("../../sql/migrations/0051_predicate_closure.sql")),
-    ("0052_match_aligned", include_str!("../../sql/migrations/0052_match_aligned.sql")),
-    ("0053_canonical_shadow", include_str!("../../sql/migrations/0053_canonical_shadow.sql")),
-    ("0054_event_frames", include_str!("../../sql/migrations/0054_event_frames.sql")),
-    ("0055_match_alignment_integration", include_str!("../../sql/migrations/0055_match_alignment_integration.sql")),
-    ("0056_lexical_normalizer", include_str!("../../sql/migrations/0056_lexical_normalizer.sql")),
-    ("0057_entity_symbol", include_str!("../../sql/migrations/0057_entity_symbol.sql")),
-    ("0058_entity_mention", include_str!("../../sql/migrations/0058_entity_mention.sql")),
-    ("0059_entity_signature", include_str!("../../sql/migrations/0059_entity_signature.sql")),
-    ("0060_identity_edge", include_str!("../../sql/migrations/0060_identity_edge.sql")),
-    ("0061_identity_hypothesis", include_str!("../../sql/migrations/0061_identity_hypothesis.sql")),
-    ("0062_literal_canonical", include_str!("../../sql/migrations/0062_literal_canonical.sql")),
-    ("0063_time_expression", include_str!("../../sql/migrations/0063_time_expression.sql")),
-    ("0064_temporal_relation", include_str!("../../sql/migrations/0064_temporal_relation.sql")),
-    ("0065_property_constraint", include_str!("../../sql/migrations/0065_property_constraint.sql")),
-    ("0066_class_hierarchy", include_str!("../../sql/migrations/0066_class_hierarchy.sql")),
-    ("0067_rule_engine", include_str!("../../sql/migrations/0067_rule_engine.sql")),
+    (
+        "0023_documents",
+        include_str!("../../sql/migrations/0023_documents.sql"),
+    ),
+    (
+        "0024_document_revisions",
+        include_str!("../../sql/migrations/0024_document_revisions.sql"),
+    ),
+    (
+        "0025_spans",
+        include_str!("../../sql/migrations/0025_spans.sql"),
+    ),
+    (
+        "0026_annotations",
+        include_str!("../../sql/migrations/0026_annotations.sql"),
+    ),
+    (
+        "0027_annotation_edges",
+        include_str!("../../sql/migrations/0027_annotation_edges.sql"),
+    ),
+    (
+        "0028_extraction_runs",
+        include_str!("../../sql/migrations/0028_extraction_runs.sql"),
+    ),
+    (
+        "0029_evidence_links",
+        include_str!("../../sql/migrations/0029_evidence_links.sql"),
+    ),
+    (
+        "0030_agents",
+        include_str!("../../sql/migrations/0030_agents.sql"),
+    ),
+    (
+        "0031_arguments",
+        include_str!("../../sql/migrations/0031_arguments.sql"),
+    ),
+    (
+        "0032_proof_obligations",
+        include_str!("../../sql/migrations/0032_proof_obligations.sql"),
+    ),
+    (
+        "0033_vectors",
+        include_str!("../../sql/migrations/0033_vectors.sql"),
+    ),
+    (
+        "0034_claim_card",
+        include_str!("../../sql/migrations/0034_claim_card.sql"),
+    ),
+    (
+        "0035_document_sections",
+        include_str!("../../sql/migrations/0035_document_sections.sql"),
+    ),
+    (
+        "0036_mentions",
+        include_str!("../../sql/migrations/0036_mentions.sql"),
+    ),
+    (
+        "0037_extraction_chunks",
+        include_str!("../../sql/migrations/0037_extraction_chunks.sql"),
+    ),
+    (
+        "0038_confidence",
+        include_str!("../../sql/migrations/0038_confidence.sql"),
+    ),
+    (
+        "0039_units",
+        include_str!("../../sql/migrations/0039_units.sql"),
+    ),
+    (
+        "0040_temporal_expressions",
+        include_str!("../../sql/migrations/0040_temporal_expressions.sql"),
+    ),
+    (
+        "0041_content_regions",
+        include_str!("../../sql/migrations/0041_content_regions.sql"),
+    ),
+    (
+        "0042_entity_aliases",
+        include_str!("../../sql/migrations/0042_entity_aliases.sql"),
+    ),
+    (
+        "0043_candidate_contexts",
+        include_str!("../../sql/migrations/0043_candidate_contexts.sql"),
+    ),
+    (
+        "0044_ontology_seeds",
+        include_str!("../../sql/migrations/0044_ontology_seeds.sql"),
+    ),
+    (
+        "0045_auto_shape_validation",
+        include_str!("../../sql/migrations/0045_auto_shape_validation.sql"),
+    ),
+    (
+        "0046_references",
+        include_str!("../../sql/migrations/0046_references.sql"),
+    ),
+    (
+        "0047_claim_lifecycle",
+        include_str!("../../sql/migrations/0047_claim_lifecycle.sql"),
+    ),
+    (
+        "0048_predicate_alignment",
+        include_str!("../../sql/migrations/0048_predicate_alignment.sql"),
+    ),
+    (
+        "0049_predicate_descriptor",
+        include_str!("../../sql/migrations/0049_predicate_descriptor.sql"),
+    ),
+    (
+        "0050_alignment_run",
+        include_str!("../../sql/migrations/0050_alignment_run.sql"),
+    ),
+    (
+        "0051_predicate_closure",
+        include_str!("../../sql/migrations/0051_predicate_closure.sql"),
+    ),
+    (
+        "0052_match_aligned",
+        include_str!("../../sql/migrations/0052_match_aligned.sql"),
+    ),
+    (
+        "0053_canonical_shadow",
+        include_str!("../../sql/migrations/0053_canonical_shadow.sql"),
+    ),
+    (
+        "0054_event_frames",
+        include_str!("../../sql/migrations/0054_event_frames.sql"),
+    ),
+    (
+        "0055_match_alignment_integration",
+        include_str!("../../sql/migrations/0055_match_alignment_integration.sql"),
+    ),
+    (
+        "0056_lexical_normalizer",
+        include_str!("../../sql/migrations/0056_lexical_normalizer.sql"),
+    ),
+    (
+        "0057_entity_symbol",
+        include_str!("../../sql/migrations/0057_entity_symbol.sql"),
+    ),
+    (
+        "0058_entity_mention",
+        include_str!("../../sql/migrations/0058_entity_mention.sql"),
+    ),
+    (
+        "0059_entity_signature",
+        include_str!("../../sql/migrations/0059_entity_signature.sql"),
+    ),
+    (
+        "0060_identity_edge",
+        include_str!("../../sql/migrations/0060_identity_edge.sql"),
+    ),
+    (
+        "0061_identity_hypothesis",
+        include_str!("../../sql/migrations/0061_identity_hypothesis.sql"),
+    ),
+    (
+        "0062_literal_canonical",
+        include_str!("../../sql/migrations/0062_literal_canonical.sql"),
+    ),
+    (
+        "0063_time_expression",
+        include_str!("../../sql/migrations/0063_time_expression.sql"),
+    ),
+    (
+        "0064_temporal_relation",
+        include_str!("../../sql/migrations/0064_temporal_relation.sql"),
+    ),
+    (
+        "0065_property_constraint",
+        include_str!("../../sql/migrations/0065_property_constraint.sql"),
+    ),
+    (
+        "0066_class_hierarchy",
+        include_str!("../../sql/migrations/0066_class_hierarchy.sql"),
+    ),
+    (
+        "0067_rule_engine",
+        include_str!("../../sql/migrations/0067_rule_engine.sql"),
+    ),
     // ---- v1000 foundation (PRD-V1000-001) ----
-    ("0089_hypothesis_only_flag", include_str!("../../sql/migrations/0089_hypothesis_only_flag.sql")),
-    ("0090_event_log", include_str!("../../sql/migrations/0090_event_log.sql")),
-    ("0091_argument_relations_v2", include_str!("../../sql/migrations/0091_argument_relations_v2.sql")),
-    ("0092_alignment_relations_v2", include_str!("../../sql/migrations/0092_alignment_relations_v2.sql")),
-    ("0093_identity_hypothesis_kind", include_str!("../../sql/migrations/0093_identity_hypothesis_kind.sql")),
-    ("0094_dataset_release", include_str!("../../sql/migrations/0094_dataset_release.sql")),
-    ("0095_source_object_extension", include_str!("../../sql/migrations/0095_source_object_extension.sql")),
-    ("0096_source_version_extension", include_str!("../../sql/migrations/0096_source_version_extension.sql")),
-    ("0097_anchor_kind_registry", include_str!("../../sql/migrations/0097_anchor_kind_registry.sql")),
-    ("0098_polarity_v2", include_str!("../../sql/migrations/0098_polarity_v2.sql")),
-    ("0099_statement_modality", include_str!("../../sql/migrations/0099_statement_modality.sql")),
-    ("0100_extraction_level", include_str!("../../sql/migrations/0100_extraction_level.sql")),
-    ("0101_confidence_multivalue", include_str!("../../sql/migrations/0101_confidence_multivalue.sql")),
-    ("0102_maturity_e_naming", include_str!("../../sql/migrations/0102_maturity_e_naming.sql")),
-    ("0103_multi_context", include_str!("../../sql/migrations/0103_multi_context.sql")),
-    ("0104_claim_kind", include_str!("../../sql/migrations/0104_claim_kind.sql")),
-    ("0105_claim_frame", include_str!("../../sql/migrations/0105_claim_frame.sql")),
-    ("0106_frame_role", include_str!("../../sql/migrations/0106_frame_role.sql")),
-    ("0107_context_multi_parent", include_str!("../../sql/migrations/0107_context_multi_parent.sql")),
-    ("0108_entity_extension", include_str!("../../sql/migrations/0108_entity_extension.sql")),
-    ("0109_identity_hypothesis_v2", include_str!("../../sql/migrations/0109_identity_hypothesis_v2.sql")),
-    ("0110_predicate_minting", include_str!("../../sql/migrations/0110_predicate_minting.sql")),
-    ("0111_policy_capsule", include_str!("../../sql/migrations/0111_policy_capsule.sql")),
-    ("0112_attestation", include_str!("../../sql/migrations/0112_attestation.sql")),
-    ("0113_obligation_kinds_v2", include_str!("../../sql/migrations/0113_obligation_kinds_v2.sql")),
-    ("0114_review_decision", include_str!("../../sql/migrations/0114_review_decision.sql")),
-    ("0115_query_v2_metadata", include_str!("../../sql/migrations/0115_query_v2_metadata.sql")),
-    ("0116_frame_type_registry", include_str!("../../sql/migrations/0116_frame_type_registry.sql")),
+    (
+        "0089_hypothesis_only_flag",
+        include_str!("../../sql/migrations/0089_hypothesis_only_flag.sql"),
+    ),
+    (
+        "0090_event_log",
+        include_str!("../../sql/migrations/0090_event_log.sql"),
+    ),
+    (
+        "0091_argument_relations_v2",
+        include_str!("../../sql/migrations/0091_argument_relations_v2.sql"),
+    ),
+    (
+        "0092_alignment_relations_v2",
+        include_str!("../../sql/migrations/0092_alignment_relations_v2.sql"),
+    ),
+    (
+        "0093_identity_hypothesis_kind",
+        include_str!("../../sql/migrations/0093_identity_hypothesis_kind.sql"),
+    ),
+    (
+        "0094_dataset_release",
+        include_str!("../../sql/migrations/0094_dataset_release.sql"),
+    ),
+    (
+        "0095_source_object_extension",
+        include_str!("../../sql/migrations/0095_source_object_extension.sql"),
+    ),
+    (
+        "0096_source_version_extension",
+        include_str!("../../sql/migrations/0096_source_version_extension.sql"),
+    ),
+    (
+        "0097_anchor_kind_registry",
+        include_str!("../../sql/migrations/0097_anchor_kind_registry.sql"),
+    ),
+    (
+        "0098_polarity_v2",
+        include_str!("../../sql/migrations/0098_polarity_v2.sql"),
+    ),
+    (
+        "0099_statement_modality",
+        include_str!("../../sql/migrations/0099_statement_modality.sql"),
+    ),
+    (
+        "0100_extraction_level",
+        include_str!("../../sql/migrations/0100_extraction_level.sql"),
+    ),
+    (
+        "0101_confidence_multivalue",
+        include_str!("../../sql/migrations/0101_confidence_multivalue.sql"),
+    ),
+    (
+        "0102_maturity_e_naming",
+        include_str!("../../sql/migrations/0102_maturity_e_naming.sql"),
+    ),
+    (
+        "0103_multi_context",
+        include_str!("../../sql/migrations/0103_multi_context.sql"),
+    ),
+    (
+        "0104_claim_kind",
+        include_str!("../../sql/migrations/0104_claim_kind.sql"),
+    ),
+    (
+        "0105_claim_frame",
+        include_str!("../../sql/migrations/0105_claim_frame.sql"),
+    ),
+    (
+        "0106_frame_role",
+        include_str!("../../sql/migrations/0106_frame_role.sql"),
+    ),
+    (
+        "0107_context_multi_parent",
+        include_str!("../../sql/migrations/0107_context_multi_parent.sql"),
+    ),
+    (
+        "0108_entity_extension",
+        include_str!("../../sql/migrations/0108_entity_extension.sql"),
+    ),
+    (
+        "0109_identity_hypothesis_v2",
+        include_str!("../../sql/migrations/0109_identity_hypothesis_v2.sql"),
+    ),
+    (
+        "0110_predicate_minting",
+        include_str!("../../sql/migrations/0110_predicate_minting.sql"),
+    ),
+    (
+        "0111_policy_capsule",
+        include_str!("../../sql/migrations/0111_policy_capsule.sql"),
+    ),
+    (
+        "0112_attestation",
+        include_str!("../../sql/migrations/0112_attestation.sql"),
+    ),
+    (
+        "0113_obligation_kinds_v2",
+        include_str!("../../sql/migrations/0113_obligation_kinds_v2.sql"),
+    ),
+    (
+        "0114_review_decision",
+        include_str!("../../sql/migrations/0114_review_decision.sql"),
+    ),
+    (
+        "0115_query_v2_metadata",
+        include_str!("../../sql/migrations/0115_query_v2_metadata.sql"),
+    ),
+    (
+        "0116_frame_type_registry",
+        include_str!("../../sql/migrations/0116_frame_type_registry.sql"),
+    ),
 ];
 
 fn sha256_of(s: &str) -> Vec<u8> {
@@ -271,7 +490,10 @@ pub async fn apply_migrations(pool: &Pool) -> Result<()> {
 
     // Explicit release; would also happen on connection return.
     client
-        .execute("select pg_advisory_unlock(8836428012345678901::bigint)", &[])
+        .execute(
+            "select pg_advisory_unlock(8836428012345678901::bigint)",
+            &[],
+        )
         .await?;
     Ok(())
 }

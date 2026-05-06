@@ -1,4 +1,8 @@
-use axum::{extract::{Path, State}, response::IntoResponse, Json};
+use axum::{
+    extract::{Path, State},
+    response::IntoResponse,
+    Json,
+};
 use serde::Deserialize;
 use serde_json::json;
 use std::sync::Arc;
@@ -18,16 +22,25 @@ pub struct LinkEvidenceSpanReq {
     pub context: Option<String>,
 }
 
-fn default_extracted() -> String { "extracted_from".to_string() }
+fn default_extracted() -> String {
+    "extracted_from".to_string()
+}
 
 pub async fn link_span(
     State(s): State<Arc<AppState>>,
     Json(req): Json<LinkEvidenceSpanReq>,
 ) -> impl IntoResponse {
-    match s.client.link_evidence_span(
-        req.statement_id, req.span_id, &req.link_type,
-        req.confidence, req.context.as_deref(),
-    ).await {
+    match s
+        .client
+        .link_evidence_span(
+            req.statement_id,
+            req.span_id,
+            &req.link_type,
+            req.confidence,
+            req.context.as_deref(),
+        )
+        .await
+    {
         Ok(id) => Json(json!({ "link_id": id })).into_response(),
         Err(e) => Json(json!({ "error": e.to_string() })).into_response(),
     }
@@ -41,22 +54,31 @@ pub async fn evidence_for(
         Ok(c) => c,
         Err(e) => return Json(json!({ "error": e.to_string() })).into_response(),
     };
-    match c.query(
-        "select link_id, link_type, target_document_id, target_revision_id, \
+    match c
+        .query(
+            "select link_id, link_type, target_document_id, target_revision_id, \
                 target_span_id, target_annotation_id, target_run_id, \
                 target_statement_id, confidence \
-         from donto_evidence_for($1)", &[&stmt_id]
-    ).await {
+         from donto_evidence_for($1)",
+            &[&stmt_id],
+        )
+        .await
+    {
         Ok(rows) => {
-            let links: Vec<serde_json::Value> = rows.iter().map(|r| json!({
-                "link_id": r.get::<_, Uuid>("link_id").to_string(),
-                "link_type": r.get::<_, String>("link_type"),
-                "target_document_id": r.get::<_, Option<Uuid>>("target_document_id"),
-                "target_span_id": r.get::<_, Option<Uuid>>("target_span_id"),
-                "target_run_id": r.get::<_, Option<Uuid>>("target_run_id"),
-                "target_statement_id": r.get::<_, Option<Uuid>>("target_statement_id"),
-                "confidence": r.get::<_, Option<f64>>("confidence"),
-            })).collect();
+            let links: Vec<serde_json::Value> = rows
+                .iter()
+                .map(|r| {
+                    json!({
+                        "link_id": r.get::<_, Uuid>("link_id").to_string(),
+                        "link_type": r.get::<_, String>("link_type"),
+                        "target_document_id": r.get::<_, Option<Uuid>>("target_document_id"),
+                        "target_span_id": r.get::<_, Option<Uuid>>("target_span_id"),
+                        "target_run_id": r.get::<_, Option<Uuid>>("target_run_id"),
+                        "target_statement_id": r.get::<_, Option<Uuid>>("target_statement_id"),
+                        "confidence": r.get::<_, Option<f64>>("confidence"),
+                    })
+                })
+                .collect();
             Json(json!({ "evidence": links })).into_response()
         }
         Err(e) => Json(json!({ "error": e.to_string() })).into_response(),

@@ -581,7 +581,9 @@ async fn main() -> Result<()> {
                 let rel = AlignmentRelation::parse(&relation)
                     .ok_or_else(|| anyhow::anyhow!("unknown relation type: {relation}"))?;
                 let id = client
-                    .register_alignment(&source, &target, rel, confidence, None, None, None, None, None)
+                    .register_alignment(
+                        &source, &target, rel, confidence, None, None, None, None, None,
+                    )
                     .await?;
                 println!(
                     "{}",
@@ -599,7 +601,9 @@ async fn main() -> Result<()> {
                 threshold,
                 limit,
             } => {
-                let suggestions = client.suggest_alignments(&predicate, threshold, limit).await?;
+                let suggestions = client
+                    .suggest_alignments(&predicate, threshold, limit)
+                    .await?;
                 if suggestions.is_empty() {
                     eprintln!("no suggestions above {threshold} similarity for {predicate}");
                 } else {
@@ -676,7 +680,9 @@ async fn main() -> Result<()> {
             }
             AlignCmd::Auto { threshold } => {
                 eprintln!("running lexical auto-alignment (threshold {threshold})...");
-                let run_id = client.lexical_auto_align(None, threshold, Some("donto-cli")).await?;
+                let run_id = client
+                    .lexical_auto_align(None, threshold, Some("donto-cli"))
+                    .await?;
                 eprintln!("rebuilding closure...");
                 let count = client.rebuild_predicate_closure().await?;
                 println!(

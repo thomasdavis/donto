@@ -82,18 +82,14 @@ async fn verdict_replacement_closes_prior() {
         .await
         .unwrap();
 
-    assert!(
-        !client
-            .has_shape_verdict(id, ShapeVerdict::Warn, Some("builtin:datatype"))
-            .await
-            .unwrap()
-    );
-    assert!(
-        client
-            .has_shape_verdict(id, ShapeVerdict::Violate, Some("builtin:datatype"))
-            .await
-            .unwrap()
-    );
+    assert!(!client
+        .has_shape_verdict(id, ShapeVerdict::Warn, Some("builtin:datatype"))
+        .await
+        .unwrap());
+    assert!(client
+        .has_shape_verdict(id, ShapeVerdict::Violate, Some("builtin:datatype"))
+        .await
+        .unwrap());
 
     // History is still there: two rows exist, one closed.
     let pool = client.pool().get().await.unwrap();
@@ -177,23 +173,17 @@ async fn user_flag_and_sidecar_report_coexist() {
         .await
         .unwrap();
 
-    assert!(
-        client
-            .has_shape_verdict(id, ShapeVerdict::Violate, Some("user:flag/racist"))
-            .await
-            .unwrap()
-    );
-    assert!(
-        client
-            .has_shape_verdict(id, ShapeVerdict::Pass, Some("builtin:functional"))
-            .await
-            .unwrap()
-    );
+    assert!(client
+        .has_shape_verdict(id, ShapeVerdict::Violate, Some("user:flag/racist"))
+        .await
+        .unwrap());
+    assert!(client
+        .has_shape_verdict(id, ShapeVerdict::Pass, Some("builtin:functional"))
+        .await
+        .unwrap());
     // No violate under the sidecar context.
-    assert!(
-        !client
-            .has_shape_verdict(id, ShapeVerdict::Violate, Some("builtin:functional"))
-            .await
-            .unwrap()
-    );
+    assert!(!client
+        .has_shape_verdict(id, ShapeVerdict::Violate, Some("builtin:functional"))
+        .await
+        .unwrap());
 }

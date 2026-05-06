@@ -109,7 +109,7 @@ async fn retrofit_requires_reason() {
                 &Option::<serde_json::Value>::None,
                 &NaiveDate::from_ymd_opt(2020, 1, 1),
                 &Option::<NaiveDate>::None,
-                &"",              // empty reason
+                &"", // empty reason
                 &ctx,
                 &"asserted",
                 &0_i32,

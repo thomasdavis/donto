@@ -77,13 +77,7 @@ async fn self_alignment_is_rejected() {
     cleanup_prefix(&client, &prefix).await;
     let ctx = ctx(&client, "sm-self").await;
 
-    let id = assert_label(
-        &client,
-        &format!("{prefix}/x"),
-        Literal::string("hi"),
-        &ctx,
-    )
-    .await;
+    let id = assert_label(&client, &format!("{prefix}/x"), Literal::string("hi"), &ctx).await;
     let err = client
         .align_meaning(id, id, &ctx, None)
         .await
@@ -99,20 +93,8 @@ async fn alignment_is_bidirectional() {
     cleanup_prefix(&client, &prefix).await;
     let ctx = ctx(&client, "sm-bi").await;
 
-    let a = assert_label(
-        &client,
-        &format!("{prefix}/a"),
-        Literal::string("a"),
-        &ctx,
-    )
-    .await;
-    let b = assert_label(
-        &client,
-        &format!("{prefix}/b"),
-        Literal::string("b"),
-        &ctx,
-    )
-    .await;
+    let a = assert_label(&client, &format!("{prefix}/a"), Literal::string("a"), &ctx).await;
+    let b = assert_label(&client, &format!("{prefix}/b"), Literal::string("b"), &ctx).await;
     client.align_meaning(a, b, &ctx, None).await.unwrap();
 
     // Both directions materialized.

@@ -833,12 +833,8 @@ async fn ex_snapshots() {
 
     let s = client
         .assert(
-            &StatementInput::new(
-                format!("{prefix}/ada"),
-                "ex:p",
-                Object::iri("ex:o"),
-            )
-            .with_context(&ctx),
+            &StatementInput::new(format!("{prefix}/ada"), "ex:p", Object::iri("ex:o"))
+                .with_context(&ctx),
         )
         .await
         .unwrap();
@@ -928,8 +924,7 @@ async fn ex_hypothesis() {
         .unwrap();
 
     // Scope under hypothesis sees both (base + hypothesis)
-    let hypo_scope =
-        donto_client::ContextScope::just(&hypo_ctx).with_ancestors();
+    let hypo_scope = donto_client::ContextScope::just(&hypo_ctx).with_ancestors();
     let hypo_results = client
         .match_pattern(
             Some(&format!("{prefix}/ada")),
@@ -950,8 +945,7 @@ async fn ex_hypothesis() {
     );
 
     // Base scope doesn't see the hypothesis
-    let base_scope =
-        donto_client::ContextScope::just(&base_ctx).without_descendants();
+    let base_scope = donto_client::ContextScope::just(&base_ctx).without_descendants();
     let base_results = client
         .match_pattern(
             Some(&format!("{prefix}/ada")),
@@ -982,13 +976,13 @@ async fn ex_valid_time_buckets() {
                 &StatementInput::new(
                     format!("{prefix}/ada"),
                     "ex:event",
-                    Object::Literal(Literal::string(format!("event-{year}-{}", uuid::Uuid::new_v4().simple()))),
+                    Object::Literal(Literal::string(format!(
+                        "event-{year}-{}",
+                        uuid::Uuid::new_v4().simple()
+                    ))),
                 )
                 .with_context(&ctx)
-                .with_valid(
-                    Some(NaiveDate::from_ymd_opt(year, 6, 1).unwrap()),
-                    None,
-                ),
+                .with_valid(Some(NaiveDate::from_ymd_opt(year, 6, 1).unwrap()), None),
             )
             .await
             .unwrap();
@@ -1260,10 +1254,7 @@ async fn ex_spans_and_annotations() {
     .unwrap();
 
     let edges: i64 = c
-        .query_one(
-            "select count(*) from donto_edges_from($1)",
-            &[&ann_ada],
-        )
+        .query_one("select count(*) from donto_edges_from($1)", &[&ann_ada])
         .await
         .unwrap()
         .get(0);
@@ -1346,10 +1337,7 @@ async fn ex_extraction_run_with_evidence() {
     let pool = client.pool();
     let c = pool.get().await.unwrap();
     let ev_count: i64 = c
-        .query_one(
-            "select count(*) from donto_evidence_for($1)",
-            &[&stmt_id],
-        )
+        .query_one("select count(*) from donto_evidence_for($1)", &[&stmt_id])
         .await
         .unwrap()
         .get(0);
@@ -1373,12 +1361,7 @@ async fn ex_agents_and_workspaces() {
         .await
         .unwrap();
     let alice = client
-        .ensure_agent(
-            &format!("{prefix}/alice"),
-            "human",
-            Some("Alice"),
-            None,
-        )
+        .ensure_agent(&format!("{prefix}/alice"), "human", Some("Alice"), None)
         .await
         .unwrap();
 
@@ -1395,10 +1378,7 @@ async fn ex_agents_and_workspaces() {
     let pool = client.pool();
     let c = pool.get().await.unwrap();
     let agents: i64 = c
-        .query_one(
-            "select count(*) from donto_context_agents($1)",
-            &[&ctx],
-        )
+        .query_one("select count(*) from donto_context_agents($1)", &[&ctx])
         .await
         .unwrap()
         .get(0);
@@ -1465,10 +1445,7 @@ async fn ex_arguments_and_contradiction_frontier() {
     let pool = client.pool();
     let c = pool.get().await.unwrap();
     let rows = c
-        .query(
-            "select * from donto_contradiction_frontier($1)",
-            &[&ctx],
-        )
+        .query("select * from donto_contradiction_frontier($1)", &[&ctx])
         .await
         .unwrap();
 
@@ -1504,14 +1481,7 @@ async fn ex_proof_obligations() {
 
     // Extraction couldn't resolve the entity
     let obl = client
-        .emit_obligation(
-            stmt,
-            "needs-entity-disambiguation",
-            &ctx,
-            5,
-            None,
-            None,
-        )
+        .emit_obligation(stmt, "needs-entity-disambiguation", &ctx, 5, None, None)
         .await
         .unwrap();
 
@@ -1522,12 +1492,9 @@ async fn ex_proof_obligations() {
         .unwrap();
     let pool = client.pool();
     let c = pool.get().await.unwrap();
-    c.execute(
-        "select donto_assign_obligation($1, $2)",
-        &[&obl, &agent],
-    )
-    .await
-    .unwrap();
+    c.execute("select donto_assign_obligation($1, $2)", &[&obl, &agent])
+        .await
+        .unwrap();
 
     // Check it's in_progress
     let status: String = c
@@ -1647,12 +1614,8 @@ async fn ex_audit_log() {
 
     let s = client
         .assert(
-            &StatementInput::new(
-                format!("{prefix}/ada"),
-                "ex:p",
-                Object::iri("ex:o"),
-            )
-            .with_context(&ctx),
+            &StatementInput::new(format!("{prefix}/ada"), "ex:p", Object::iri("ex:o"))
+                .with_context(&ctx),
         )
         .await
         .unwrap();

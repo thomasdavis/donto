@@ -84,9 +84,13 @@ async fn shadow_resolves_canonical_predicate() {
         canon_pred == alias || canon_pred == canon,
         "canonical_predicate must be in the closure cluster, got {canon_pred}"
     );
-    assert_eq!(row.get::<_, String>("canonical_subject"), format!("{prefix}/alice"));
     assert_eq!(
-        row.get::<_, Option<String>>("canonical_object_iri").as_deref(),
+        row.get::<_, String>("canonical_subject"),
+        format!("{prefix}/alice")
+    );
+    assert_eq!(
+        row.get::<_, Option<String>>("canonical_object_iri")
+            .as_deref(),
         Some(format!("{prefix}/london").as_str())
     );
 }
@@ -184,8 +188,7 @@ async fn shadow_resolves_entity_aliases() {
 
     let stmt_id = client
         .assert(
-            &StatementInput::new(&alias, &p, Object::iri(format!("{prefix}/o")))
-                .with_context(&ctx),
+            &StatementInput::new(&alias, &p, Object::iri(format!("{prefix}/o"))).with_context(&ctx),
         )
         .await
         .unwrap();
