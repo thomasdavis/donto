@@ -725,7 +725,7 @@ async function showDetail(id, clickedRow) {
       const facts = Array.isArray(factsData.facts) ? factsData.facts : [];
       if (sourceData.source) {
         html += '<div style="margin-bottom:8px"><strong>Source Text</strong> <span class="elapsed">(' + (sourceData.source.length/1000).toFixed(1) + 'k chars, model: ' + (sourceData.model||'?') + ')</span></div>';
-        html += '<pre style="margin-bottom:12px;max-height:200px;overflow:auto;white-space:pre-wrap;color:#8b949e">' + sourceData.source.substring(0, 5000).replace(/</g,'&lt;') + (sourceData.source.length > 5000 ? '\n... (truncated)' : '') + '</pre>';
+        html += '<pre style="margin-bottom:12px;max-height:200px;overflow:auto;white-space:pre-wrap;color:#8b949e">' + sourceData.source.substring(0, 5000).replace(/</g,'&lt;') + (sourceData.source.length > 5000 ? '\\n... (truncated)' : '') + '</pre>';
       }
       html += '<div style="margin-bottom:8px"><strong>Extracted Facts</strong> <span class="elapsed">(' + facts.length + ' statements)</span></div>';
       html += '<table style="font-size:12px;width:100%"><thead><tr><th>Subject</th><th>Predicate</th><th>Object</th><th>Mat</th><th>Pol</th></tr></thead><tbody>';
