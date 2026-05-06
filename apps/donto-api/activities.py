@@ -30,7 +30,7 @@ async def ingest_facts_activity(facts: list[dict], context: str, source_text: st
     """Ingest extracted facts into dontosrv and store source document."""
     t0 = time.time()
     if source_text:
-        await register_source_document(context, source_text, model)
+        await register_source_document(context, source_text, model, facts)
     ingested = await ingest_facts(facts, context)
     ingest_ms = int((time.time() - t0) * 1000)
     activity.logger.info(f"ingested {ingested} statements in {ingest_ms}ms")

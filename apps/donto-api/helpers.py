@@ -220,8 +220,8 @@ async def call_openrouter(text: str, model: str) -> tuple[list[dict], dict]:
             raise Exception(f"Failed to parse extraction output. First 300 chars: {cleaned[:300]}")
 
 
-async def register_source_document(context: str, text: str, model: str, metadata: dict = None) -> None:
-    """Register the source text as a document in dontosrv so facts are traceable."""
+async def register_source_document(context: str, text: str, model: str, facts: list[dict] = None) -> None:
+    """Register the source text and extraction output as documents in dontosrv."""
     doc_iri = f"doc:{context.replace('ctx:', '')}"
     try:
         result = await srv_post("/documents/register", {
@@ -236,6 +236,12 @@ async def register_source_document(context: str, text: str, model: str, metadata
                 "body": text,
                 "parser_version": model,
             })
+            if facts:
+                await srv_post("/documents/revision", {
+                    "document_id": doc_id,
+                    "body": json.dumps(facts),
+                    "parser_version": f"{model}/extraction",
+                })
     except Exception as e:
         logger.warning(f"Failed to register source document for {context}: {e}")
 

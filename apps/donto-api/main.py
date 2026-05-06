@@ -451,14 +451,35 @@ async def get_job_facts(job_id: str, limit: int = Query(200, description="Max fa
             "FROM donto_statement WHERE context = $1 AND upper(tx_time) IS NULL LIMIT $2",
             context, limit
         )
+        extraction_row = await conn.fetchrow(
+            "SELECT dr.body FROM donto_document d "
+            "JOIN donto_document_revision dr ON d.document_id = dr.document_id "
+            "WHERE d.iri = $1 AND dr.parser_version LIKE '%/extraction' "
+            "ORDER BY dr.created_at DESC LIMIT 1",
+            f"doc:{context.replace('ctx:', '')}"
+        )
         await conn.close()
+
+        tier_map: dict[tuple[str, str], int] = {}
+        if extraction_row and extraction_row["body"]:
+            try:
+                raw_facts = json.loads(extraction_row["body"])
+                for f in raw_facts:
+                    key = (f.get("subject", ""), f.get("predicate", ""))
+                    t = f.get("tier", 0)
+                    if isinstance(t, str):
+                        try: t = int(t)
+                        except: t = 0
+                    tier_map[key] = t
+            except Exception:
+                pass
+
         facts = []
         for r in rows:
             lit = r["object_lit"]
             if isinstance(lit, str):
                 try:
-                    import json as _json
-                    lit = _json.loads(lit)
+                    lit = json.loads(lit)
                 except Exception:
                     lit = None
             if r["object_iri"] is not None:
@@ -469,12 +490,14 @@ async def get_job_facts(job_id: str, limit: int = Query(200, description="Max fa
                 obj_val = None
             polarity_map = {0: "asserted", 1: "negated", 2: "absent", 3: "unknown"}
             flags = r["flags"] or 0
+            tier = tier_map.get((r["subject"], r["predicate"]), 0)
             facts.append({
                 "subject": r["subject"],
                 "predicate": r["predicate"],
                 "object": obj_val,
                 "maturity": (flags >> 2) & 0x07,
                 "polarity": polarity_map.get(flags & 0x03, "asserted"),
+                "tier": tier,
             })
         return {"context": context, "facts": facts, "count": len(facts)}
     except Exception as e:
