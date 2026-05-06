@@ -447,7 +447,7 @@ async def submit_extract_job(req: JobExtractRequest):
             id=wf_id,
             task_queue=TASK_QUEUE,
             id_conflict_policy=WorkflowIDConflictPolicy.FAIL,
-            id_reuse_policy=WorkflowIDReusePolicy.REJECT_DUPLICATE,
+            id_reuse_policy=WorkflowIDReusePolicy.ALLOW_DUPLICATE_FAILED_ONLY,
         )
     except (RPCError, WorkflowAlreadyStartedError) as e:
         return {"job_id": wf_id, "status": "duplicate", "message": f"Extraction for {req.context} already exists"}
@@ -475,7 +475,7 @@ async def submit_batch_jobs(req: JobBatchRequest):
                 id=wf_id,
                 task_queue=TASK_QUEUE,
                 id_conflict_policy=WorkflowIDConflictPolicy.FAIL,
-            id_reuse_policy=WorkflowIDReusePolicy.REJECT_DUPLICATE,
+            id_reuse_policy=WorkflowIDReusePolicy.ALLOW_DUPLICATE_FAILED_ONLY,
             )
             job_ids.append(wf_id.removeprefix("extraction-"))
         except (RPCError, WorkflowAlreadyStartedError):
@@ -576,6 +576,50 @@ async def get_job(job_id: str):
         return detail
     except RPCError:
         raise HTTPException(404, f"Job {job_id} not found")
+
+
+@app.post("/jobs/retry-failed", tags=["Jobs"],
+    summary="Retry all failed jobs")
+async def retry_failed_jobs():
+    """Find all failed extraction workflows and restart them.
+    Uses the original workflow inputs (text, context, model) from the history."""
+    client = _require_temporal()
+    retried = 0
+    errors = []
+    async for wf in client.list_workflows(
+        'WorkflowType = "ExtractionWorkflow" AND ExecutionStatus = "Failed"'
+    ):
+        try:
+            handle = client.get_workflow_handle(wf.id)
+            history = handle.fetch_history()
+            text = context = model = None
+            async for event in history:
+                if hasattr(event, "workflow_execution_started_event_attributes"):
+                    attrs = event.workflow_execution_started_event_attributes
+                    if attrs and attrs.input and attrs.input.payloads:
+                        import temporalio.converter
+                        dc = temporalio.converter.default().payload_converter
+                        payloads = list(attrs.input.payloads)
+                        if len(payloads) >= 3:
+                            text = dc.from_payload(payloads[0], str)
+                            context = dc.from_payload(payloads[1], str)
+                            model = dc.from_payload(payloads[2], str)
+                    break
+            if not text or not context:
+                errors.append({"id": wf.id, "error": "could not extract inputs from history"})
+                continue
+            await client.start_workflow(
+                ExtractionWorkflow.run,
+                args=[text, context, model or "grok"],
+                id=wf.id,
+                task_queue=TASK_QUEUE,
+                id_conflict_policy=WorkflowIDConflictPolicy.FAIL,
+                id_reuse_policy=WorkflowIDReusePolicy.ALLOW_DUPLICATE_FAILED_ONLY,
+            )
+            retried += 1
+        except Exception as e:
+            errors.append({"id": wf.id, "error": str(e)})
+    return {"retried": retried, "errors": errors}
 
 
 @app.get("/jobs/{job_id}/facts", tags=["Jobs"],
