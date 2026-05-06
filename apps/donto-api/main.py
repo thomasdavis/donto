@@ -172,6 +172,137 @@ async def srv_post(path: str, body=None):
         raise HTTPException(502, str(e))
 
 
+# ── Firehose (real-time SSE stream) ──────────────────────────────────────
+
+
+@app.get("/firehose", tags=["Firehose"],
+    summary="Real-time SSE stream of all database activity")
+async def firehose():
+    """Server-Sent Events stream of every statement insert and audit event.
+    Uses Postgres LISTEN/NOTIFY on channels `donto_firehose` and `donto_audit`.
+
+    Each event is a JSON object with: audit_id, at, actor, action, statement_id, detail.
+    """
+    import asyncpg
+    from starlette.responses import StreamingResponse
+
+    dsn = os.environ.get("DONTO_DSN", "postgres://donto:donto@127.0.0.1:5432/donto")
+
+    async def event_stream():
+        conn = await asyncpg.connect(dsn)
+        try:
+            await conn.add_listener("donto_firehose", lambda *args: None)
+            await conn.add_listener("donto_audit", lambda *args: None)
+
+            queue: asyncio.Queue = asyncio.Queue(maxsize=1000)
+
+            def on_notify(conn, pid, channel, payload):
+                try:
+                    queue.put_nowait(payload)
+                except asyncio.QueueFull:
+                    pass
+
+            await conn.remove_listener("donto_firehose", lambda *args: None)
+            await conn.remove_listener("donto_audit", lambda *args: None)
+            await conn.add_listener("donto_firehose", on_notify)
+            await conn.add_listener("donto_audit", on_notify)
+
+            yield "event: connected\ndata: {}\n\n"
+
+            while True:
+                try:
+                    payload = await asyncio.wait_for(queue.get(), timeout=15)
+                    yield f"event: event\ndata: {payload}\n\n"
+                except asyncio.TimeoutError:
+                    yield ": keepalive\n\n"
+        finally:
+            await conn.close()
+
+    return StreamingResponse(event_stream(), media_type="text/event-stream", headers={
+        "Cache-Control": "no-cache, no-transform",
+        "Connection": "keep-alive",
+        "X-Accel-Buffering": "no",
+    })
+
+
+@app.get("/firehose/recent", tags=["Firehose"],
+    summary="Recent audit events (last N)")
+async def firehose_recent(limit: int = Query(100, description="Number of recent events")):
+    """Get the most recent audit log entries without streaming."""
+    import asyncpg
+    dsn = os.environ.get("DONTO_DSN", "postgres://donto:donto@127.0.0.1:5432/donto")
+    conn = await asyncpg.connect(dsn)
+    try:
+        rows = await conn.fetch("""
+            SELECT audit_id, at, actor, action, statement_id::text, detail
+            FROM donto_audit
+            ORDER BY audit_id DESC
+            LIMIT $1
+        """, limit)
+        events = []
+        for r in rows:
+            detail = r["detail"]
+            if isinstance(detail, str):
+                try:
+                    detail = json.loads(detail)
+                except Exception:
+                    pass
+            events.append({
+                "audit_id": r["audit_id"],
+                "at": r["at"].isoformat() if r["at"] else None,
+                "actor": r["actor"],
+                "action": r["action"],
+                "statement_id": r["statement_id"],
+                "detail": detail,
+            })
+        return {"events": events, "count": len(events)}
+    finally:
+        await conn.close()
+
+
+@app.get("/firehose/stats", tags=["Firehose"],
+    summary="Activity statistics — events per minute, active queries")
+async def firehose_stats():
+    """Real-time activity stats: events per minute over the last hour, and active Postgres queries."""
+    import asyncpg
+    dsn = os.environ.get("DONTO_DSN", "postgres://donto:donto@127.0.0.1:5432/donto")
+    conn = await asyncpg.connect(dsn)
+    try:
+        activity_rows = await conn.fetch("""
+            SELECT date_trunc('minute', at) as minute, action, count(*) as cnt
+            FROM donto_audit
+            WHERE at > now() - interval '1 hour'
+            GROUP BY minute, action
+            ORDER BY minute
+        """)
+        active_queries = await conn.fetch("""
+            SELECT pid, state, query, query_start, application_name
+            FROM pg_stat_activity
+            WHERE datname = current_database()
+              AND state != 'idle'
+              AND pid != pg_backend_pid()
+            ORDER BY query_start
+        """)
+        return {
+            "activity": [
+                {"minute": r["minute"].isoformat(), "action": r["action"], "count": r["cnt"]}
+                for r in activity_rows
+            ],
+            "active_queries": [
+                {
+                    "pid": r["pid"],
+                    "state": r["state"],
+                    "query": r["query"][:200] if r["query"] else None,
+                    "duration_ms": int((time.time() - r["query_start"].timestamp()) * 1000) if r["query_start"] else None,
+                    "app": r["application_name"],
+                }
+                for r in active_queries
+            ],
+        }
+    finally:
+        await conn.close()
+
+
 # ── System ──────────────────────────────────────────────────────────────
 
 
