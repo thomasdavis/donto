@@ -4,7 +4,7 @@ import time
 import logging
 from temporalio import activity
 
-from helpers import call_openrouter, ingest_facts, compute_tiers
+from helpers import call_openrouter, ingest_facts, register_source_document, compute_tiers
 
 logger = logging.getLogger("donto-api")
 
@@ -26,9 +26,11 @@ async def extract_facts_activity(text: str, model: str) -> dict:
 
 
 @activity.defn
-async def ingest_facts_activity(facts: list[dict], context: str) -> dict:
-    """Ingest extracted facts into dontosrv. Returns count of ingested statements."""
+async def ingest_facts_activity(facts: list[dict], context: str, source_text: str = "", model: str = "") -> dict:
+    """Ingest extracted facts into dontosrv and store source document."""
     t0 = time.time()
+    if source_text:
+        await register_source_document(context, source_text, model)
     ingested = await ingest_facts(facts, context)
     ingest_ms = int((time.time() - t0) * 1000)
     activity.logger.info(f"ingested {ingested} statements in {ingest_ms}ms")

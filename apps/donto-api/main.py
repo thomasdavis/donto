@@ -435,8 +435,64 @@ async def get_job_facts(job_id: str, limit: int = Query(200, description="Max fa
     context = detail.get("context")
     if not context:
         raise HTTPException(404, "No context found for this job")
-    facts = await srv_get("/history/" + context, {"limit": str(limit)})
-    return {"context": context, "facts": facts}
+    import asyncpg
+    dsn = os.environ.get("DONTO_DSN", "postgres://donto:donto@127.0.0.1:5432/donto")
+    try:
+        conn = await asyncpg.connect(dsn)
+        rows = await conn.fetch(
+            "SELECT subject, predicate, object_iri, object_lit, maturity, polarity "
+            "FROM donto_statement WHERE context = $1 LIMIT $2",
+            context, limit
+        )
+        await conn.close()
+        facts = []
+        for r in rows:
+            facts.append({
+                "subject": r["subject"],
+                "predicate": r["predicate"],
+                "object": r["object_iri"] or (r["object_lit"]["v"] if r["object_lit"] else None),
+                "maturity": r["maturity"],
+                "polarity": r["polarity"],
+            })
+        return {"context": context, "facts": facts, "count": len(facts)}
+    except Exception as e:
+        raise HTTPException(500, f"Database query failed: {e}")
+
+
+@app.get("/jobs/{job_id}/source", tags=["Jobs"],
+    summary="Get the source text for a job")
+async def get_job_source(job_id: str):
+    """Fetch the source document text stored when the extraction ran."""
+    import asyncpg
+    client = _require_temporal()
+    handle = client.get_workflow_handle(f"extraction-{job_id}")
+    try:
+        detail = await handle.query(ExtractionWorkflow.status)
+    except Exception:
+        try:
+            result = await handle.result()
+            detail = result
+        except Exception:
+            raise HTTPException(404, f"Job {job_id} not found")
+    context = detail.get("context")
+    if not context:
+        raise HTTPException(404, "No context found")
+    doc_iri = f"doc:{context.replace('ctx:', '')}"
+    dsn = os.environ.get("DONTO_DSN", "postgres://donto:donto@127.0.0.1:5432/donto")
+    try:
+        conn = await asyncpg.connect(dsn)
+        row = await conn.fetchrow(
+            "SELECT dr.body, dr.parser_version, d.label "
+            "FROM donto_document d JOIN donto_document_revision dr ON d.document_id = dr.document_id "
+            "WHERE d.iri = $1 ORDER BY dr.created_at DESC LIMIT 1",
+            doc_iri
+        )
+        await conn.close()
+        if not row:
+            return {"context": context, "source": None}
+        return {"context": context, "source": row["body"], "model": row["parser_version"], "label": row["label"]}
+    except Exception as e:
+        raise HTTPException(500, f"Database query failed: {e}")
 
 
 @app.get("/queue", response_class=HTMLResponse, tags=["Jobs"],
@@ -646,26 +702,35 @@ async function showDetail(id) {
   html += '<pre style="margin-bottom:16px;max-height:120px;overflow:auto">' + JSON.stringify(j, null, 2) + '</pre>';
 
   if (j.status === 'completed' && j.context) {
-    html += '<div style="margin-bottom:8px"><strong>Extracted Facts</strong> <span class="elapsed">(loading...)</span></div>';
+    html += '<div style="margin-bottom:8px"><strong>Loading facts and source...</strong></div>';
     document.getElementById('detail-json').innerHTML = html;
     try {
-      const r = await fetch('/jobs/' + encodeURIComponent(id) + '/facts');
-      const data = await r.json();
-      const facts = Array.isArray(data.facts) ? data.facts : (data.facts?.rows || data.facts?.statements || []);
+      const [factsResp, sourceResp] = await Promise.all([
+        fetch('/jobs/' + encodeURIComponent(id) + '/facts'),
+        fetch('/jobs/' + encodeURIComponent(id) + '/source'),
+      ]);
+      const factsData = await factsResp.json();
+      const sourceData = await sourceResp.json();
+      const facts = Array.isArray(factsData.facts) ? factsData.facts : [];
       html = '<div style="margin-bottom:12px"><strong>Job Details</strong></div>';
-      html += '<pre style="margin-bottom:16px;max-height:120px;overflow:auto">' + JSON.stringify(j, null, 2) + '</pre>';
+      html += '<pre style="margin-bottom:16px;max-height:100px;overflow:auto">' + JSON.stringify(j, null, 2) + '</pre>';
+      if (sourceData.source) {
+        html += '<div style="margin-bottom:8px"><strong>Source Text</strong> <span class="elapsed">(' + (sourceData.source.length/1000).toFixed(1) + 'k chars, model: ' + (sourceData.model||'?') + ')</span></div>';
+        html += '<pre style="margin-bottom:16px;max-height:200px;overflow:auto;white-space:pre-wrap;color:#8b949e">' + sourceData.source.substring(0, 5000).replace(/</g,'&lt;') + (sourceData.source.length > 5000 ? '\\n... (truncated)' : '') + '</pre>';
+      }
       html += '<div style="margin-bottom:8px"><strong>Extracted Facts</strong> <span class="elapsed">(' + facts.length + ' statements in ' + (j.context||'') + ')</span></div>';
-      html += '<table style="font-size:12px;width:100%"><thead><tr><th>Subject</th><th>Predicate</th><th>Object</th><th>Maturity</th></tr></thead><tbody>';
+      html += '<table style="font-size:12px;width:100%"><thead><tr><th>Subject</th><th>Predicate</th><th>Object</th><th>Mat</th><th>Pol</th></tr></thead><tbody>';
       for (const f of facts.slice(0, 200)) {
-        const subj = f.subject || f.s || '';
-        const pred = f.predicate || f.p || '';
-        const obj = f.object_iri || (f.object_lit ? f.object_lit.v : '') || f.o || '';
+        const subj = f.subject || '';
+        const pred = f.predicate || '';
+        const obj = f.object || '';
         const mat = f.maturity != null ? 'L' + f.maturity : '';
-        html += '<tr><td class="mono">' + subj + '</td><td class="mono" style="color:#58a6ff">' + pred + '</td><td class="mono">' + String(obj).substring(0,80) + '</td><td>' + mat + '</td></tr>';
+        const pol = f.polarity || '';
+        html += '<tr><td class="mono">' + subj + '</td><td class="mono" style="color:#58a6ff">' + pred + '</td><td class="mono">' + String(obj).substring(0,80) + '</td><td>' + mat + '</td><td>' + pol + '</td></tr>';
       }
       html += '</tbody></table>';
     } catch(e) {
-      html += '<div style="color:#f85149">Failed to load facts: ' + e.message + '</div>';
+      html += '<div style="color:#f85149">Failed to load: ' + e.message + '</div>';
     }
   }
   document.getElementById('detail-json').innerHTML = html;

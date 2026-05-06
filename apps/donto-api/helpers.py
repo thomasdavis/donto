@@ -220,6 +220,26 @@ async def call_openrouter(text: str, model: str) -> tuple[list[dict], dict]:
             raise Exception(f"Failed to parse extraction output. First 300 chars: {cleaned[:300]}")
 
 
+async def register_source_document(context: str, text: str, model: str, metadata: dict = None) -> None:
+    """Register the source text as a document in dontosrv so facts are traceable."""
+    doc_iri = f"doc:{context.replace('ctx:', '')}"
+    try:
+        result = await srv_post("/documents/register", {
+            "iri": doc_iri,
+            "media_type": "text/plain",
+            "label": context,
+        })
+        doc_id = result.get("document_id")
+        if doc_id:
+            await srv_post("/documents/revision", {
+                "document_id": doc_id,
+                "body": text,
+                "parser_version": model,
+            })
+    except Exception as e:
+        logger.warning(f"Failed to register source document for {context}: {e}")
+
+
 async def ingest_facts(facts: list[dict], context: str) -> int:
     """Convert extracted facts to dontosrv assert format and batch-insert."""
     await srv_post("/contexts/ensure", {"iri": context, "kind": "custom", "mode": "permissive"})

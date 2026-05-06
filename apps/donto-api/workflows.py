@@ -48,7 +48,7 @@ class ExtractionWorkflow:
             self._status = "ingesting"
             ingest_result = await workflow.execute_activity(
                 ingest_facts_activity,
-                args=[facts, context],
+                args=[facts, context, text, model],
                 start_to_close_timeout=timedelta(minutes=5),
                 retry_policy=RetryPolicy(maximum_attempts=5),
             )
