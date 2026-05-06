@@ -36,6 +36,7 @@ async def main():
         workflows=[ExtractionWorkflow],
         activities=[extract_facts_activity, ingest_facts_activity],
         max_concurrent_activities=MAX_CONCURRENT,
+        max_concurrent_workflow_tasks=MAX_CONCURRENT,
     )
     logger.info(f"worker listening on queue={TASK_QUEUE} max_concurrent={MAX_CONCURRENT}")
     await worker.run()
