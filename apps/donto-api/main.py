@@ -140,6 +140,52 @@ app.add_middleware(
 )
 
 
+from starlette.middleware.base import BaseHTTPMiddleware
+from agent_instructions import generate_instructions
+
+
+class AgentInstructionsMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request, call_next):
+        response = await call_next(request)
+        content_type = response.headers.get("content-type", "")
+        if "application/json" not in content_type:
+            return response
+        # Collect the response body
+        body_chunks = []
+        async for chunk in response.body_iterator:
+            if isinstance(chunk, bytes):
+                body_chunks.append(chunk)
+            else:
+                body_chunks.append(chunk.encode())
+        body_bytes = b"".join(body_chunks)
+        try:
+            body = json.loads(body_bytes)
+            if isinstance(body, dict):
+                instructions = generate_instructions(
+                    request.url.path, request.method, response.status_code, body
+                )
+                body["agent_instructions"] = instructions
+                new_body = json.dumps(body).encode()
+                from starlette.responses import Response as StarletteResponse
+                return StarletteResponse(
+                    content=new_body,
+                    status_code=response.status_code,
+                    headers=dict(response.headers),
+                    media_type="application/json",
+                )
+        except (json.JSONDecodeError, Exception):
+            pass
+        from starlette.responses import Response as StarletteResponse
+        return StarletteResponse(
+            content=body_bytes,
+            status_code=response.status_code,
+            headers=dict(response.headers),
+        )
+
+
+app.add_middleware(AgentInstructionsMiddleware)
+
+
 @app.on_event("startup")
 async def startup():
     global temporal_client
