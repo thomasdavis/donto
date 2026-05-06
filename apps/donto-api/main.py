@@ -175,9 +175,9 @@ async def srv_post(path: str, body=None):
 # ── Firehose (real-time SSE stream) ──────────────────────────────────────
 
 
-@app.get("/firehose", tags=["Firehose"],
+@app.get("/firehose/stream", tags=["Firehose"],
     summary="Real-time SSE stream of all database activity")
-async def firehose():
+async def firehose_stream():
     """Server-Sent Events stream of every statement insert and audit event.
     Uses Postgres LISTEN/NOTIFY on channels `donto_firehose` and `donto_audit`.
 
