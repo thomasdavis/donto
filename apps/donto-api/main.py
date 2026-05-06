@@ -418,6 +418,27 @@ async def get_job(job_id: str):
         raise HTTPException(404, f"Job {job_id} not found")
 
 
+@app.get("/jobs/{job_id}/facts", tags=["Jobs"],
+    summary="Get extracted facts for a completed job")
+async def get_job_facts(job_id: str, limit: int = Query(200, description="Max facts to return")):
+    """Fetch the statements ingested by a completed extraction job from dontosrv."""
+    client = _require_temporal()
+    handle = client.get_workflow_handle(f"extraction-{job_id}")
+    try:
+        detail = await handle.query(ExtractionWorkflow.status)
+    except Exception:
+        try:
+            result = await handle.result()
+            detail = result
+        except Exception:
+            raise HTTPException(404, f"Job {job_id} not found")
+    context = detail.get("context")
+    if not context:
+        raise HTTPException(404, "No context found for this job")
+    facts = await srv_get("/history/" + context, {"limit": str(limit)})
+    return {"context": context, "facts": facts}
+
+
 @app.get("/queue", response_class=HTMLResponse, tags=["Jobs"],
     summary="Job queue dashboard UI")
 async def queue_dashboard():
@@ -468,9 +489,11 @@ async def queue_dashboard():
   .progress-bar { width: 100%; height: 4px; background: #21262d; border-radius: 2px; margin-top: 8px; overflow: hidden; }
   .progress-fill { height: 100%; background: linear-gradient(90deg, #1f6feb, #3fb950); transition: width 0.5s; border-radius: 2px; }
   .empty { text-align: center; padding: 40px; color: #8b949e; }
-  .detail-panel { display: none; background: #0d1117; border: 1px solid #30363d; border-radius: 8px; padding: 16px; margin-top: 12px; }
+  .detail-panel { display: none; background: #0d1117; border: 1px solid #30363d; border-radius: 8px; padding: 16px; margin-top: 12px; max-height: 600px; overflow-y: auto; }
   .detail-panel.open { display: block; }
-  .detail-panel pre { font-size: 11px; color: #c9d1d9; overflow-x: auto; white-space: pre-wrap; word-break: break-all; }
+  .detail-panel pre { font-size: 11px; color: #c9d1d9; overflow-x: auto; white-space: pre-wrap; word-break: break-all; background: #161b22; padding: 8px; border-radius: 4px; }
+  .detail-panel table { background: #161b22; }
+  .detail-panel th { font-size: 10px; }
   .rate { font-size: 12px; color: #8b949e; margin-top: 4px; }
 </style>
 </head>
@@ -607,12 +630,45 @@ function renderTable() {
   document.getElementById('table-container').innerHTML = html;
 }
 
-function showDetail(id) {
+async function showDetail(id) {
   const j = allJobs.find(x => x.id === id);
   if (!j) return;
   const panel = document.getElementById('detail-panel');
-  document.getElementById('detail-json').textContent = JSON.stringify(j, null, 2);
-  panel.classList.toggle('open');
+  if (panel.dataset.activeId === id && panel.classList.contains('open')) {
+    panel.classList.remove('open');
+    panel.dataset.activeId = '';
+    return;
+  }
+  panel.dataset.activeId = id;
+  panel.classList.add('open');
+
+  let html = '<div style="margin-bottom:12px"><strong>Job Details</strong></div>';
+  html += '<pre style="margin-bottom:16px;max-height:120px;overflow:auto">' + JSON.stringify(j, null, 2) + '</pre>';
+
+  if (j.status === 'completed' && j.context) {
+    html += '<div style="margin-bottom:8px"><strong>Extracted Facts</strong> <span class="elapsed">(loading...)</span></div>';
+    document.getElementById('detail-json').innerHTML = html;
+    try {
+      const r = await fetch('/jobs/' + encodeURIComponent(id) + '/facts');
+      const data = await r.json();
+      const facts = Array.isArray(data.facts) ? data.facts : (data.facts?.rows || data.facts?.statements || []);
+      html = '<div style="margin-bottom:12px"><strong>Job Details</strong></div>';
+      html += '<pre style="margin-bottom:16px;max-height:120px;overflow:auto">' + JSON.stringify(j, null, 2) + '</pre>';
+      html += '<div style="margin-bottom:8px"><strong>Extracted Facts</strong> <span class="elapsed">(' + facts.length + ' statements in ' + (j.context||'') + ')</span></div>';
+      html += '<table style="font-size:12px;width:100%"><thead><tr><th>Subject</th><th>Predicate</th><th>Object</th><th>Maturity</th></tr></thead><tbody>';
+      for (const f of facts.slice(0, 200)) {
+        const subj = f.subject || f.s || '';
+        const pred = f.predicate || f.p || '';
+        const obj = f.object_iri || (f.object_lit ? f.object_lit.v : '') || f.o || '';
+        const mat = f.maturity != null ? 'L' + f.maturity : '';
+        html += '<tr><td class="mono">' + subj + '</td><td class="mono" style="color:#58a6ff">' + pred + '</td><td class="mono">' + String(obj).substring(0,80) + '</td><td>' + mat + '</td></tr>';
+      }
+      html += '</tbody></table>';
+    } catch(e) {
+      html += '<div style="color:#f85149">Failed to load facts: ' + e.message + '</div>';
+    }
+  }
+  document.getElementById('detail-json').innerHTML = html;
 }
 
 async function refresh() {
