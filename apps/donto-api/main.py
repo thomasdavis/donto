@@ -591,9 +591,8 @@ async def retry_failed_jobs():
     ):
         try:
             handle = client.get_workflow_handle(wf.id)
-            history = handle.fetch_history()
             text = context = model = None
-            async for event in history:
+            async for event in handle.fetch_history_events():
                 if hasattr(event, "workflow_execution_started_event_attributes"):
                     attrs = event.workflow_execution_started_event_attributes
                     if attrs and attrs.input and attrs.input.payloads:
