@@ -461,7 +461,12 @@ async def get_job_facts(job_id: str, limit: int = Query(200, description="Max fa
                     lit = _json.loads(lit)
                 except Exception:
                     lit = None
-            obj_val = r["object_iri"] or (lit.get("v") if isinstance(lit, dict) else lit)
+            if r["object_iri"] is not None:
+                obj_val = r["object_iri"]
+            elif isinstance(lit, dict) and "v" in lit:
+                obj_val = str(lit["v"])
+            else:
+                obj_val = str(lit) if lit is not None else None
             polarity_map = {0: "asserted", 1: "negated", 2: "absent", 3: "unknown"}
             flags = r["flags"] or 0
             facts.append({
