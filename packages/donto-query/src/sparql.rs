@@ -101,6 +101,7 @@ pub fn parse_sparql(src: &str) -> Result<Query, ParseError> {
         limit,
         offset,
         predicate_expansion: PredicateExpansion::Expand,
+        as_of_tx: None,
     })
 }
 

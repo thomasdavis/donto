@@ -51,6 +51,11 @@ pub async fn evaluate(client: &DontoClient, q: &Query) -> Result<Vec<EvalRow>, E
         return Ok(vec![]);
     }
 
+    // PRESET resolution: translate the named scope preset into
+    // adjustments to scope / maturity / as-of before pattern matching.
+    let q_resolved = apply_preset(client, q).await?;
+    let q = &q_resolved;
+
     let polarity = q.polarity;
     let scope = q.scope.clone();
 
@@ -79,7 +84,7 @@ pub async fn evaluate(client: &DontoClient, q: &Query) -> Result<Vec<EvalRow>, E
                             scope.as_ref(),
                             polarity,
                             q.min_maturity,
-                            None,
+                            q.as_of_tx,
                             None,
                         )
                         .await?
@@ -93,7 +98,7 @@ pub async fn evaluate(client: &DontoClient, q: &Query) -> Result<Vec<EvalRow>, E
                             scope.as_ref(),
                             polarity,
                             q.min_maturity,
-                            None,
+                            q.as_of_tx,
                             None,
                         )
                         .await?
@@ -106,7 +111,7 @@ pub async fn evaluate(client: &DontoClient, q: &Query) -> Result<Vec<EvalRow>, E
                         scope.as_ref(),
                         polarity,
                         q.min_maturity,
-                        None,
+                        q.as_of_tx,
                         None,
                         true,
                         pct as f64 / 100.0,
@@ -154,6 +159,96 @@ pub async fn evaluate(client: &DontoClient, q: &Query) -> Result<Vec<EvalRow>, E
     let off = q.offset.unwrap_or(0) as usize;
     let lim = q.limit.unwrap_or(rows.len() as u64) as usize;
     Ok(rows.into_iter().skip(off).take(lim).collect())
+}
+
+/// Translate a `PRESET <name>` clause into concrete query adjustments.
+/// Six presets are honoured:
+///
+/// * `latest` — current state (default; no adjustment)
+/// * `raw` — include all maturities including E0 (clear min_maturity)
+/// * `curated` — require maturity ≥ E2 (evidence-supported)
+/// * `under_hypothesis` — restrict scope to hypothesis-kind contexts
+/// * `as_of:<rfc3339-utc>` — bitemporal time-travel against tx_time
+/// * `anywhere` — drop any scope restriction (override caller scope)
+///
+/// Unknown preset names return an `Unsupported` error rather than
+/// silently doing nothing.
+async fn apply_preset(client: &DontoClient, q: &Query) -> Result<Query, EvalError> {
+    let mut out = q.clone();
+    let Some(preset) = q.scope_preset.as_deref() else {
+        return Ok(out);
+    };
+    let preset = preset.trim();
+    let lower = preset.to_lowercase();
+    match lower.as_str() {
+        "" | "latest" => {
+            // Default: open tx_time only — match_pattern's default.
+            // No adjustment.
+        }
+        "raw" => {
+            out.min_maturity = 0;
+        }
+        "curated" => {
+            // Evidence-supported (E2 = stored value 2) is the curated floor.
+            if out.min_maturity < 2 {
+                out.min_maturity = 2;
+            }
+        }
+        "anywhere" => {
+            out.scope = None;
+        }
+        "under_hypothesis" => {
+            let conn = client
+                .pool()
+                .get()
+                .await
+                .map_err(|e| EvalError::Client(donto_client::Error::Pool(e)))?;
+            let rows = conn
+                .query(
+                    "select iri from donto_context where kind = 'hypothesis'",
+                    &[],
+                )
+                .await
+                .map_err(|e| EvalError::Client(donto_client::Error::Postgres(e)))?;
+            if rows.is_empty() {
+                // No hypothesis contexts → empty scope (returns no rows).
+                out.scope = Some(ContextScope::default());
+            } else {
+                let iris: Vec<String> = rows.iter().map(|r| r.get::<_, String>(0)).collect();
+                out.scope = Some(ContextScope::any_of(iris));
+            }
+        }
+        _ if lower.starts_with("as_of:") || lower.starts_with("as_of ") => {
+            // PRESET-level as_of would set Query.as_of_tx, but the
+            // current Query doesn't carry a tx_at field — that's a
+            // match_pattern parameter consumed by match calls. Wire
+            // through a thin override on the query and have the loop
+            // honour it.
+            let ts_str = preset
+                .split_once(|c: char| c == ':' || c.is_whitespace())
+                .map(|x| x.1.trim())
+                .unwrap_or("");
+            if ts_str.is_empty() {
+                return Err(EvalError::Unsupported(
+                    "PRESET as_of requires a timestamp (as_of:<RFC3339>)".into(),
+                ));
+            }
+            let ts = chrono::DateTime::parse_from_rfc3339(ts_str)
+                .map(|dt| dt.with_timezone(&chrono::Utc))
+                .map_err(|e| {
+                    EvalError::Unsupported(format!(
+                        "PRESET as_of: invalid RFC3339 timestamp `{ts_str}`: {e}"
+                    ))
+                })?;
+            out.as_of_tx = Some(ts);
+        }
+        other => {
+            return Err(EvalError::Unsupported(format!(
+                "unknown PRESET `{other}` (valid: latest|raw|curated|under_hypothesis|as_of:<ts>|anywhere)"
+            )));
+        }
+    }
+    Ok(out)
 }
 
 fn substitute(t: &Term, env: &Bindings) -> Term {

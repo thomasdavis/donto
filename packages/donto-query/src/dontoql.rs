@@ -318,7 +318,7 @@ impl Parser {
                     self.bump();
                     match lkw.as_str() {
                         "SCOPE" => q.scope = Some(self.parse_scope()?),
-                        "PRESET" => q.scope_preset = Some(self.parse_ident()?),
+                        "PRESET" => q.scope_preset = Some(self.parse_preset_value()?),
                         "MATCH" => q.patterns = self.parse_patterns()?,
                         "FILTER" => q.filters = self.parse_filters()?,
                         "POLARITY" => q.polarity = Some(self.parse_polarity()?),
@@ -405,6 +405,26 @@ impl Parser {
             t => Err(ParseError {
                 pos: self.pos(),
                 msg: format!("ident expected, got {t:?}"),
+            }),
+        }
+    }
+
+    /// Permissive value reader for `PRESET`. Accepts:
+    ///   * a bare ident (e.g. `latest`, `curated`)
+    ///   * a prefixed token, which is reassembled as `head:tail`
+    ///     (e.g. `as_of:2026-05-08T17:00:00Z` — even though the
+    ///     timestamp itself contains colons, the lexer takes the
+    ///     prefix at the first colon and treats the remainder as
+    ///     the local part)
+    ///   * a string literal (`PRESET "as_of:..."`)
+    fn parse_preset_value(&mut self) -> Result<String, ParseError> {
+        match self.bump() {
+            Tok::Ident(s) => Ok(s),
+            Tok::Prefixed(head, tail) => Ok(format!("{head}:{tail}")),
+            Tok::Str(s) => Ok(s),
+            t => Err(ParseError {
+                pos: self.pos(),
+                msg: format!("PRESET value expected, got {t:?}"),
             }),
         }
     }

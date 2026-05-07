@@ -29,6 +29,18 @@ impl ContextScope {
         }
     }
 
+    /// Inclusion of any one of the listed contexts (with descendants).
+    /// Used by PRESET resolution to fan a named preset out to a set of
+    /// concrete contexts.
+    pub fn any_of(iris: impl IntoIterator<Item = String>) -> Self {
+        Self {
+            include: iris.into_iter().collect(),
+            exclude: vec![],
+            include_descendants: true,
+            include_ancestors: false,
+        }
+    }
+
     /// Empty scope = visible everywhere (the resolver short-circuits).
     pub fn anywhere() -> Self {
         Self {

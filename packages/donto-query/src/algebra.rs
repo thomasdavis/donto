@@ -98,6 +98,11 @@ pub struct Query {
     pub limit: Option<u64>,
     pub offset: Option<u64>,
     pub predicate_expansion: PredicateExpansion,
+    /// Bitemporal time-travel target (tx_time). Set by the
+    /// evaluator's PRESET resolver when the query carries
+    /// `PRESET as_of:<ts>`. None = current state (open tx_time).
+    #[serde(default)]
+    pub as_of_tx: Option<chrono::DateTime<chrono::Utc>>,
 }
 
 impl Default for Query {
@@ -114,6 +119,7 @@ impl Default for Query {
             limit: None,
             offset: None,
             predicate_expansion: PredicateExpansion::Expand,
+            as_of_tx: None,
         }
     }
 }
