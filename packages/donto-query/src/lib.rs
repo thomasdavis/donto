@@ -19,5 +19,5 @@ pub mod sparql;
 
 pub use algebra::*;
 pub use dontoql::parse_dontoql;
-pub use evaluator::{evaluate, Bindings, EvalRow};
+pub use evaluator::{evaluate, Bindings, EvalError, EvalRow};
 pub use sparql::parse_sparql;

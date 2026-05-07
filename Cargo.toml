@@ -5,6 +5,7 @@ members = [
     "packages/donto-query",
     "packages/donto-ingest",
     "packages/donto-migrate",
+    "packages/donto-release",
     "apps/donto-cli",
     "apps/dontosrv",
 ]

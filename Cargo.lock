@@ -593,6 +593,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "donto-release"
+version = "0.0.1"
+dependencies = [
+ "anyhow",
+ "chrono",
+ "donto-client",
+ "donto-query",
+ "hex",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "tempfile",
+ "thiserror 1.0.69",
+ "tokio",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
 name = "dontosrv"
 version = "0.0.1"
 dependencies = [
