@@ -279,6 +279,49 @@ def generate_instructions(path: str, method: str, status_code: int, body: dict) 
         ]
         return instructions
 
+    # ── Analysis Report ──
+    if path == "/analysis/report" and method == "POST":
+        contras = len(body.get("contradictions", []))
+        gaps = len(body.get("evidence_gaps", []))
+        actions = body.get("actions", [])
+        quality = body.get("quality", {})
+        instructions["next_steps"] = [
+            f"Report complete. Quality score: {quality.get('overall', 0):.0%}",
+            f"Found {contras} contradictions and {gaps} evidence gaps.",
+            f"{len(actions)} recommended next actions — address high-priority items first.",
+            "Read the 'narrative' field for a human-readable research summary.",
+            "Use the 'charts' field to render ECharts visualizations.",
+            "Each action has target_entities and suggested_sources for follow-up.",
+        ]
+        instructions["tips"] = [
+            "Run individual skills for deeper analysis: /analysis/family-tree, /analysis/contradictions, etc.",
+            "The report is deterministic (no LLM) — same entity always produces consistent results.",
+            "Quality score weights: 30% reliability, 20% completeness, 20% corroboration, 15% low-contradiction, 15% coverage.",
+        ]
+        instructions["related_endpoints"] = [
+            {"method": "GET", "path": "/analysis/family-tree/<entity>", "description": "Deeper family tree (adjust depth)"},
+            {"method": "GET", "path": "/analysis/contradictions/<entity>", "description": "All contradictions with source details"},
+            {"method": "GET", "path": "/connections/<entity>", "description": "Bidirectional graph connections"},
+        ]
+        return instructions
+
+    # ── Analysis Skills ──
+    if path.startswith("/analysis/") and method == "GET":
+        entity = body.get("entity", "")
+        skill = path.split("/")[2] if len(path.split("/")) > 2 else ""
+        instructions["next_steps"] = [
+            f"Skill '{skill}' results for {entity}.",
+            "For a complete analysis, use POST /analysis/report with this entity.",
+            f"Explore this entity visually: GET /viz/entity/{entity}",
+            f"See bidirectional connections: GET /connections/{entity}",
+        ]
+        instructions["related_endpoints"] = [
+            {"method": "POST", "path": "/analysis/report", "description": "Full analytical report combining all skills"},
+            {"method": "GET", "path": f"/viz/entity/{entity}", "description": "Visual deep dive"},
+            {"method": "GET", "path": f"/connections/{entity}", "description": "Bidirectional connections"},
+        ]
+        return instructions
+
     # ── Alignment ──
     if path.startswith("/align/"):
         instructions["next_steps"] = [

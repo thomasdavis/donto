@@ -136,7 +136,9 @@ and complete endpoint reference with curl examples.
 )
 
 from viz_endpoints import router as viz_router
+from analysis_endpoints import router as analysis_router
 app.include_router(viz_router)
+app.include_router(analysis_router)
 
 app.add_middleware(
     CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"],
