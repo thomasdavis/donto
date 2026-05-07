@@ -70,3 +70,53 @@ pub async fn add_revision(
         Err(e) => Json(json!({ "error": e.to_string() })).into_response(),
     }
 }
+
+/// v1000 source registration. Requires `source_kind` and `policy_iri`
+/// (PRD I2 — no source without policy). Use this for new code paths;
+/// the legacy `/documents/register` is kept for backwards compatibility
+/// but is deprecated.
+#[derive(Debug, Deserialize)]
+pub struct RegisterSourceV1000Req {
+    pub iri: String,
+    pub source_kind: String,
+    pub policy_iri: String,
+    #[serde(default)]
+    pub media_type: Option<String>,
+    #[serde(default)]
+    pub label: Option<String>,
+    #[serde(default)]
+    pub source_url: Option<String>,
+    #[serde(default)]
+    pub language: Option<String>,
+}
+
+pub async fn register_v1000(
+    State(s): State<Arc<AppState>>,
+    Json(req): Json<RegisterSourceV1000Req>,
+) -> impl IntoResponse {
+    match s
+        .client
+        .register_source_v1000(
+            &req.iri,
+            &req.source_kind,
+            &req.policy_iri,
+            req.media_type.as_deref(),
+            req.label.as_deref(),
+            req.source_url.as_deref(),
+            req.language.as_deref(),
+        )
+        .await
+    {
+        Ok(id) => Json(json!({
+            "document_id": id,
+            "iri": req.iri,
+            "policy_iri": req.policy_iri,
+        }))
+        .into_response(),
+        Err(e) => Json(json!({
+            "error": "register_source_failed",
+            "detail": e.to_string(),
+        }))
+        .into_response(),
+    }
+}

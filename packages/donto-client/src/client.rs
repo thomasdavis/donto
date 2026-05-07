@@ -1165,6 +1165,160 @@ impl DontoClient {
             .await?;
         Ok(row.get::<_, Uuid>(0))
     }
+
+    // ---------- v1000 Trust Kernel client wrappers ----------
+
+    /// Top-level access check (PRD I2/I6). Returns true iff the caller
+    /// has permission to perform the action against the target.
+    /// Combines effective-policy AND with attestation-OR semantics.
+    pub async fn authorise(
+        &self,
+        holder: &str,
+        target_kind: &str,
+        target_id: &str,
+        action: &str,
+    ) -> Result<bool> {
+        let c = self.pool.get().await?;
+        let row = c
+            .query_one(
+                "select donto_authorise($1, $2, $3, $4)",
+                &[&holder, &target_kind, &target_id, &action],
+            )
+            .await?;
+        Ok(row.get::<_, bool>(0))
+    }
+
+    /// Effective allowed_actions for a target (with no caller). Useful
+    /// for reporting "what does this source permit anyone to do".
+    pub async fn effective_actions(
+        &self,
+        target_kind: &str,
+        target_id: &str,
+    ) -> Result<serde_json::Value> {
+        let c = self.pool.get().await?;
+        let row = c
+            .query_one(
+                "select donto_effective_actions($1, $2)",
+                &[&target_kind, &target_id],
+            )
+            .await?;
+        Ok(row.get::<_, serde_json::Value>(0))
+    }
+
+    /// Quick allow/deny without caller (no attestation lookup).
+    pub async fn action_allowed(
+        &self,
+        target_kind: &str,
+        target_id: &str,
+        action: &str,
+    ) -> Result<bool> {
+        let c = self.pool.get().await?;
+        let row = c
+            .query_one(
+                "select donto_action_allowed($1, $2, $3)",
+                &[&target_kind, &target_id, &action],
+            )
+            .await?;
+        Ok(row.get::<_, bool>(0))
+    }
+
+    /// Assign a policy to a target (PRD §15).
+    pub async fn assign_policy(
+        &self,
+        target_kind: &str,
+        target_id: &str,
+        policy_iri: &str,
+        assigned_by: &str,
+    ) -> Result<Uuid> {
+        let c = self.pool.get().await?;
+        let row = c
+            .query_one(
+                "select donto_assign_policy($1, $2, $3, $4, null)",
+                &[&target_kind, &target_id, &policy_iri, &assigned_by],
+            )
+            .await?;
+        Ok(row.get::<_, Uuid>(0))
+    }
+
+    /// Issue an attestation for a holder under a specific policy.
+    /// Rationale is required (audit constraint).
+    pub async fn issue_attestation(
+        &self,
+        holder: &str,
+        issuer: &str,
+        policy_iri: &str,
+        actions: &[&str],
+        purpose: &str,
+        rationale: &str,
+        expires_at: Option<chrono::DateTime<chrono::Utc>>,
+    ) -> Result<Uuid> {
+        let c = self.pool.get().await?;
+        let actions_owned: Vec<String> = actions.iter().map(|s| s.to_string()).collect();
+        let row = c
+            .query_one(
+                "select donto_issue_attestation($1, $2, $3, $4::text[], $5, $6, $7, null)",
+                &[
+                    &holder,
+                    &issuer,
+                    &policy_iri,
+                    &actions_owned,
+                    &purpose,
+                    &rationale,
+                    &expires_at,
+                ],
+            )
+            .await?;
+        Ok(row.get::<_, Uuid>(0))
+    }
+
+    /// Revoke an attestation. Effect is immediate for new authorisation
+    /// checks; in-flight reads in the same transaction may still proceed.
+    pub async fn revoke_attestation(
+        &self,
+        attestation_id: Uuid,
+        revoked_by: &str,
+        reason: Option<&str>,
+    ) -> Result<bool> {
+        let c = self.pool.get().await?;
+        let row = c
+            .query_one(
+                "select donto_revoke_attestation($1, $2, $3)",
+                &[&attestation_id, &revoked_by, &reason],
+            )
+            .await?;
+        Ok(row.get::<_, bool>(0))
+    }
+
+    /// Register a v1000 source: enforces policy_id on insert (PRD I2).
+    /// Use this instead of `ensure_document` for new code paths.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn register_source_v1000(
+        &self,
+        iri: &str,
+        source_kind: &str,
+        policy_iri: &str,
+        media_type: Option<&str>,
+        label: Option<&str>,
+        source_url: Option<&str>,
+        language: Option<&str>,
+    ) -> Result<Uuid> {
+        let c = self.pool.get().await?;
+        let row = c
+            .query_one(
+                "select donto_register_source_v1000($1, $2, $3, coalesce($4, 'text/plain'), $5, $6, $7, '[]'::jsonb, null, null, null, null, null, '{}'::jsonb)",
+                &[
+                    &iri,
+                    &source_kind,
+                    &policy_iri,
+                    &media_type,
+                    &label,
+                    &source_url,
+                    &language,
+                ],
+            )
+            .await?;
+        Ok(row.get::<_, Uuid>(0))
+    }
 }
 
 fn stmt_to_json(s: &StatementInput) -> Json {

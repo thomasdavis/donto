@@ -6,6 +6,7 @@
 pub mod agents;
 pub mod alignment;
 pub mod arguments;
+pub mod auth;
 pub mod browse;
 pub mod certificates;
 pub mod dir;
@@ -15,6 +16,7 @@ pub mod history;
 pub mod ingest;
 pub mod lean;
 pub mod obligations;
+pub mod policy;
 pub mod react;
 pub mod rules;
 pub mod shapes;
@@ -63,7 +65,15 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/reactions/:id",    get(react::list_reactions))
         // Evidence substrate
         .route("/documents/register",     post(documents::register))
+        .route("/sources/register",       post(documents::register_v1000))
         .route("/documents/revision",     post(documents::add_revision))
+        // Trust Kernel (M0)
+        .route("/policy/assign",          post(policy::assign))
+        .route("/policy/effective/:target_kind/:target_id", get(policy::effective_actions))
+        .route("/attestations",           post(policy::issue_attestation))
+        .route("/attestations/:id/revoke", post(policy::revoke_attestation))
+        .route("/authorise",              post(policy::authorise_probe))
+        .route("/protected/read",         post(policy::protected_read))
         .route("/evidence/link/span",     post(evidence::link_span))
         .route("/evidence/:stmt",         get(evidence::evidence_for))
         .route("/agents/register",        post(agents::register))
