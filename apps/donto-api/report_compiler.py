@@ -23,71 +23,61 @@ from skills import (
 DSN = os.environ.get("DONTO_DSN", "postgres://donto:donto@127.0.0.1:5432/donto")
 
 
-async def compile_report(intent: ResearchIntent) -> AnalyticalReport:
+async def _run_skill(skill_fn, *args, **kwargs):
+    """Run a skill with its own dedicated connection."""
     conn = await asyncpg.connect(DSN)
     try:
-        primary = intent.scope_entities[0] if intent.scope_entities else None
-        if not primary:
-            return AnalyticalReport(intent=intent, narrative="No entities specified.")
+        return await skill_fn(conn, *args, **kwargs)
+    finally:
+        await conn.close()
 
-        # Resolve entity info
+
+async def compile_report(intent: ResearchIntent) -> AnalyticalReport:
+    primary = intent.scope_entities[0] if intent.scope_entities else None
+    if not primary:
+        return AnalyticalReport(intent=intent, narrative="No entities specified.")
+
+    # Resolve entity info
+    conn = await asyncpg.connect(DSN)
+    try:
         entity_info = await conn.fetchrow("""
             SELECT subject, count(*) as cnt FROM donto_statement
             WHERE subject = $1 AND upper(tx_time) IS NULL
             GROUP BY subject
         """, primary)
-        fact_count = entity_info["cnt"] if entity_info else 0
-
-        scope = SemanticScope(
-            entities=[EntityRef(iri=primary, fact_count=fact_count)],
-        )
-
-        # Run independent skills in parallel
-        family_task = build_family_tree(conn, primary, depth=3)
-        contra_task = detect_contradictions(conn, entity=primary)
-        corrob_task = find_corroborations(conn, primary)
-        timeline_task = build_timeline(conn, primary)
-        migration_task = detect_migrations(conn, primary)
-        names_task = cluster_name_variants(conn, primary)
-        gaps_task = analyze_evidence_gaps(conn, primary)
-        quality_task = compute_quality_score(conn, entity=primary)
-
-        (family, contradictions, corroborations, timeline, migrations,
-         names, gaps, quality) = await asyncio.gather(
-            family_task, contra_task, corrob_task, timeline_task,
-            migration_task, names_task, gaps_task, quality_task,
-        )
-
-        # Generate actions from gaps and contradictions
-        actions = _generate_actions(primary, contradictions, gaps, family, corroborations)
-
-        # Generate charts
-        charts = _generate_charts(primary, family, timeline, contradictions, quality, migrations)
-
-        # Generate narrative
-        narrative = _generate_narrative(
-            intent, primary, fact_count, family, contradictions,
-            corroborations, timeline, gaps, quality, actions, names, migrations,
-        )
-
-        return AnalyticalReport(
-            intent=intent,
-            scope=scope,
-            family_tree=family,
-            timeline=timeline,
-            contradictions=contradictions,
-            corroborations=corroborations,
-            evidence_gaps=gaps,
-            migrations=migrations,
-            name_variants=names,
-            quality=quality,
-            actions=actions,
-            charts=charts,
-            narrative=narrative,
-            generated_at=datetime.now(timezone.utc).isoformat(),
-        )
     finally:
         await conn.close()
+
+    fact_count = entity_info["cnt"] if entity_info else 0
+    scope = SemanticScope(entities=[EntityRef(iri=primary, fact_count=fact_count)])
+
+    # Run independent skills in parallel — each gets its own connection
+    (family, contradictions, corroborations, timeline, migrations,
+     names, gaps, quality) = await asyncio.gather(
+        _run_skill(build_family_tree, primary, 3),
+        _run_skill(detect_contradictions, entity=primary),
+        _run_skill(find_corroborations, primary),
+        _run_skill(build_timeline, primary),
+        _run_skill(detect_migrations, primary),
+        _run_skill(cluster_name_variants, primary),
+        _run_skill(analyze_evidence_gaps, primary),
+        _run_skill(compute_quality_score, entity=primary),
+    )
+
+    actions = _generate_actions(primary, contradictions, gaps, family, corroborations)
+    charts = _generate_charts(primary, family, timeline, contradictions, quality, migrations)
+    narrative = _generate_narrative(
+        intent, primary, fact_count, family, contradictions,
+        corroborations, timeline, gaps, quality, actions, names, migrations,
+    )
+
+    return AnalyticalReport(
+        intent=intent, scope=scope, family_tree=family, timeline=timeline,
+        contradictions=contradictions, corroborations=corroborations,
+        evidence_gaps=gaps, migrations=migrations, name_variants=names,
+        quality=quality, actions=actions, charts=charts, narrative=narrative,
+        generated_at=datetime.now(timezone.utc).isoformat(),
+    )
 
 
 def _generate_actions(entity, contradictions, gaps, family, corroborations):
