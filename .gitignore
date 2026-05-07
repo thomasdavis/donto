@@ -27,6 +27,11 @@ backups/
 # Playground: extraction scripts, downloaded PDFs, scratch work
 playground/
 
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
 # Node / Astro / Turborepo
 node_modules/
 .next/
