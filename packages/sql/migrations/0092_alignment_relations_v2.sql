@@ -1,10 +1,10 @@
--- v1000 / I7: schema mappings are typed and scoped.
+-- Trust Kernel / I7: schema mappings are typed and scoped.
 --
 -- Migration 0048 shipped six alignment relations:
 --   exact_equivalent, inverse_equivalent, sub_property_of,
 --   close_match, decomposition, not_equivalent
 --
--- v1000 PRD §6.10 specifies eleven:
+-- PRD §6.10 specifies eleven:
 --   exact_equivalent, close_match, broad_match, narrow_match,
 --   inverse_of, decomposes_to, has_value_mapping, incompatible_with,
 --   derived_from, local_specialization, not_equivalent
@@ -20,7 +20,7 @@
 --   * add donto_alignment_value_mapping for has_value_mapping payloads
 --
 -- Old code paths writing exact_equivalent / sub_property_of / etc.
--- continue to work. New code paths should prefer the v1000 names.
+-- continue to work. New code paths should prefer the canonical names.
 
 alter table donto_predicate_alignment
     drop constraint if exists donto_predicate_alignment_relation_check;
@@ -35,7 +35,7 @@ alter table donto_predicate_alignment
         'close_match',
         'decomposition',
         'not_equivalent',
-        -- v1000 additions / aliases
+        -- canonical additions / aliases
         'exact_match',                -- alias of exact_equivalent
         'inverse_of',                 -- alias of inverse_equivalent
         'narrow_match',               -- alias of sub_property_of

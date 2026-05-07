@@ -1,13 +1,13 @@
-# v1000 — Pre-production Review Findings
+# Pre-production Review Findings
 
-> **Audience:** principal engineer, anyone reviewing the v1000 PR.
+> **Audience:** principal engineer, anyone reviewing the Trust Kernel PR.
 > **Purpose:** document the issues, bypasses, gotchas, and design
-> trade-offs surfaced during adversarial review of the v1000 schema.
+> trade-offs surfaced during adversarial review of the schema.
 > Each finding has a category, a severity, what's tested, and what's
 > deferred. Nothing in here changes the substrate; this is the
 > contract a reviewer should know about before merging.
 > **Status:** all findings have tripwire tests in
-> `packages/donto-client/tests/invariants_v1000_*.rs`.
+> `packages/donto-client/tests/invariants_*.rs`.
 
 ---
 
@@ -17,7 +17,7 @@
   the listed mitigation.
 - **DOC** — works as designed, but the design surface is non-obvious
   and a future change might surprise.
-- **DEFER** — known limitation; the v1000 plan addresses it in a later
+- **DEFER** — known limitation; the refactor plan addresses it in a later
   milestone.
 
 ---
@@ -26,7 +26,7 @@
 
 **Category:** Trust Kernel completeness. **Severity:** DEFER.
 
-The SQL substrate (migrations 0111/0112) lands `donto_register_source_v1000`
+The SQL substrate (migrations 0111/0112) lands `donto_register_source`
 which refuses to register a source without `policy_id`. The legacy
 `donto_ensure_document` and `donto_register_document` (migrations 0023)
 do not enforce policy and remain reachable. The dontosrv HTTP endpoint
@@ -41,7 +41,7 @@ do not enforce policy and remain reachable. The dontosrv HTTP endpoint
 - However, the I2 invariant ("no source without policy") is enforced
   by *fail-closed default*, not by *write-time refusal*.
 
-**Tripwire:** `invariants_v1000_adversarial::legacy_register_document_does_not_enforce_policy`
+**Tripwire:** `invariants_adversarial::legacy_register_document_does_not_enforce_policy`
 asserts the bypass exists. When the M0 middleware step closes the
 gap (sidecar refuses the legacy entry point or a NOT NULL constraint
 is added on `donto_document.policy_id`), this test will fail and
@@ -51,7 +51,7 @@ prompt a deliberate migration.
 1. Add a NOT NULL constraint on `donto_document.policy_id` *after*
    backfilling existing data with `policy:default/restricted_pending_review`.
 2. Or: rewrite the dontosrv `/documents/register` handler to call
-   `donto_register_source_v1000` and refuse requests without policy.
+   `donto_register_source` and refuse requests without policy.
 
 Both are M0 application-layer work; the substrate is correct.
 
@@ -77,8 +77,8 @@ A. This is **max-restriction inheritance** (PRD I6).
   action)*.
 
 **Tripwires:**
-- `invariants_v1000_adversarial::three_policy_max_restriction`
-- `invariants_v1000_adversarial::authorise_combines_policy_and_with_attestation_or`
+- `invariants_adversarial::three_policy_max_restriction`
+- `invariants_adversarial::authorise_combines_policy_and_with_attestation_or`
 
 ---
 
@@ -91,7 +91,7 @@ A revoked policy that's still assigned to a target does not contribute
 its allowed_actions. Without this, a revoked "all-allow" policy could
 keep granting access until garbage-collected.
 
-**Tripwire:** `invariants_v1000_adversarial::revoked_policy_does_not_contribute_to_effective_actions`.
+**Tripwire:** `invariants_adversarial::revoked_policy_does_not_contribute_to_effective_actions`.
 
 ---
 
@@ -116,7 +116,7 @@ either:
 - Treat `donto_authorise` as advisory and add a separate transactional
   check at content-retrieval time.
 
-**Tripwire:** `invariants_v1000_governance_scenarios::revocation_immediate_for_new_checks`
+**Tripwire:** `invariants_governance_scenarios::revocation_immediate_for_new_checks`
 verifies that step 1 returns false *after* step 2.
 
 ---
@@ -131,7 +131,7 @@ wildcard for community-authority-style "full access" attestations.
 There's no constraint stopping a malformed attestation from listing
 both `'all'` and a specific action; the wildcard wins.
 
-**Tripwire:** `invariants_v1000_governance_scenarios::attestation_all_action_grants_everything`.
+**Tripwire:** `invariants_governance_scenarios::attestation_all_action_grants_everything`.
 
 ---
 
@@ -142,7 +142,7 @@ both `'all'` and a specific action; the wildcard wins.
 A → B exact_equivalent + B → A exact_equivalent is allowed and
 correct. The closure-rebuild function deduplicates pairs.
 
-**Tripwire:** `invariants_v1000_adversarial::reciprocal_alignment_does_not_explode_closure`.
+**Tripwire:** `invariants_adversarial::reciprocal_alignment_does_not_explode_closure`.
 
 ---
 
@@ -160,7 +160,7 @@ This is correct: a reviewer auditing why a claim was retracted needs
 the full state at retraction time. Cleanup of orphaned overlays is
 *not* automatic — it would erase history.
 
-**Tripwire:** `invariants_v1000_adversarial::overlays_survive_retraction`.
+**Tripwire:** `invariants_adversarial::overlays_survive_retraction`.
 
 ---
 
@@ -173,7 +173,7 @@ not enforce uniqueness within the array. `[ent:a, ent:a, ent:b]` is
 accepted. This is intentional: callers that want strict uniqueness can
 deduplicate at the application layer.
 
-**Tripwire:** `invariants_v1000_adversarial::identity_proposal_entity_refs_duplicates_currently_allowed`.
+**Tripwire:** `invariants_adversarial::identity_proposal_entity_refs_duplicates_currently_allowed`.
 
 ---
 
@@ -181,11 +181,11 @@ deduplicate at the application layer.
 
 **Category:** Input validation. **Severity:** DOC.
 
-`donto_register_source_v1000('', 'pdf', ...)` succeeds. The substrate
+`donto_register_source('', 'pdf', ...)` succeeds. The substrate
 does not validate IRI shape — that's the HTTP layer's job. Same applies
 to malformed IRIs containing only whitespace.
 
-**Tripwire:** `invariants_v1000_adversarial::empty_iri_currently_accepted_by_substrate`.
+**Tripwire:** `invariants_adversarial::empty_iri_currently_accepted_by_substrate`.
 
 **Mitigation path:** add a CHECK constraint
 `length(trim(iri)) > 0` to `donto_document` once existing data has
@@ -206,7 +206,7 @@ surface.
 **Implication:** clients that mutate state via raw SQL bypass the
 audit log. Always go through the helper functions.
 
-**Tripwire:** `invariants_v1000_adversarial::direct_update_to_release_sealed_at_does_not_emit_event`.
+**Tripwire:** `invariants_adversarial::direct_update_to_release_sealed_at_does_not_emit_event`.
 
 ---
 
@@ -223,7 +223,7 @@ modifications a deployer may have made to the seeded policies.
 re-migration. This is desired but could surprise: on a fresh install,
 they get the standard seeded values; on a re-run, they don't.
 
-**Tripwire:** `invariants_v1000_adversarial::default_policies_count_is_stable_across_repeated_inserts`.
+**Tripwire:** `invariants_adversarial::default_policies_count_is_stable_across_repeated_inserts`.
 
 ---
 
@@ -266,7 +266,7 @@ in `donto_action_allowed` (`coalesce((... ->> action)::boolean, false)`)
 becomes `false`, so the safe default still holds. The explicit
 fall-through makes the intent clearer.
 
-**Tripwire:** `invariants_v1000_governance_scenarios::no_policy_assignment_falls_through_to_default_restricted`.
+**Tripwire:** `invariants_governance_scenarios::no_policy_assignment_falls_through_to_default_restricted`.
 
 ---
 
@@ -279,7 +279,7 @@ is allowed. `donto_frame_roles` reads roles directly without recursion,
 so this is a no-op rather than a stack overflow. Queries that walk
 frame references must implement their own cycle detection.
 
-**Tripwire:** `invariants_v1000_adversarial::frame_role_can_reference_own_frame`.
+**Tripwire:** `invariants_adversarial::frame_role_can_reference_own_frame`.
 
 ---
 
@@ -292,11 +292,11 @@ makes concurrent INSERTs of the same `(s, p, o, ctx, valid_time, polarity)`
 content collapse to a single row. The 16-way concurrent assert test
 confirms this behaviour.
 
-**Tripwire:** `invariants_v1000_adversarial::concurrent_identical_assertions_collapse_to_one`.
+**Tripwire:** `invariants_adversarial::concurrent_identical_assertions_collapse_to_one`.
 
 ---
 
-## F-16. Production smoke at v1000 scale
+## F-16. Production smoke at production scale
 
 **Category:** Performance characterisation. **Severity:** DOC.
 
@@ -312,7 +312,7 @@ On a single Postgres-16 container on a developer laptop:
 These bounds are intentionally generous; they catch order-of-magnitude
 regressions, not micro-benchmark drift.
 
-**Tripwires:** all 6 tests in `invariants_v1000_production_smoke.rs`.
+**Tripwires:** all 6 tests in `invariants_production_smoke.rs`.
 
 ---
 
@@ -324,8 +324,8 @@ regressions, not micro-benchmark drift.
 trip; CJK / Cyrillic / emoji IRIs round-trip.
 
 **Tripwires:**
-- `invariants_v1000_adversarial::very_long_iri_round_trip`
-- `invariants_v1000_adversarial::unicode_iri_round_trip`
+- `invariants_adversarial::very_long_iri_round_trip`
+- `invariants_adversarial::unicode_iri_round_trip`
 
 ---
 
@@ -340,7 +340,7 @@ at most one modality, one extraction level, one claim kind. Setting
 again upserts. If a use case needs multiple values per statement,
 a different table shape is required.
 
-**Tripwires:** `invariants_v1000_idempotency::set_modality_idempotent`
+**Tripwires:** `invariants_idempotency::set_modality_idempotent`
 and similar.
 
 ---
@@ -355,7 +355,7 @@ and similar.
 | Release builder service code (the schema is here; the builder isn't) | M7 release-builder work |
 | TUI tabs for policy admin / IGT view / paradigm view | M0 UI work |
 | LinkML schema generation from SQL | M0 schema-cross-compile work |
-| Lean shapes for v1000 invariants | M4 validation work |
+| Lean shapes for invariants | M4 validation work |
 | New ingest crates (CLDF, UD, UniMorph, LIFT, EAF) | M5/M6 |
 | W3C Verifiable Credentials integration for attestations | v1010 |
 
@@ -391,5 +391,5 @@ review pass).
 ---
 
 *Review by adversarial walkthrough; pre-production posture: green to
-ship the v1000 substrate; M0 milestones (sidecar middleware, query
+ship the substrate; M0 milestones (sidecar middleware, query
 evaluator extensions, release builder service code) follow.*

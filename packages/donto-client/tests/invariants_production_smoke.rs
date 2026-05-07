@@ -1,6 +1,6 @@
-//! v1000 production smoke / scale spike. Runs realistic-shaped batch
+//!  production smoke / scale spike. Runs realistic-shaped batch
 //! operations and asserts they complete in time bounds appropriate
-//! for v1000-on-commodity-Postgres. These are smoke tests — they
+//! for donto on commodity Postgres. These are smoke tests — they
 //! catch order-of-magnitude regressions, not micro-benchmarks.
 
 use std::time::Instant;
@@ -39,7 +39,7 @@ async fn batch_assert_1k_under_two_seconds() {
 }
 
 #[tokio::test]
-async fn one_hundred_v1000_overlay_writes_under_a_second() {
+async fn one_hundred_overlay_writes_under_a_second() {
     let client = pg_or_skip!(connect().await);
     let c = client.pool().get().await.unwrap();
     let prefix = tag("smoke-overlay-100");

@@ -1,4 +1,4 @@
-//! v1000 idempotency: every public function should be safe to call
+//!  idempotency: every public function should be safe to call
 //! twice with the same inputs.
 
 mod common;

@@ -1,4 +1,4 @@
--- v1000 / I1: hypothesis-only flag for claims without evidence.
+-- Trust Kernel / I1: hypothesis-only flag for claims without evidence.
 --
 -- Sparse overlay on donto_statement so we don't rewrite 35M+ rows.
 -- A statement marked hypothesis_only is allowed to lack evidence

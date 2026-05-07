@@ -1,7 +1,7 @@
--- v1000 / §7.1 maturity ladder: E0–E5.
+-- Trust Kernel / §7.1 maturity ladder: E0–E5.
 --
 -- Migration 0002 packs maturity into bits 2-4 of donto_statement.flags
--- (3 bits = 0..7). The ladder was L0..L4. v1000 renames to E0..E5 and
+-- (3 bits = 0..7). The ladder was L0..L4. renamed to E0..E5 and
 -- adds E4 "Corroborated" between the existing reviewed (now E3) and
 -- certified (now E5) tiers. The 3-bit storage already fits 0..7 so no
 -- bit-layout change is required.
@@ -68,7 +68,7 @@ returns text language sql immutable as $$
     end
 $$;
 
--- View the v1000 ladder. Note rows are ordered by E-level, not storage.
+-- View the ladder. Note rows are ordered by E-level, not storage.
 create or replace view donto_v_maturity_ladder_v1000 as
     select 0 as stored, 'E0' as level, 'Raw' as name,
            donto_maturity_description(0) as description

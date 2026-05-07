@@ -1,4 +1,4 @@
-//! v1000 policy + attestation HTTP endpoints.
+//! Policy + attestation HTTP endpoints (Trust Kernel).
 //!
 //! These map directly onto the SQL substrate from migrations 0111
 //! (policy capsule) and 0112 (attestation). They form the read/write
@@ -108,7 +108,9 @@ pub async fn revoke_attestation(
         .revoke_attestation(attestation_id, &req.revoked_by, req.reason.as_deref())
         .await
     {
-        Ok(true) => Json(json!({ "revoked": true, "attestation_id": attestation_id })).into_response(),
+        Ok(true) => {
+            Json(json!({ "revoked": true, "attestation_id": attestation_id })).into_response()
+        }
         Ok(false) => Json(json!({ "revoked": false, "reason": "already revoked or not found" }))
             .into_response(),
         Err(e) => Json(json!({ "error": e.to_string() })).into_response(),

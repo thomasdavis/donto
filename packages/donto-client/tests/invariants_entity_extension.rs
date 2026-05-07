@@ -1,4 +1,4 @@
-//! v1000 / §6.7 entity extension (migration 0108): kind, external_ids,
+//!  / §6.7 entity extension (migration 0108): kind, external_ids,
 //! identity_status, multilingual labels.
 
 mod common;

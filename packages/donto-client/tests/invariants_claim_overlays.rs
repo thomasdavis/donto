@@ -1,4 +1,4 @@
-//! v1000 claim-model overlays: modality (0099), extraction_level (0100),
+//!  claim-model overlays: modality (0099), extraction_level (0100),
 //! confidence multivalue (0101), maturity E-naming (0102), multi-context
 //! (0103), claim_kind (0104), polarity v2 (0098).
 
@@ -90,7 +90,7 @@ async fn modality_view_lists_all_kinds() {
     let client = pg_or_skip!(connect().await);
     let c = client.pool().get().await.unwrap();
     let n: i64 = c
-        .query_one("select count(*) from donto_v_modality_v1000", &[])
+        .query_one("select count(*) from donto_v_modality", &[])
         .await
         .unwrap()
         .get(0);
@@ -305,7 +305,7 @@ async fn maturity_ladder_view_has_six_rows() {
     let client = pg_or_skip!(connect().await);
     let c = client.pool().get().await.unwrap();
     let n: i64 = c
-        .query_one("select count(*) from donto_v_maturity_ladder_v1000", &[])
+        .query_one("select count(*) from donto_v_maturity_ladder", &[])
         .await
         .unwrap()
         .get(0);
@@ -485,7 +485,7 @@ async fn polarity_view_returns_stored_when_no_conflict() {
 
     let p: String = c
         .query_one(
-            "select effective_polarity from donto_v_statement_polarity_v1000 \
+            "select effective_polarity from donto_v_statement_polarity \
              where statement_id = $1",
             &[&s],
         )
@@ -500,7 +500,7 @@ async fn polarity_view_lists_five_kinds() {
     let client = pg_or_skip!(connect().await);
     let c = client.pool().get().await.unwrap();
     let n: i64 = c
-        .query_one("select count(*) from donto_v_polarity_v1000", &[])
+        .query_one("select count(*) from donto_v_polarity", &[])
         .await
         .unwrap()
         .get(0);

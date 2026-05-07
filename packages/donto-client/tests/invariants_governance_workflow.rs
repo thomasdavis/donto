@@ -1,4 +1,4 @@
-//! v1000 workflow surfaces: obligation kinds v2 (0113),
+//!  workflow surfaces: obligation kinds v2 (0113),
 //! review decisions (0114), context multi-parent (0107),
 //! query v2 metadata (0115).
 
@@ -8,7 +8,7 @@ use common::{connect, ctx, tag};
 // -------------------- obligation kinds v2 (0113) -------------------- //
 
 #[tokio::test]
-async fn v1000_obligation_kinds_accepted() {
+async fn extended_obligation_kinds_accepted() {
     let client = pg_or_skip!(connect().await);
     let c = client.pool().get().await.unwrap();
     let ctx_iri = ctx(&client, "ob-v2-kinds").await;
@@ -25,7 +25,7 @@ async fn v1000_obligation_kinds_accepted() {
         "needs_community_authority",
     ] {
         c.query_one(
-            "select donto_emit_v1000_obligation(null, $1, $2, 0::smallint, null, null)",
+            "select donto_emit_obligation(null, $1, $2, 0::smallint, null, null)",
             &[kind, &ctx_iri],
         )
         .await
@@ -45,7 +45,7 @@ async fn v0_obligation_kinds_still_accepted() {
         "needs-human-review",
     ] {
         c.query_one(
-            "select donto_emit_v1000_obligation(null, $1, $2, 0::smallint, null, null)",
+            "select donto_emit_obligation(null, $1, $2, 0::smallint, null, null)",
             &[kind, &ctx_iri],
         )
         .await
@@ -54,14 +54,14 @@ async fn v0_obligation_kinds_still_accepted() {
 }
 
 #[tokio::test]
-async fn v1000_obligation_status_blocked_accepted() {
+async fn obligation_status_blocked_accepted() {
     let client = pg_or_skip!(connect().await);
     let c = client.pool().get().await.unwrap();
     let ctx_iri = ctx(&client, "ob-blocked").await;
 
     let id: uuid::Uuid = c
         .query_one(
-            "select donto_emit_v1000_obligation(null, 'needs_review', $1, 0::smallint, null, null)",
+            "select donto_emit_obligation(null, 'needs_review', $1, 0::smallint, null, null)",
             &[&ctx_iri],
         )
         .await
@@ -91,7 +91,7 @@ async fn obligation_kind_view_lists_nine() {
     let client = pg_or_skip!(connect().await);
     let c = client.pool().get().await.unwrap();
     let n: i64 = c
-        .query_one("select count(*) from donto_v_obligation_kind_v1000", &[])
+        .query_one("select count(*) from donto_v_obligation_kind", &[])
         .await
         .unwrap()
         .get(0);
@@ -322,17 +322,17 @@ async fn query_clauses_seeded() {
     let c = client.pool().get().await.unwrap();
     let n: i64 = c
         .query_one(
-            "select count(*) from donto_query_clause_v1000 where deprecated_in is null",
+            "select count(*) from donto_query_clause where deprecated_in is null",
             &[],
         )
         .await
         .unwrap()
         .get(0);
-    assert!(n >= 25, "expected ≥25 v1000 query clauses, got {n}");
+    assert!(n >= 25, "expected ≥25  query clauses, got {n}");
 }
 
 #[tokio::test]
-async fn query_clauses_v1000_specific_present() {
+async fn query_clauses_extended_specific_present() {
     let client = pg_or_skip!(connect().await);
     let c = client.pool().get().await.unwrap();
     for clause in &[
@@ -345,7 +345,7 @@ async fn query_clauses_v1000_specific_present() {
     ] {
         let n: i64 = c
             .query_one(
-                "select count(*) from donto_query_clause_v1000 where clause_name = $1",
+                "select count(*) from donto_query_clause where clause_name = $1",
                 &[clause],
             )
             .await

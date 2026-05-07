@@ -1,4 +1,4 @@
--- v1000 / I3: append-only event log for non-statement objects.
+-- Trust Kernel / I3: append-only event log for non-statement objects.
 --
 -- donto_statement is already append-only (retraction closes tx_time;
 -- correction creates a new row). This migration extends the same

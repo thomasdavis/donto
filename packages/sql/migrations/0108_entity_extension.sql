@@ -1,7 +1,7 @@
--- v1000 / §6.7 EntityRecord extension.
+-- Trust Kernel / §6.7 EntityRecord extension.
 --
 -- Migration 0057 introduced donto_entity_symbol with iri, hash, kind hint,
--- and lifecycle. v1000 PRD §6.7 specifies a richer entity record:
+-- and lifecycle. PRD §6.7 specifies a richer entity record:
 --   entity_kind, labels (multilingual), external_ids, identity_status, policy_id
 --
 -- We add nullable columns to donto_entity_symbol (treating it as the

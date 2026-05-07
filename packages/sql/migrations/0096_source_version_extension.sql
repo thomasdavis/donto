@@ -1,4 +1,4 @@
--- v1000 / §6.2 SourceVersion: extend donto_document_revision toward the
+-- Trust Kernel / §6.2 SourceVersion: extend donto_document_revision toward the
 -- PRD shape. PRD-named fields not yet present:
 --   version_kind, quality_metrics, derived_from_versions
 --
@@ -25,7 +25,7 @@ create index if not exists donto_revision_version_kind_idx
 create index if not exists donto_revision_derived_from_gin
     on donto_document_revision using gin (derived_from_versions);
 
--- v1000 add-revision entrypoint. Adds version_kind, quality_metrics,
+-- revision-with-typed-version entrypoint. Adds version_kind, quality_metrics,
 -- derived_from. Existing donto_add_revision continues to work.
 create or replace function donto_add_revision_v1000(
     p_document_id          uuid,

@@ -1,6 +1,6 @@
--- v1000 / FR-015 native query metadata.
+-- Trust Kernel / FR-015 native query metadata.
 --
--- Records the v1000 query-language clause vocabulary so that clients
+-- Records the extended query-language clause vocabulary so that clients
 -- (sidecar / parser / TUI) can introspect what's supported and so
 -- adapter code can validate query specs against this registry.
 --
@@ -46,7 +46,7 @@ insert into donto_query_clause_v1000
      'Limit result count.'),
     ('OFFSET',                'projection',
      'Offset result count for paging.'),
-    -- v1000 additions
+    -- canonical additions
     ('MODALITY',              'filter',
      'Filter by modality (descriptive|prescriptive|reconstructed|...).'),
     ('EXTRACTION_LEVEL',      'filter',

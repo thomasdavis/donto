@@ -65,7 +65,7 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/reactions/:id",    get(react::list_reactions))
         // Evidence substrate
         .route("/documents/register",     post(documents::register))
-        .route("/sources/register",       post(documents::register_v1000))
+        .route("/sources/register",       post(documents::register_with_policy))
         .route("/documents/revision",     post(documents::add_revision))
         // Trust Kernel (M0)
         .route("/policy/assign",          post(policy::assign))

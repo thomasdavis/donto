@@ -1,4 +1,4 @@
--- v1000 / §7.3 extraction level overlay.
+-- Trust Kernel / §7.3 extraction level overlay.
 --
 -- Extraction level is the epistemic act behind a claim:
 --   quoted | table_read | example_observed | source_generalization

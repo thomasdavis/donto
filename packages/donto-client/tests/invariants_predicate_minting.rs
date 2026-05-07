@@ -1,4 +1,4 @@
-//! v1000 / §6.9 predicate minting (migration 0110).
+//!  / §6.9 predicate minting (migration 0110).
 
 use serde_json::json;
 

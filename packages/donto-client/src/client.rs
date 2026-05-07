@@ -1166,7 +1166,7 @@ impl DontoClient {
         Ok(row.get::<_, Uuid>(0))
     }
 
-    // ---------- v1000 Trust Kernel client wrappers ----------
+    // ---------- Trust Kernel client wrappers ----------
 
     /// Top-level access check (PRD I2/I6). Returns true iff the caller
     /// has permission to perform the action against the target.
@@ -1289,10 +1289,10 @@ impl DontoClient {
         Ok(row.get::<_, bool>(0))
     }
 
-    /// Register a v1000 source: enforces policy_id on insert (PRD I2).
+    /// Register a source with required policy_id on insert (PRD I2).
     /// Use this instead of `ensure_document` for new code paths.
     #[allow(clippy::too_many_arguments)]
-    pub async fn register_source_v1000(
+    pub async fn register_source(
         &self,
         iri: &str,
         source_kind: &str,
@@ -1305,7 +1305,7 @@ impl DontoClient {
         let c = self.pool.get().await?;
         let row = c
             .query_one(
-                "select donto_register_source_v1000($1, $2, $3, coalesce($4, 'text/plain'), $5, $6, $7, '[]'::jsonb, null, null, null, null, null, '{}'::jsonb)",
+                "select donto_register_source($1, $2, $3, coalesce($4, 'text/plain'), $5, $6, $7, '[]'::jsonb, null, null, null, null, null, '{}'::jsonb)",
                 &[
                     &iri,
                     &source_kind,

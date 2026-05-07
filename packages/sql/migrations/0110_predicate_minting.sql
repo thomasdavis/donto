@@ -1,4 +1,4 @@
--- v1000 / §6.9 predicate minting workflow.
+-- Trust Kernel / §6.9 predicate minting workflow.
 --
 -- The PRD requires that a new predicate cannot be approved without a
 -- definition, examples, domain/range hints, and nearest-neighbor

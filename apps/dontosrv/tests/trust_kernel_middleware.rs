@@ -31,7 +31,12 @@ async fn boot() -> Option<Arc<dontosrv::AppState>> {
     }))
 }
 
-async fn post(app: axum::Router, path: &str, body: Value, caller: Option<&str>) -> (StatusCode, Value) {
+async fn post(
+    app: axum::Router,
+    path: &str,
+    body: Value,
+    caller: Option<&str>,
+) -> (StatusCode, Value) {
     let mut req = Request::builder()
         .method("POST")
         .uri(path)
@@ -40,7 +45,10 @@ async fn post(app: axum::Router, path: &str, body: Value, caller: Option<&str>) 
         req = req.header("x-donto-caller", c);
     }
     let resp = app
-        .oneshot(req.body(Body::from(serde_json::to_vec(&body).unwrap())).unwrap())
+        .oneshot(
+            req.body(Body::from(serde_json::to_vec(&body).unwrap()))
+                .unwrap(),
+        )
         .await
         .unwrap();
     let status = resp.status();
@@ -69,7 +77,7 @@ fn tag(s: &str) -> String {
 }
 
 #[tokio::test]
-async fn register_source_v1000_requires_policy_iri() {
+async fn register_source_requires_policy_iri() {
     let Some(state) = boot().await else {
         eprintln!("skip");
         return;
@@ -94,7 +102,7 @@ async fn register_source_v1000_requires_policy_iri() {
 }
 
 #[tokio::test]
-async fn register_source_v1000_accepts_with_policy() {
+async fn register_source_accepts_with_policy() {
     let Some(state) = boot().await else {
         eprintln!("skip");
         return;
@@ -357,8 +365,7 @@ async fn effective_actions_endpoint_surfaces_policy_state() {
         .await
         .unwrap();
     let app = dontosrv::router(state);
-    let (status, body) =
-        get_path(app, &format!("/policy/effective/document/{target}")).await;
+    let (status, body) = get_path(app, &format!("/policy/effective/document/{target}")).await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["read_content"], true);
     // Public policy gates train_model — confirm.

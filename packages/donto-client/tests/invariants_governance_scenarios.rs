@@ -1,4 +1,4 @@
-//! v1000 governance scenarios: end-to-end flows exercising policy +
+//!  governance scenarios: end-to-end flows exercising policy +
 //! attestation + audit + access enforcement together.
 
 mod common;
@@ -7,7 +7,7 @@ use common::{connect, tag};
 async fn make_target(c: &deadpool_postgres::Object, prefix: &str) -> String {
     let target = format!("doc:{prefix}");
     c.execute(
-        "select donto_register_source_v1000($1, 'pdf', 'policy:default/restricted_pending_review')",
+        "select donto_register_source($1, 'pdf', 'policy:default/restricted_pending_review')",
         &[&target],
     )
     .await

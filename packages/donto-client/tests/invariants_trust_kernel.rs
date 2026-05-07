@@ -1,4 +1,4 @@
-//! v1000 Trust Kernel invariants.
+//!  Trust Kernel invariants.
 //!
 //! Migrations 0111 (policy_capsule) + 0112 (attestation) introduce
 //! the policy/attestation/audit foundation. These tests pin the

@@ -1,4 +1,4 @@
-//! v1000 / I7: alignment relations v2 (migration 0092).
+//!  / I7: alignment relations v2 (migration 0092).
 
 mod common;
 use common::{connect, tag};
@@ -23,7 +23,7 @@ async fn register(
 }
 
 #[tokio::test]
-async fn v1000_relations_accepted() {
+async fn extended_relations_accepted() {
     let client = pg_or_skip!(connect().await);
     let prefix = tag("aln-v2-kinds");
 
@@ -208,7 +208,7 @@ async fn relation_view_has_eleven_rows() {
     let client = pg_or_skip!(connect().await);
     let c = client.pool().get().await.unwrap();
     let n: i64 = c
-        .query_one("select count(*) from donto_v_alignment_relation_v1000", &[])
+        .query_one("select count(*) from donto_v_alignment_relation", &[])
         .await
         .unwrap()
         .get(0);

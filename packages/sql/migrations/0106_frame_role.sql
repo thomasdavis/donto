@@ -1,4 +1,4 @@
--- v1000 / §6.5 FrameRole: typed, indexed role fillers.
+-- Trust Kernel / §6.5 FrameRole: typed, indexed role fillers.
 --
 -- A frame role is one (frame, role-name, value) tuple plus optional
 -- evidence anchors and ranking. Roles are indexed so cross-frame

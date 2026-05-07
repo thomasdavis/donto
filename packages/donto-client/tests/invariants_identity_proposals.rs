@@ -1,4 +1,4 @@
-//! v1000 identity layer (migrations 0093 + 0109): identity proposals
+//!  identity layer (migrations 0093 + 0109): identity proposals
 //! and clustering-hypothesis extensions.
 
 mod common;
@@ -136,20 +136,20 @@ async fn cluster_hypothesis_v2_method_default() {
             "mixed"
         ]
         .contains(&method.as_str()),
-        "method on existing strict hypothesis is in v1000 enum: {method}"
+        "method on existing strict hypothesis is in  enum: {method}"
     );
 }
 
 #[tokio::test]
-async fn cluster_hypothesis_v2_register_with_v1000_metadata() {
+async fn cluster_hypothesis_v2_register_with_extended_metadata() {
     let client = pg_or_skip!(connect().await);
     let c = client.pool().get().await.unwrap();
-    let name = format!("v1000-cluster-{}", uuid::Uuid::new_v4().simple());
+    let name = format!("cluster-{}", uuid::Uuid::new_v4().simple());
 
     let id: i64 = c
         .query_one(
-            "select donto_register_identity_hypothesis_v1000($1, $2, 0.85, 0.05, $3, $4, null, '{}'::jsonb)",
-            &[&name, &"v1000 test cluster", &"human", &"council:test"],
+            "select donto_register_clustering_hypothesis($1, $2, 0.85, 0.05, $3, $4, null, '{}'::jsonb)",
+            &[&name, &" test cluster", &"human", &"council:test"],
         )
         .await
         .unwrap()

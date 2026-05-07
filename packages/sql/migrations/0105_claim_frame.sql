@@ -1,8 +1,8 @@
--- v1000 / §6.5 ClaimFrame: n-ary analyses with indexed roles.
+-- Trust Kernel / §6.5 ClaimFrame: n-ary analyses with indexed roles.
 --
 -- Migration 0054 (event_frames) introduced a frame pattern based on
 -- frame nodes plus role predicates. That works for ad-hoc decomposition
--- but doesn't index roles for cross-frame queries. v1000 PRD §6.5 wants
+-- but doesn't index roles for cross-frame queries. PRD §6.5 wants
 -- structured frames with typed role indexing.
 --
 -- We add donto_claim_frame (the frame header) here. Roles land in 0106.

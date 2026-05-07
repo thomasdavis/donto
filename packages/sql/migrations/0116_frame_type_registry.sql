@@ -1,6 +1,6 @@
--- v1000 / FR-005 frame type registry.
+-- Trust Kernel / FR-005 frame type registry.
 --
--- Registers the v1000 frame type vocabulary including the eighteen
+-- Registers the canonical frame type vocabulary including the eighteen
 -- language-pilot frame types from PRD §13.4 plus cross-domain types
 -- (medical, legal, scientific, identity).
 --
@@ -54,7 +54,7 @@ begin
 end;
 $$;
 
--- Seed v1000 language-pilot frame types (PRD §13.4).
+-- Seed language-pilot frame types (PRD §13.4).
 insert into donto_frame_type
     (frame_type, domain, description, required_roles, optional_roles) values
     ('phoneme_inventory', 'linguistics/phonology',

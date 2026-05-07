@@ -1,4 +1,4 @@
-//! v1000 adversarial review: edge cases, security spot checks,
+//! Adversarial review: edge cases, security spot checks,
 //! known-gap tripwires, and behavioural guarantees that don't show
 //! up in happy-path tests.
 //!
@@ -14,8 +14,8 @@ use serde_json::json;
 // Trust Kernel — gap tripwires.
 //
 // The legacy `donto_ensure_document` and `donto_register_document` SQL
-// functions DO NOT require policy_id. The v1000 entry point
-// `donto_register_source_v1000` does. Until the HTTP layer is migrated
+// functions DO NOT require policy_id. The  entry point
+// `donto_register_source` does. Until the HTTP layer is migrated
 // in M0's middleware step, callers using the legacy functions can
 // still register a source with NULL policy_id. These tests pin the
 // current state so a future middleware change isn't surprising:
@@ -23,7 +23,7 @@ use serde_json::json;
 //   * `legacy_register_document_does_not_enforce_policy` — asserts
 //     the bypass exists today (so the test will FAIL when the bypass
 //     is closed, prompting a deliberate migration).
-//   * `v1000_register_enforces_policy` — asserts the v1000 path is
+//   * `register_source_enforces_policy` — asserts the  path is
 //     correct.
 // --------------------------------------------------------------------
 
@@ -72,14 +72,14 @@ async fn legacy_register_document_does_not_enforce_policy() {
 }
 
 #[tokio::test]
-async fn v1000_register_enforces_policy() {
+async fn register_source_enforces_policy() {
     let client = pg_or_skip!(connect().await);
     let c = client.pool().get().await.unwrap();
-    let prefix = tag("adv-v1000-enforce");
+    let prefix = tag("adv-enforce-policy");
     let res = c
         .query_one(
-            "select donto_register_source_v1000($1, 'pdf', null)",
-            &[&format!("src:{prefix}/v1000")],
+            "select donto_register_source($1, 'pdf', null)",
+            &[&format!("src:{prefix}/has-policy")],
         )
         .await;
     assert!(res.is_err());
@@ -446,7 +446,7 @@ async fn very_long_iri_round_trip() {
     let iri = format!("ex:{prefix}/{long_path}");
 
     c.execute(
-        "select donto_register_source_v1000($1, 'pdf', 'policy:default/public')",
+        "select donto_register_source($1, 'pdf', 'policy:default/public')",
         &[&iri],
     )
     .await
@@ -475,7 +475,7 @@ async fn unicode_iri_round_trip() {
     for fragment in &["Yolŋu", "Український", "中文", "🌏-tag"] {
         let iri = format!("ex:{prefix}/{fragment}");
         c.execute(
-            "select donto_register_source_v1000($1, 'pdf', 'policy:default/public')",
+            "select donto_register_source($1, 'pdf', 'policy:default/public')",
             &[&iri],
         )
         .await
@@ -495,7 +495,7 @@ async fn unicode_iri_round_trip() {
 // --------------------------------------------------------------------
 // Empty / whitespace-only IRI.
 //
-// donto_register_source_v1000 doesn't validate IRI format; this just
+// donto_register_source doesn't validate IRI format; this just
 // pins current behaviour so a future tightening is deliberate.
 // --------------------------------------------------------------------
 
@@ -506,7 +506,7 @@ async fn empty_iri_currently_accepted_by_substrate() {
     // current substrate doesn't validate IRI shape; document this.
     let res = c
         .execute(
-            "select donto_register_source_v1000('', 'pdf', 'policy:default/public')",
+            "select donto_register_source('', 'pdf', 'policy:default/public')",
             &[],
         )
         .await;

@@ -278,7 +278,7 @@ pub const MIGRATIONS: &[(&str, &str)] = &[
         "0067_rule_engine",
         include_str!("../../sql/migrations/0067_rule_engine.sql"),
     ),
-    // ---- v1000 foundation (PRD-V1000-001) ----
+    // ---- Trust Kernel foundation ----
     (
         "0089_hypothesis_only_flag",
         include_str!("../../sql/migrations/0089_hypothesis_only_flag.sql"),
@@ -390,6 +390,10 @@ pub const MIGRATIONS: &[(&str, &str)] = &[
     (
         "0116_frame_type_registry",
         include_str!("../../sql/migrations/0116_frame_type_registry.sql"),
+    ),
+    (
+        "0117_rename_drop_v1000_suffix",
+        include_str!("../../sql/migrations/0117_rename_drop_v1000_suffix.sql"),
     ),
 ];
 

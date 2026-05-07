@@ -1,4 +1,4 @@
--- v1000 / I4: extend argument relations to the v1000 nine-kind set.
+-- Trust Kernel / I4: extend argument relations to the nine-kind set.
 --
 -- The PRD argument relations are:
 --   supports | rebuts | undercuts | qualifies | explains
@@ -14,7 +14,7 @@
 --   3. add review_state column (overlay-style default)
 --      for per-argument review tracking;
 --   4. seed a controlled-vocabulary view that names the canonical
---      v1000 set so consumers can filter to it.
+--      set so consumers can filter to it.
 
 alter table donto_argument
     drop constraint if exists donto_argument_relation_check;
@@ -27,7 +27,7 @@ alter table donto_argument
         'supports', 'rebuts', 'undercuts',
         'endorses', 'supersedes', 'qualifies',
         'potentially_same', 'same_referent', 'same_event',
-        -- v1000 additions
+        -- canonical additions
         'explains',
         'alternative_analysis_of',
         'same_evidence_different_analysis',

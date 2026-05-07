@@ -1,15 +1,15 @@
-# donto v1000 — Canonical PRD
+# donto — Canonical PRD
 
 **Document type:** Product requirements document, research architecture,
 and agentic-coder build brief.
 **Codename:** donto.
-**Version:** PRD-V1000-001.
+**Version:** PRD-TRUST-KERNEL-001.
 **Date:** 2026-05-07.
 **Status:** Canonical. Supersedes
 [`ATLAS-ZERO-FRONTIER.md`](ATLAS-ZERO-FRONTIER.md),
-[`V1000-REFACTOR-PLAN.md`](V1000-REFACTOR-PLAN.md), and
+[`REFACTOR-PLAN.md`](REFACTOR-PLAN.md), and
 [`LANGUAGE-EXTRACTION-PLAN.md`](LANGUAGE-EXTRACTION-PLAN.md) as the
-single source of truth for the v1000 product. Those documents remain
+single source of truth for the product. Those documents remain
 on disk as historical artefacts.
 **Authoring stance:** From-scratch product model. Existing standards
 and formats — CLDF, RDF, SPARQL, CoNLL-U, UniMorph, TEI, LIFT, ELAN/EAF,
@@ -20,12 +20,12 @@ interoperability targets. They are not the native architecture.
 
 ## How to read this document
 
-This is the **canonical PRD** for donto v1000. It states the product in
+This is the **canonical PRD** for donto. It states the product in
 its own terms, then maps every requirement to the current donto
 codebase with file/migration/line-number citations. Each functional
 area is structured:
 
-- **Requirement** — what v1000 must do.
+- **Requirement** — what the substrate must do.
 - **What donto has today** — current state with citations.
 - **Delta** — what changes the codebase.
 - **Verdict** — `no-op` / `extend` / `build`.
@@ -123,7 +123,7 @@ has no policy field. Access policy as a concept does not yet exist.
 **Delta:** New tables for policy capsule, attestation, audit (see §6.12,
 §6.13). Sidecar middleware enforces policy presence on
 `POST /sources`.
-**Verdict:** Build (the largest single feature in v1000; M0 deliverable).
+**Verdict:** Build (the largest single feature in this release; M0 deliverable).
 
 ### I3. No destructive overwrite
 
@@ -167,7 +167,7 @@ machine confidence cannot promote a claim by itself.
 (`donto_confidence` in migration `0038_confidence.sql` is overlay;
 maturity is `flags & 0b11100`). However, the extraction pipeline
 auto-promotes via `confidence_to_maturity` at `helpers.py:39` (0.95 →
-4, 0.8 → 3, 0.6 → 2, 0.4 → 1, else 0). For v1000, this is policy.
+4, 0.8 → 3, 0.6 → 2, 0.4 → 1, else 0). This is policy in this release.
 **Delta:** Cap auto-promotion at E2 for any extraction-produced
 claim; require human review action for E3+. Implement in
 `activities.py` ingest activity. Domain-specific ceilings configurable
@@ -259,7 +259,7 @@ Endpoint `POST /releases`. M7 deliverable.
 
 ## 3. Product users
 
-### 3.1 Primary users for v1000
+### 3.1 Primary users
 
 | User | Job |
 |---|---|
@@ -281,7 +281,7 @@ Endpoint `POST /releases`. M7 deliverable.
 
 ## 4. Scope
 
-### 4.1 v1000 in scope
+### 4.1 in scope
 
 1. Source registration and versioned evidence storage.
 2. Policy-first ingest.
@@ -303,7 +303,7 @@ Endpoint `POST /releases`. M7 deliverable.
 13. Release builder with reproducibility manifests.
 14. Linguistic pilot domain demonstrating the hardest evidence class.
 
-### 4.2 v1000 out of scope
+### 4.2 out of scope
 
 1. Replacing existing linguistic tools, archives, medical ontologies,
    legal databases, or publication systems.
@@ -878,7 +878,7 @@ already supports versions; lineage via FK; content-hash dedup.
 
 ### FR-003 Anchor creation and validation
 
-Supported anchors v1000: `whole_source`, `char_span`, `page_box`,
+Supported anchor kinds: `whole_source`, `char_span`, `page_box`,
 `table_cell`, `csv_row`, `json_pointer`, `xml_xpath`, `media_time`,
 `token_range`, `annotation_id`. Invalid locator → reject or quarantine.
 **donto today.** `POST /evidence/link/span` (line 67) creates evidence
@@ -909,7 +909,7 @@ Frame roles indexed.
 
 ### FR-006 Context scopes
 
-Supported v1000 kinds listed in §6.6. Inheritance queryable. Access
+Supported kinds listed in §6.6. Inheritance queryable. Access
 policy may inherit through context trees.
 **donto today.** Context tree exists; six kinds supported; inheritance
 via parent FK.
@@ -1084,11 +1084,11 @@ no release audit.
 |---|---|---|
 | NFR-001 Security | Restricted reads require policy + attestation; external model calls pass policy check; encryptable at rest; tamper-evident audit. | M0 builds. |
 | NFR-002 Privacy and governance | Distinct read/quote/derive/export/train/publish permissions; policy inheritance to embeddings and summaries; community/institution-specific vocabularies. | M0 builds. |
-| NFR-003 Scalability | 10M claims commodity; 100M anchors with partitioning path; 1B target for v2000; P95 < 2s for indexed queries at 10M. | Current: ~35M statements at 27GB on a single Postgres node. v1000 maintains. |
+| NFR-003 Scalability | 10M claims commodity; 100M anchors with partitioning path; 1B target for v2000; P95 < 2s for indexed queries at 10M. | Current: ~35M statements at 27GB on a single Postgres node. this release maintains. |
 | NFR-004 Reliability | Idempotent ingestion/extraction; quarantine path; checksum-stable manifests. | Existing idempotency invariant; release manifest is M7. |
-| NFR-005 Interoperability | Native donto-jsonl first; v1000 ships RO-Crate + one domain export; RDF/JSON-LD/CLDF/CoNLL-U as adapters. | Native JSONL exists; RO-Crate is M7; CLDF is M6. |
+| NFR-005 Interoperability | Native donto-jsonl first; this release ships RO-Crate + one domain export; RDF/JSON-LD/CLDF/CoNLL-U as adapters. | Native JSONL exists; RO-Crate is M7; CLDF is M6. |
 | NFR-006 Explainability | Every claim view shows source, anchor, context, policy, run, confidence, maturity, modality, review state, related disagreements, lens. | `donto_claim_card()` (migration `0034`) covers most; extend for policy and modality. |
-| NFR-007 Testability | Product invariants automated; policy leakage in CI; adapter round-trip with loss reports. | Five invariant suites exist; extend for v1000. |
+| NFR-007 Testability | Product invariants automated; policy leakage in CI; adapter round-trip with loss reports. | Five invariant suites exist; extend in this release. |
 
 ---
 
@@ -1097,7 +1097,7 @@ no release audit.
 ### 10.1 Component map
 
 ```text
-donto v1000
+donto
 ├── Trust Kernel
 │   ├── PolicyCapsule service
 │   ├── Attestation service
@@ -1174,7 +1174,7 @@ donto v1000
 - **Postgres** (existing): source metadata, anchors, claims, frames,
   policies, attestations, alignments, identities, arguments,
   obligations, audit events.
-- **Object storage** (new in v1000): PDFs, images, audio, video,
+- **Object storage** (new in this release): PDFs, images, audio, video,
   large datasets. New crate `packages/donto-blob/` wraps signed-URL
   access. Default dev: MinIO. Production: choose S3-compatible
   (decided per deployment).
@@ -1186,7 +1186,7 @@ donto v1000
   release jobs.
 
 The storage layer is event-sourced for destructive operations — already
-true for `donto_statement`; extended in v1000 to alignments, identities,
+true for `donto_statement`; extended in this release to alignments, identities,
 policies, attestations, reviews via `donto_event_log`.
 
 ### 10.3 API posture
@@ -1272,7 +1272,7 @@ POLARITY, MATURITY, IDENTITY, PREDICATES, PROJECT, LIMIT/OFFSET).
 SPARQL subset has PREFIX, SELECT, WHERE, GRAPH, FILTER, LIMIT, OFFSET.
 PRESET parses but does not evaluate.
 
-**Delta.** v1000 query language extensions:
+**Delta.** extended query language extensions:
 - Add `MODALITY` clause.
 - Add `EXTRACTION_LEVEL` clause.
 - Add `IDENTITY_LENS` clause (replaces / extends current `IDENTITY`).
@@ -1342,7 +1342,7 @@ Unresolved authority creates a `needs_community_authority` obligation.
 
 ### 12.5 Governance product surfaces
 
-v1000 UI:
+UI:
 
 - Policy registry.
 - Attestation registry.
@@ -1385,7 +1385,7 @@ represented by provisional entities.
 
 ### 13.3 Source categories
 
-v1000 supports at minimum:
+Supports at minimum:
 
 1. Registry datasets.
 2. Comparative typological databases.
@@ -1526,7 +1526,7 @@ Researcher can:
 
 ### 15.3 Reviewer incentives as product design
 
-The reviewer bottleneck is product risk, not operations. v1000 makes
+The reviewer bottleneck is product risk, not operations. this release makes
 review valuable by:
 
 - Making review decisions citable in releases.
@@ -1677,7 +1677,7 @@ Optional exports:
 
 ## 18. Product milestones — M0 through M9
 
-The fresh PRD's milestone sequence is the canonical sequence. v1000
+The fresh PRD's milestone sequence is the canonical sequence. The release
 ships M0 → M7 in the next ~12 months; M8 and M9 are research /
 hardening phases extending into v1100.
 
@@ -1830,7 +1830,7 @@ Deliverables:
 Acceptance:
 - Release blocks policy violations.
 - Re-running unchanged release reproduces checksums (manifest-stable;
-  see §15 of `V1000-REFACTOR-PLAN.md` superseded note for caveat).
+  see §15 of `REFACTOR-PLAN.md` superseded note for caveat).
 - Release package includes citation metadata.
 
 ### M8 — Scale and Calibration
@@ -2234,7 +2234,7 @@ experts before v2000 commitments.
 | RB10 | Release durability (DOI, RO-Crate, Software Heritage, content-addressed) |
 
 Detailed prompts in `ATLAS-ZERO-FRONTIER.md` §8 (preserved as historical
-reference; replace "Atlas Zero" with "donto" when re-using).
+reference; replace "donto" with "donto" when re-using).
 
 ---
 
@@ -2262,9 +2262,9 @@ TimeML; EDTF.
 
 ---
 
-## 26. v1000 definition of done
+## 26. Definition of done
 
-donto v1000 is done when all of the following hold:
+donto is done when all of the following hold:
 
 1. A source cannot be ingested without policy classification.
 2. A restricted source cannot leak through extraction, embedding,
@@ -2313,7 +2313,7 @@ and reproducible.
 
 ## Appendix A. Implementation data dictionary
 
-### Tables (donto v1000 superset)
+### Tables (donto superset)
 
 ```text
 donto_context                       (existing, extended kinds)
@@ -2459,7 +2459,7 @@ Checked during this PRD's drafting on 2026-05-06.
 
 ---
 
-## Appendix D. Migration index — donto v1000 schema additions
+## Appendix D. Migration index — donto schema additions
 
 ```
 0089 hypothesis_only_flag

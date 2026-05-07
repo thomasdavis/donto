@@ -1,6 +1,6 @@
--- v1000 / FR-011 obligation kinds extension.
+-- Trust Kernel / FR-011 obligation kinds extension.
 --
--- v1000 PRD names nine obligation kinds:
+-- PRD names nine obligation kinds:
 --   needs_evidence, needs_policy, needs_review,
 --   needs_identity_resolution, needs_alignment_review,
 --   needs_anchor_repair, needs_contradiction_review,
@@ -12,9 +12,9 @@
 --   needs-relation-validation, needs-human-review,
 --   needs-confidence-boost, needs-context-resolution, custom
 --
--- Approach: extend the CHECK constraint to allow both the v0 and v1000
--- kinds. v0 callers continue to work; new code uses the v1000 names.
--- Also extend status to v1000's six values (adding 'blocked').
+-- Approach: extend the CHECK constraint to allow v0 and canonical
+-- kinds. v0 callers continue to work; new code uses the canonical names.
+-- Also extend status to the six canonical values (adding 'blocked').
 
 alter table donto_proof_obligation
     drop constraint if exists donto_proof_obligation_obligation_type_check;
@@ -27,7 +27,7 @@ alter table donto_proof_obligation
         'needs-unit-normalization', 'needs-entity-disambiguation',
         'needs-relation-validation', 'needs-human-review',
         'needs-confidence-boost', 'needs-context-resolution', 'custom',
-        -- v1000 additions (canonical underscore naming)
+        -- canonical additions (canonical underscore naming)
         'needs_evidence',
         'needs_policy',
         'needs_review',
@@ -48,8 +48,8 @@ alter table donto_proof_obligation
         'open', 'in_progress', 'resolved', 'rejected', 'deferred', 'blocked'
     ));
 
--- Helper: emit a v1000-kind obligation. Calls the existing
--- donto_emit_obligation under the hood; preserves the v1000 kind name.
+-- Helper: emit a typed obligation. Calls the existing
+-- donto_emit_obligation under the hood; preserves the canonical kind name.
 create or replace function donto_emit_v1000_obligation(
     p_statement_id   uuid,
     p_obligation_type text,
@@ -71,7 +71,7 @@ begin
 end;
 $$;
 
--- Reference: enumerate canonical v1000 kinds for clients.
+-- Reference: enumerate canonical kinds for clients.
 create or replace view donto_v_obligation_kind_v1000 as
     select * from (values
         ('needs_evidence',              'Claim lacks an evidence anchor.'),

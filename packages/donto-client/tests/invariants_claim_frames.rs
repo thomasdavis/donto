@@ -1,4 +1,4 @@
-//! v1000 frames + frame_role + frame_type_registry
+//!  frames + frame_role + frame_type_registry
 //! (migrations 0105, 0106, 0116).
 
 mod common;

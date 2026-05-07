@@ -1,4 +1,4 @@
-//! v1000 integration: end-to-end flow exercising multiple kernels.
+//!  integration: end-to-end flow exercising multiple kernels.
 //!
 //! Source registration with policy (M0/M1) → claim with modality and
 //! extraction level (M2) → predicate minting (M3) → review decision
@@ -25,7 +25,7 @@ async fn end_to_end_extraction_workflow() {
     let src_iri = format!("src:{prefix}/grammar.pdf");
     let _doc_id: uuid::Uuid = c
         .query_one(
-            "select donto_register_source_v1000($1, 'pdf', 'policy:default/public')",
+            "select donto_register_source($1, 'pdf', 'policy:default/public')",
             &[&src_iri],
         )
         .await
@@ -186,7 +186,7 @@ async fn restricted_source_blocks_export_action() {
 
     let src_iri = format!("src:{prefix}/restricted.eaf");
     c.execute(
-        "select donto_register_source_v1000($1, 'audio', 'policy:default/community_restricted')",
+        "select donto_register_source($1, 'audio', 'policy:default/community_restricted')",
         &[&src_iri],
     )
     .await

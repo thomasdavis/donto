@@ -1,4 +1,4 @@
--- v1000 / §7.2 confidence multi-value model.
+-- Trust Kernel / §7.2 confidence multi-value model.
 --
 -- Migration 0038 introduced donto_stmt_confidence with a single
 -- `confidence` value plus a `confidence_source`. The PRD §7.2 stores

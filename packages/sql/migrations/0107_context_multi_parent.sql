@@ -1,4 +1,4 @@
--- v1000 / §6.6 ContextScope multi-parent support.
+-- Trust Kernel / §6.6 ContextScope multi-parent support.
 --
 -- donto_context (migration 0001) has a single `parent` column. v1000
 -- contexts can belong to multiple parents (e.g., a hypothesis context
@@ -7,7 +7,7 @@
 -- parents. The original `parent` column remains the "primary" parent
 -- for backwards compatibility.
 --
--- Also extends the context kind vocabulary to the v1000 set and adds
+-- Also extends the context kind vocabulary to the set and adds
 -- a `created_by` column.
 
 create table if not exists donto_context_parent (
@@ -43,7 +43,7 @@ begin
 end;
 $$;
 
--- Add v1000 created_by column to donto_context (sparse; legacy rows null).
+-- Add created_by column to donto_context (sparse; legacy rows null).
 alter table donto_context
     add column if not exists created_by text;
 

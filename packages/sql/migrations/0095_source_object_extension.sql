@@ -1,4 +1,4 @@
--- v1000 / §6.1 SourceObject: extend donto_document toward the PRD shape.
+-- Trust Kernel / §6.1 SourceObject: extend donto_document toward the PRD shape.
 --
 -- The PRD names these fields that don't yet exist on donto_document:
 --   source_kind, creators, source_date, registered_by, policy_id,
@@ -7,7 +7,7 @@
 --
 -- Rather than rewrite donto_document, we add nullable columns. Existing
 -- callers (donto_ensure_document, donto_register_document) keep working;
--- new callers can populate the v1000 fields.
+-- new callers can populate the extension fields.
 --
 -- policy_id is added but its FK is wired in 0111 (policy capsule) so this
 -- migration doesn't depend on M0 having shipped.

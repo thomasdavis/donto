@@ -1,8 +1,8 @@
--- v1000 / §6.8 identity hypothesis v2 — extension to the
+-- Trust Kernel / §6.8 identity hypothesis v2 — extension to the
 -- existing donto_identity_hypothesis (clustering-solution table).
 --
 -- Migration 0093 added donto_identity_proposal (per-relation proposals).
--- This migration extends the clustering table with v1000 metadata:
+-- This migration extends the clustering table with extension metadata:
 --   * link to the proposal that originated the hypothesis (if any)
 --   * extended status enum with v1000 values
 --   * authority/method tracking
@@ -29,7 +29,7 @@ create index if not exists donto_idhyp_proposal_idx
     on donto_identity_hypothesis (provenance_proposal_id)
     where provenance_proposal_id is not null;
 
--- Helper: register a clustering hypothesis with v1000 metadata.
+-- Helper: register a clustering hypothesis with extension metadata.
 create or replace function donto_register_identity_hypothesis_v1000(
     p_name              text,
     p_description       text default null,

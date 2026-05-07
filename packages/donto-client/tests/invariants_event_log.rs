@@ -1,4 +1,4 @@
-//! v1000 / I3: append-only event log (migration 0090).
+//!  / I3: append-only event log (migration 0090).
 
 mod common;
 use common::{connect, tag};

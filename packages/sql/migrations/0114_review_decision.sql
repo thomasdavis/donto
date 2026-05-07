@@ -1,7 +1,7 @@
--- v1000 / FR-012 review workflow.
+-- Trust Kernel / FR-012 review workflow.
 --
 -- Reactions (migration 0017) are folksonomic, not structured review.
--- v1000 introduces donto_review_decision: structured, citable,
+-- This release introduces donto_review_decision: structured, citable,
 -- per-target reviewer decisions with rationale.
 --
 -- A review decision targets one of:

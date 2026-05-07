@@ -1,4 +1,4 @@
--- v1000 / §6.4 ClaimRecord claim_kind overlay.
+-- Trust Kernel / §6.4 ClaimRecord claim_kind overlay.
 --
 -- The PRD §6.4 names eight claim kinds:
 --   atomic | frame_summary | absence | identity | alignment

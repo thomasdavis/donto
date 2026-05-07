@@ -1,5 +1,5 @@
-//! v1000 constraint paths: every CHECK and FK constraint introduced
-//! by the v1000 migrations rejects the values it should and accepts
+//!  constraint paths: every CHECK and FK constraint introduced
+//! by the  migrations rejects the values it should and accepts
 //! the ones it should.
 
 mod common;
@@ -241,7 +241,7 @@ async fn source_kind_check() {
     let prefix = tag("cp-skind");
     let res = c
         .execute(
-            "select donto_register_source_v1000($1, 'mythical', 'policy:default/public')",
+            "select donto_register_source($1, 'mythical', 'policy:default/public')",
             &[&format!("src:{prefix}")],
         )
         .await;
@@ -254,7 +254,7 @@ async fn source_status_check() {
     let c = client.pool().get().await.unwrap();
     let prefix = tag("cp-sstat");
     c.execute(
-        "select donto_register_source_v1000($1, 'pdf', 'policy:default/public')",
+        "select donto_register_source($1, 'pdf', 'policy:default/public')",
         &[&format!("src:{prefix}")],
     )
     .await
@@ -624,7 +624,7 @@ async fn obligation_status_check() {
     let ctx_iri = ctx(&client, "cp-ob-status").await;
     let id: uuid::Uuid = c
         .query_one(
-            "select donto_emit_v1000_obligation(null, 'needs_review', $1, 0::smallint, null, null)",
+            "select donto_emit_obligation(null, 'needs_review', $1, 0::smallint, null, null)",
             &[&ctx_iri],
         )
         .await

@@ -1,4 +1,4 @@
--- v1000 / §6.4 ClaimRecord polarity v2.
+-- Trust Kernel / §6.4 ClaimRecord polarity v2.
 --
 -- Migration 0002 packed polarity into bits 0-1 of donto_statement.flags
 -- with four values: asserted (0), negated (1), absent (2), unknown (3).
@@ -43,7 +43,7 @@ language sql stable as $$
       and (p_context is null or v.context = p_context)
 $$;
 
--- Reference: enumerate v1000 polarity values for clients.
+-- Reference: enumerate canonical polarity values for clients.
 create or replace view donto_v_polarity_v1000 as
     select * from (values
         ('asserted',    'Source asserts the claim.'),

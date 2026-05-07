@@ -1,4 +1,4 @@
--- v1000 / §6.13 Attestation — Trust Kernel.
+-- Trust Kernel / §6.13 Attestation — Trust Kernel.
 --
 -- An attestation is proof that a holder agent may perform certain
 -- actions under a policy, granted by an issuer agent for a specific

@@ -1,12 +1,12 @@
--- v1000 / I8: identity is a hypothesis, not a foreign key.
+-- Trust Kernel / I8: identity is a hypothesis, not a foreign key.
 --
 -- Migration 0061 introduced donto_identity_hypothesis as a clustering
--- solution (strict / likely / exploratory). v1000 PRD §6.8 specifies a
+-- solution (strict / likely / exploratory). PRD §6.8 specifies a
 -- richer per-hypothesis structure with hypothesis_kind, method, and
 -- status enums distinct from the clustering-solution status.
 --
 -- Rather than overload the existing table (which represents a *solution*
--- across many edges), v1000 adds a peer table `donto_identity_proposal`
+-- across many edges), this migration adds a peer table `donto_identity_proposal`
 -- that represents an individual identity-relation proposal between
 -- two or more entities. The existing donto_identity_hypothesis remains
 -- the clustering-solution table; donto_identity_proposal is the

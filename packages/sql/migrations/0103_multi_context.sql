@@ -1,4 +1,4 @@
--- v1000 / §6.4 ClaimRecord multi-context support.
+-- Trust Kernel / §6.4 ClaimRecord multi-context support.
 --
 -- A claim may belong to multiple context scopes (e.g., a source context
 -- AND a hypothesis context AND a project context). Migration 0001 has a

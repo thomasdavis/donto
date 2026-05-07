@@ -1,4 +1,4 @@
--- v1000 / I10: a release is a reproducible view.
+-- Trust Kernel / I10: a release is a reproducible view.
 --
 -- A release is not an exported file. It is a named query plus a
 -- policy report, source manifest, transformation manifest, checksum

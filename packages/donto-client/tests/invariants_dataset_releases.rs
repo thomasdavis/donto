@@ -1,4 +1,4 @@
-//! v1000 / I10: dataset releases (migration 0094).
+//!  / I10: dataset releases (migration 0094).
 
 mod common;
 use common::{connect, tag};

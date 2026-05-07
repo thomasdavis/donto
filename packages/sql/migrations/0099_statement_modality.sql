@@ -1,4 +1,4 @@
--- v1000 / §7.4 modality overlay.
+-- Trust Kernel / §7.4 modality overlay.
 --
 -- Modality describes the claim's relationship to the world:
 --   descriptive | prescriptive | reconstructed | inferred | elicited

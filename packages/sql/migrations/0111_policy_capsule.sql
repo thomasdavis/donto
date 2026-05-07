@@ -1,4 +1,4 @@
--- v1000 / §6.12 PolicyCapsule — the Trust Kernel.
+-- Trust Kernel / §6.12 PolicyCapsule — the Trust Kernel.
 --
 -- The largest single feature of v1000 and the M0 deliverable. A policy
 -- capsule governs source access, derived data, export, model use, and

@@ -1,4 +1,4 @@
--- v1000 / §6.3 EvidenceAnchor: typed anchor-kind registry with
+-- Trust Kernel / §6.3 EvidenceAnchor: typed anchor-kind registry with
 -- per-kind locator schemas.
 --
 -- donto_span (migration 0025) and donto_content_regions (0041) already
@@ -19,7 +19,7 @@ create table if not exists donto_anchor_kind (
     is_active           boolean not null default true
 );
 
--- Seed the v1000 anchor kinds.
+-- Seed the anchor kinds.
 insert into donto_anchor_kind (kind, description, required_keys, optional_keys) values
     ('whole_source',
      'The whole source object; locator is empty.',

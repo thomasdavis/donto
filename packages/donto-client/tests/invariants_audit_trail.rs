@@ -1,5 +1,5 @@
-//! v1000 audit-trail invariants: every state-changing operation on
-//! v1000 objects emits an event into donto_event_log with the right
+//! Audit-trail invariants: every state-changing operation on
+//!  objects emits an event into donto_event_log with the right
 //! target_kind and event_type.
 
 mod common;

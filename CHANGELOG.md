@@ -5,10 +5,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
-### v1000 foundation (PRD-V1000-001)
+### Trust Kernel foundation (PRD-TRUST-KERNEL-001)
 
 donto's transition into an evidence operating system for contested
-knowledge. See `docs/DONTO-V1000-PRD.md` for the canonical PRD.
+knowledge. See `docs/DONTO-PRD.md` for the canonical PRD.
 
 #### Schema additions (28 migrations, 0089–0116)
 
@@ -54,7 +54,7 @@ knowledge. See `docs/DONTO-V1000-PRD.md` for the canonical PRD.
 - **Source object extension (§6.1):** `donto_document` extended with
   `source_kind`, `creators`, `source_date` (EDTF), `registered_by`,
   `policy_id`, `content_address`, `native_format`, `adapter_used`,
-  `status`. New `donto_register_source_v1000` enforces policy
+  `status`. New `donto_register_source` enforces policy
   presence (PRD I2 — no source without policy).
 - **Source version extension (§6.2):** `donto_document_revision`
   extended with `version_kind`, `quality_metrics`,
@@ -65,7 +65,7 @@ knowledge. See `docs/DONTO-V1000-PRD.md` for the canonical PRD.
   image_box, media_time, table_cell, csv_row, json_pointer,
   xml_xpath, html_css, token_range, annotation_id, archive_field).
   Per-kind locator validators.
-- **Polarity v2 (§6.4):** view `donto_v_statement_polarity_v1000`
+- **Polarity v2 (§6.4):** view `donto_v_statement_polarity`
   surfaces derived `conflicting` polarity without storing a fifth
   bit value.
 - **Statement modality (§7.4):** `donto_stmt_modality` overlay with
@@ -104,7 +104,7 @@ knowledge. See `docs/DONTO-V1000-PRD.md` for the canonical PRD.
   split, escalate, mark_sensitive, defer) and rationale-required
   constraint. `donto_review_queue` view.
 - **Obligation kinds v2 (FR-011):** extended
-  `donto_proof_obligation` with v1000 kinds (`needs_evidence`,
+  `donto_proof_obligation` with extended kinds (`needs_evidence`,
   `needs_policy`, `needs_review`, `needs_identity_resolution`,
   `needs_alignment_review`, `needs_anchor_repair`,
   `needs_contradiction_review`, `needs_formal_validation`,
@@ -113,17 +113,17 @@ knowledge. See `docs/DONTO-V1000-PRD.md` for the canonical PRD.
 - **Frame type registry (FR-005):** `donto_frame_type` with seed
   vocabulary covering the 18 PRD §13.4 language-pilot frame types
   plus 6 cross-domain frames (medicine, law, science, governance).
-- **Query language v2 metadata (FR-015):** `donto_query_clause_v1000`
-  records the v1000 clause vocabulary including new clauses
+- **Query language v2 metadata (FR-015):** `donto_query_clause`
+  records the extended clause vocabulary including new clauses
   (MODALITY, EXTRACTION_LEVEL, IDENTITY_LENS, SCHEMA_LENS,
   REVIEW_STATE, POLICY_ALLOWS, AS_OF, etc.) for parser/evaluator
   reference.
 
 #### Documentation
 
-- New canonical PRD: `docs/DONTO-V1000-PRD.md`. Replaces the
+- New canonical PRD: `docs/DONTO-PRD.md`. Replaces the
   three planning docs (`docs/LANGUAGE-EXTRACTION-PLAN.md`,
-  `docs/V1000-REFACTOR-PLAN.md`,
+  `docs/REFACTOR-PLAN.md`,
   `docs/ATLAS-ZERO-FRONTIER.md`) which remain on disk as historical
   artefacts.
 
@@ -135,7 +135,7 @@ knowledge. See `docs/DONTO-V1000-PRD.md` for the canonical PRD.
   policy/attestation/audit. Sidecar middleware that enforces these
   at the HTTP layer is the next milestone.
 - The fresh research PRD is preserved at
-  `docs/DONTO-V1000-PRD.md` and supersedes earlier planning.
+  `docs/DONTO-PRD.md` and supersedes earlier planning.
 
 ### Added
 - Phase 0 spike: `donto_statement` + contexts + bitemporal indexes,

@@ -1,4 +1,4 @@
-//! v1000 linguistic pilot: end-to-end exercises of the language-pilot
+//!  linguistic pilot: end-to-end exercises of the language-pilot
 //! frame types (PRD §13.4) and supporting machinery.
 
 use donto_client::{Object, StatementInput};
@@ -666,7 +666,7 @@ async fn end_to_end_linguistic_workflow() {
     // 1. Register the source (a grammar PDF).
     let src = format!("src:{prefix}/grammar.pdf");
     c.execute(
-        "select donto_register_source_v1000($1, 'pdf', 'policy:default/public')",
+        "select donto_register_source($1, 'pdf', 'policy:default/public')",
         &[&src],
     )
     .await

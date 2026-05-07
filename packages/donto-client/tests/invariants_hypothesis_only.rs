@@ -1,4 +1,4 @@
-//! v1000 / I1: hypothesis-only flag (migration 0089).
+//!  / I1: hypothesis-only flag (migration 0089).
 //!
 //! A statement marked hypothesis_only is allowed to lack evidence
 //! but must never be auto-promoted past E1.

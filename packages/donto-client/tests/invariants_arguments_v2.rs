@@ -1,4 +1,4 @@
-//! v1000 / I4: argument relations v2 (migration 0091).
+//!  / I4: argument relations v2 (migration 0091).
 
 use donto_client::{Object, StatementInput};
 
@@ -36,7 +36,7 @@ async fn make_two_statements(
 }
 
 #[tokio::test]
-async fn v1000_kinds_accepted() {
+async fn extended_kinds_accepted() {
     let client = pg_or_skip!(connect().await);
     let c = client.pool().get().await.unwrap();
     let prefix = tag("arg-v2-kinds");
@@ -176,13 +176,13 @@ async fn evidence_anchor_ids_default_empty_array() {
 }
 
 #[tokio::test]
-async fn relation_v1000_view_has_all_kinds() {
+async fn relation_view_has_all_kinds() {
     let client = pg_or_skip!(connect().await);
     let c = client.pool().get().await.unwrap();
     let n: i64 = c
-        .query_one("select count(*) from donto_v_argument_relation_v1000", &[])
+        .query_one("select count(*) from donto_v_argument_relation", &[])
         .await
         .unwrap()
         .get(0);
-    assert_eq!(n, 9, "v1000 argument relation reference view has 9 rows");
+    assert_eq!(n, 9, " argument relation reference view has 9 rows");
 }

@@ -1,4 +1,4 @@
-//! v1000 Trust Kernel HTTP middleware.
+//! Trust Kernel HTTP middleware.
 //!
 //! Reads `X-Donto-Caller: <agent-iri>` and (optionally)
 //! `X-Donto-Action: <action>` from the incoming request. For routes

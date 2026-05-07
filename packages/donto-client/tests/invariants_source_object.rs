@@ -1,36 +1,33 @@
-//! v1000 / §6.1–§6.3: source object + source version + anchor kind
+//!  / §6.1–§6.3: source object + source version + anchor kind
 //! registry (migrations 0095, 0096, 0097).
 
 mod common;
 use common::{connect, tag};
 
 #[tokio::test]
-async fn register_source_v1000_requires_policy() {
+async fn register_source_requires_policy() {
     let client = pg_or_skip!(connect().await);
     let c = client.pool().get().await.unwrap();
     let prefix = tag("src-policy-required");
 
     let res = c
         .query_one(
-            "select donto_register_source_v1000($1, 'pdf', null)",
+            "select donto_register_source($1, 'pdf', null)",
             &[&format!("src:{prefix}/no-policy")],
         )
         .await;
-    assert!(
-        res.is_err(),
-        "policy_id is required for register_source_v1000"
-    );
+    assert!(res.is_err(), "policy_id is required for register_source");
 }
 
 #[tokio::test]
-async fn register_source_v1000_with_policy_succeeds() {
+async fn register_source_with_policy_succeeds() {
     let client = pg_or_skip!(connect().await);
     let c = client.pool().get().await.unwrap();
     let prefix = tag("src-with-policy");
 
     let id: uuid::Uuid = c
         .query_one(
-            "select donto_register_source_v1000($1, 'pdf', 'policy:default/public', \
+            "select donto_register_source($1, 'pdf', 'policy:default/public', \
                 'application/pdf', 'a label', 'https://example.com/x.pdf')",
             &[&format!("src:{prefix}/with-policy")],
         )
@@ -46,7 +43,7 @@ async fn source_status_check_constraint() {
     let c = client.pool().get().await.unwrap();
     let prefix = tag("src-status-check");
     c.execute(
-        "select donto_register_source_v1000($1, 'pdf', 'policy:default/public')",
+        "select donto_register_source($1, 'pdf', 'policy:default/public')",
         &[&format!("src:{prefix}/x")],
     )
     .await
@@ -67,7 +64,7 @@ async fn source_kind_check_constraint() {
     let prefix = tag("src-kind-check");
     let res = c
         .execute(
-            "select donto_register_source_v1000($1, 'unicorn', 'policy:default/public')",
+            "select donto_register_source($1, 'unicorn', 'policy:default/public')",
             &[&format!("src:{prefix}/uni")],
         )
         .await;
@@ -82,7 +79,7 @@ async fn source_version_kind_default_and_check() {
 
     let doc_id: uuid::Uuid = c
         .query_one(
-            "select donto_register_source_v1000($1, 'pdf', 'policy:default/public')",
+            "select donto_register_source($1, 'pdf', 'policy:default/public')",
             &[&format!("src:{prefix}/d")],
         )
         .await
@@ -91,7 +88,7 @@ async fn source_version_kind_default_and_check() {
 
     let rev_id: uuid::Uuid = c
         .query_one(
-            "select donto_add_revision_v1000($1, 'ocr', 'hello world')",
+            "select donto_add_revision_typed($1, 'ocr', 'hello world')",
             &[&doc_id],
         )
         .await
@@ -125,7 +122,7 @@ async fn revision_lineage_walk() {
 
     let doc_id: uuid::Uuid = c
         .query_one(
-            "select donto_register_source_v1000($1, 'pdf', 'policy:default/public')",
+            "select donto_register_source($1, 'pdf', 'policy:default/public')",
             &[&format!("src:{prefix}/d")],
         )
         .await
@@ -134,7 +131,7 @@ async fn revision_lineage_walk() {
 
     let raw: uuid::Uuid = c
         .query_one(
-            "select donto_add_revision_v1000($1, 'raw', 'raw bytes')",
+            "select donto_add_revision_typed($1, 'raw', 'raw bytes')",
             &[&doc_id],
         )
         .await
@@ -142,7 +139,7 @@ async fn revision_lineage_walk() {
         .get(0);
     let ocr: uuid::Uuid = c
         .query_one(
-            "select donto_add_revision_v1000($1, 'ocr', 'ocr text', null, null, '{}'::jsonb, $2)",
+            "select donto_add_revision_typed($1, 'ocr', 'ocr text', null, null, '{}'::jsonb, $2)",
             &[&doc_id, &vec![raw]],
         )
         .await
@@ -150,7 +147,7 @@ async fn revision_lineage_walk() {
         .get(0);
     let norm: uuid::Uuid = c
         .query_one(
-            "select donto_add_revision_v1000($1, 'normalized', 'normalised text', null, null, '{}'::jsonb, $2)",
+            "select donto_add_revision_typed($1, 'normalized', 'normalised text', null, null, '{}'::jsonb, $2)",
             &[&doc_id, &vec![ocr]],
         )
         .await
@@ -181,7 +178,7 @@ async fn anchor_kinds_seeded() {
         .await
         .unwrap()
         .get(0);
-    assert!(n >= 13, "expected 13 v1000 anchor kinds, got {n}");
+    assert!(n >= 13, "expected 13  anchor kinds, got {n}");
 }
 
 #[tokio::test]

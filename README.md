@@ -11,8 +11,8 @@ based on, what contradicts it, what remains unresolved, and what has
 been formally certified. Traditional databases assume clean facts.
 donto is for the messy interval between evidence and knowledge.
 
-The canonical product spec is [`docs/DONTO-V1000-PRD.md`](docs/DONTO-V1000-PRD.md).
-v1000 lands the **Trust Kernel** (policies, attestations, audit), the
+The canonical product spec is [`docs/DONTO-PRD.md`](docs/DONTO-PRD.md).
+This release lands the **Trust Kernel** (policies, attestations, audit), the
 **E0–E5 maturity ladder**, **modality** and **extraction-level**
 overlays separate from confidence, the **eleven-relation alignment
 layer** with safety flags, **n-ary frame model** with indexed roles,
@@ -90,11 +90,11 @@ input, not just test cases.
 
 | Component | Count |
 |-----------|-------|
-| SQL migrations | 95 (28 new in v1000) |
+| SQL migrations | 95 (28 new in this release) |
 | Tables | 80+ |
 | SQL functions | 200+ |
-| HTTP endpoints | 44 (v1000 adds Trust Kernel surface) |
-| donto-client tests | 455 (212 new in v1000, all green) |
+| HTTP endpoints | 44 (plus Trust Kernel surface) |
+| donto-client tests | 455 (212 new in this release, all green) |
 | Lean modules | 21 |
 | Lean theorems | 62 |
 | Ingestion formats | 8 |
@@ -150,11 +150,11 @@ cargo run -p donto-migrate -- \
 
 ---
 
-## v1000 Trust Kernel — a worked example
+## Trust Kernel — a worked example
 
 ```sql
 -- 1. Register a source. Policy is required (PRD I2: no source without policy).
-SELECT donto_register_source_v1000(
+SELECT donto_register_source(
     'src:fieldnotes/2024-recording-A.eaf',
     'audio',
     'policy:default/community_restricted'
@@ -256,7 +256,7 @@ The predicate alignment layer (PAL) solves this without constraining
 extraction. Extractors keep minting whatever feels natural; PAL
 converges them after the fact.
 
-### Alignment relations (v1000 — 11 kinds)
+### Alignment relations (11 kinds)
 
 | Relation | Meaning | Example |
 |----------|---------|---------|
@@ -641,15 +641,15 @@ turbo.json                   Turborepo pipeline config
 ## Documentation
 
 - [`PRD.md`](PRD.md) — top-level pointer to the canonical PRD.
-- [`docs/DONTO-V1000-PRD.md`](docs/DONTO-V1000-PRD.md) — **canonical
-  product requirements**. The single reference of record for v1000.
+- [`docs/DONTO-PRD.md`](docs/DONTO-PRD.md) — **canonical
+  product requirements**. The canonical reference.
 - [`apps/docs`](apps/docs) — Starlight documentation site with
   migration reference, schema gap audit, and guides.
 - [`ANTHROPOLOGY_README.md`](ANTHROPOLOGY_README.md) — research
   philosophy and domain context.
 - Historical (superseded by the canonical PRD; kept for provenance):
   [`docs/LANGUAGE-EXTRACTION-PLAN.md`](docs/LANGUAGE-EXTRACTION-PLAN.md),
-  [`docs/V1000-REFACTOR-PLAN.md`](docs/V1000-REFACTOR-PLAN.md),
+  [`docs/REFACTOR-PLAN.md`](docs/REFACTOR-PLAN.md),
   [`docs/ATLAS-ZERO-FRONTIER.md`](docs/ATLAS-ZERO-FRONTIER.md).
 
 ---

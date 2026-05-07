@@ -71,12 +71,12 @@ pub async fn add_revision(
     }
 }
 
-/// v1000 source registration. Requires `source_kind` and `policy_iri`
+/// Source registration that requires `source_kind` and `policy_iri`
 /// (PRD I2 — no source without policy). Use this for new code paths;
 /// the legacy `/documents/register` is kept for backwards compatibility
 /// but is deprecated.
 #[derive(Debug, Deserialize)]
-pub struct RegisterSourceV1000Req {
+pub struct RegisterSourceWithPolicyReq {
     pub iri: String,
     pub source_kind: String,
     pub policy_iri: String,
@@ -90,13 +90,13 @@ pub struct RegisterSourceV1000Req {
     pub language: Option<String>,
 }
 
-pub async fn register_v1000(
+pub async fn register_with_policy(
     State(s): State<Arc<AppState>>,
-    Json(req): Json<RegisterSourceV1000Req>,
+    Json(req): Json<RegisterSourceWithPolicyReq>,
 ) -> impl IntoResponse {
     match s
         .client
-        .register_source_v1000(
+        .register_source(
             &req.iri,
             &req.source_kind,
             &req.policy_iri,
