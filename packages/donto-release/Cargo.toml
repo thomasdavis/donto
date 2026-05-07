@@ -24,5 +24,10 @@ tokio        = { workspace = true, features = ["macros", "rt-multi-thread"] }
 anyhow       = { workspace = true }
 tempfile     = { workspace = true }
 
+[[example]]
+name = "build_release"
+path = "examples/build_release.rs"
+required-features = []
+
 [lints]
 workspace = true
