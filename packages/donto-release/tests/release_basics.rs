@@ -387,6 +387,24 @@ async fn min_maturity_filter_excludes_below_floor() {
 }
 
 #[tokio::test]
+async fn empty_contexts_list_is_rejected_as_invalid_spec() {
+    let Some((client, _ctx, prefix)) = boot().await else {
+        eprintln!("skip");
+        return;
+    };
+    let spec = ReleaseSpec::new(format!("{prefix}/no-contexts"));
+    // Spec has empty contexts → must be rejected, not silently dump
+    // every statement in the database.
+    let res = build_release(&client, &spec).await;
+    assert!(res.is_err());
+    let msg = format!("{:?}", res.unwrap_err());
+    assert!(
+        msg.contains("at least one context"),
+        "error must explain the constraint, got: {msg}"
+    );
+}
+
+#[tokio::test]
 async fn manifest_carries_release_id_and_query_specs() {
     let Some((client, ctx_iri, prefix)) = boot().await else {
         eprintln!("skip");

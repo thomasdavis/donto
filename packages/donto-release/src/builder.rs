@@ -69,18 +69,21 @@ pub async fn build_release(
     client: &DontoClient,
     spec: &ReleaseSpec,
 ) -> Result<ReleaseManifest, ReleaseError> {
-    let scope = if spec.contexts.is_empty() {
-        None
-    } else {
-        Some(ContextScope::any_of(spec.contexts.clone()))
-    };
+    if spec.contexts.is_empty() {
+        return Err(ReleaseError::InvalidSpec(
+            "ReleaseSpec.contexts must list at least one context — \
+             releases are always scoped"
+                .into(),
+        ));
+    }
+    let scope = ContextScope::any_of(spec.contexts.clone());
 
     let stmts: Vec<Statement> = client
         .match_pattern(
             None,
             None,
             None,
-            scope.as_ref(),
+            Some(&scope),
             None,
             spec.min_maturity,
             spec.as_of,
@@ -166,7 +169,7 @@ fn hash_statement(s: &Statement) -> String {
     h.update(b"\x1f");
     h.update(s.context.as_bytes());
     h.update(b"\x1f");
-    h.update(format!("{:?}", s.polarity).as_bytes());
+    h.update(s.polarity.as_str().as_bytes());
     h.update(b"\x1f");
     h.update([s.maturity]);
     h.update(b"\x1f");

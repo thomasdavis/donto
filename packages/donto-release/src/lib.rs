@@ -42,6 +42,8 @@ pub enum ReleaseError {
     Client(#[from] donto_client::Error),
     #[error("dontoql parse error: {0}")]
     Parse(String),
+    #[error("invalid release spec: {0}")]
+    InvalidSpec(String),
     #[error("policy gate refused release: {0}")]
     PolicyRefused(String),
     #[error("io error: {0}")]
