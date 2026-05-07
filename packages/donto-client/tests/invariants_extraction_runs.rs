@@ -14,8 +14,14 @@ async fn extraction_lifecycle() {
     let ctx = ctx(&client, "ext-life").await;
 
     let iri = format!("test:doc/{}", tag("ext-life"));
-    let doc_id = client.ensure_document(&iri, "text/plain", None, None, None).await.unwrap();
-    let rev_id = client.add_revision(doc_id, Some("Source text for extraction"), None, None).await.unwrap();
+    let doc_id = client
+        .ensure_document(&iri, "text/plain", None, None, None)
+        .await
+        .unwrap();
+    let rev_id = client
+        .add_revision(doc_id, Some("Source text for extraction"), None, None)
+        .await
+        .unwrap();
 
     let run_id = client
         .start_extraction(
@@ -40,9 +46,17 @@ async fn extraction_lifecycle() {
         .await
         .unwrap();
     assert_eq!(row.get::<_, String>("status"), "running");
-    assert_eq!(row.get::<_, Option<String>>("model_id").as_deref(), Some("claude-sonnet-4-6"));
-    assert_eq!(row.get::<_, Option<uuid::Uuid>>("source_revision_id"), Some(rev_id));
-    assert!(row.get::<_, Option<chrono::DateTime<chrono::Utc>>>("completed_at").is_none());
+    assert_eq!(
+        row.get::<_, Option<String>>("model_id").as_deref(),
+        Some("claude-sonnet-4-6")
+    );
+    assert_eq!(
+        row.get::<_, Option<uuid::Uuid>>("source_revision_id"),
+        Some(rev_id)
+    );
+    assert!(row
+        .get::<_, Option<chrono::DateTime<chrono::Utc>>>("completed_at")
+        .is_none());
 
     // Complete it.
     client
@@ -61,7 +75,9 @@ async fn extraction_lifecycle() {
     assert_eq!(row.get::<_, String>("status"), "completed");
     assert_eq!(row.get::<_, i64>("statements_emitted"), 42);
     assert_eq!(row.get::<_, i64>("annotations_emitted"), 100);
-    assert!(row.get::<_, Option<chrono::DateTime<chrono::Utc>>>("completed_at").is_some());
+    assert!(row
+        .get::<_, Option<chrono::DateTime<chrono::Utc>>>("completed_at")
+        .is_some());
 }
 
 #[tokio::test]
@@ -82,7 +98,9 @@ async fn extraction_run_without_source() {
         )
         .await
         .unwrap();
-    assert!(row.get::<_, Option<uuid::Uuid>>("source_revision_id").is_none());
+    assert!(row
+        .get::<_, Option<uuid::Uuid>>("source_revision_id")
+        .is_none());
     assert!(row.get::<_, Option<String>>("context").is_none());
 }
 
@@ -93,14 +111,22 @@ async fn annotation_run_fk_enforced() {
     let c = pool.get().await.unwrap();
 
     let iri = format!("test:doc/{}", tag("ann-runfk"));
-    let doc_id = client.ensure_document(&iri, "text/plain", None, None, None).await.unwrap();
-    let rev_id = client.add_revision(doc_id, Some("text"), None, None).await.unwrap();
+    let doc_id = client
+        .ensure_document(&iri, "text/plain", None, None, None)
+        .await
+        .unwrap();
+    let rev_id = client
+        .add_revision(doc_id, Some("text"), None, None)
+        .await
+        .unwrap();
     let span_id = client.create_char_span(rev_id, 0, 4, None).await.unwrap();
 
     let space_iri = format!("test:space/{}", tag("ann-runfk"));
     let space_id: uuid::Uuid = c
         .query_one("select donto_ensure_annotation_space($1)", &[&space_iri])
-        .await.unwrap().get(0);
+        .await
+        .unwrap()
+        .get(0);
 
     // A valid run_id works.
     let run_id = client
@@ -110,9 +136,13 @@ async fn annotation_run_fk_enforced() {
     c.execute(
         "select donto_annotate_span($1, $2, $3, $4, $5, $6, $7)",
         &[
-            &span_id, &space_id, &"test", &"val",
+            &span_id,
+            &space_id,
+            &"test",
+            &"val",
             &Option::<serde_json::Value>::None,
-            &Option::<f64>::None, &run_id,
+            &Option::<f64>::None,
+            &run_id,
         ],
     )
     .await
@@ -124,9 +154,13 @@ async fn annotation_run_fk_enforced() {
         .execute(
             "select donto_annotate_span($1, $2, $3, $4, $5, $6, $7)",
             &[
-                &span_id, &space_id, &"test2", &"val2",
+                &span_id,
+                &space_id,
+                &"test2",
+                &"val2",
                 &Option::<serde_json::Value>::None,
-                &Option::<f64>::None, &fake_run,
+                &Option::<f64>::None,
+                &fake_run,
             ],
         )
         .await
@@ -160,6 +194,8 @@ async fn failed_extraction_records_status() {
             "select status from donto_extraction_run where run_id = $1",
             &[&run_id],
         )
-        .await.unwrap().get(0);
+        .await
+        .unwrap()
+        .get(0);
     assert_eq!(status, "failed");
 }

@@ -184,8 +184,12 @@ async fn no_expansion_returns_only_direct() {
 
     client
         .assert(
-            &StatementInput::new(format!("{prefix}/x"), &a, Object::iri(format!("{prefix}/y")))
-                .with_context(&ctx),
+            &StatementInput::new(
+                format!("{prefix}/x"),
+                &a,
+                Object::iri(format!("{prefix}/y")),
+            )
+            .with_context(&ctx),
         )
         .await
         .unwrap();
@@ -248,8 +252,12 @@ async fn min_alignment_confidence_filters_low_confidence() {
 
     client
         .assert(
-            &StatementInput::new(format!("{prefix}/x"), &a, Object::iri(format!("{prefix}/y")))
-                .with_context(&ctx),
+            &StatementInput::new(
+                format!("{prefix}/x"),
+                &a,
+                Object::iri(format!("{prefix}/y")),
+            )
+            .with_context(&ctx),
         )
         .await
         .unwrap();
@@ -340,8 +348,12 @@ async fn match_strict_returns_only_direct() {
 
     client
         .assert(
-            &StatementInput::new(format!("{prefix}/x"), &a, Object::iri(format!("{prefix}/y")))
-                .with_context(&ctx),
+            &StatementInput::new(
+                format!("{prefix}/x"),
+                &a,
+                Object::iri(format!("{prefix}/y")),
+            )
+            .with_context(&ctx),
         )
         .await
         .unwrap();
@@ -365,16 +377,7 @@ async fn match_strict_returns_only_direct() {
     // Query for b strictly — must NOT return the assertion on a.
     let scope = ContextScope::just(&ctx);
     let rows = client
-        .match_strict(
-            None,
-            Some(&b),
-            None,
-            Some(&scope),
-            None,
-            0,
-            None,
-            None,
-        )
+        .match_strict(None, Some(&b), None, Some(&scope), None, 0, None, None)
         .await
         .unwrap();
     assert_eq!(
@@ -385,16 +388,7 @@ async fn match_strict_returns_only_direct() {
 
     // But query for a strictly — must see the direct match.
     let direct = client
-        .match_strict(
-            None,
-            Some(&a),
-            None,
-            Some(&scope),
-            None,
-            0,
-            None,
-            None,
-        )
+        .match_strict(None, Some(&a), None, Some(&scope), None, 0, None, None)
         .await
         .unwrap();
     assert_eq!(direct.len(), 1, "match_strict must return direct rows");

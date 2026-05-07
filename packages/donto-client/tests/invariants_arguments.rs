@@ -12,22 +12,24 @@ mod common;
 use common::{cleanup_prefix, connect, ctx, tag};
 
 async fn two_stmts(
-    client: &donto_client::DontoClient, prefix: &str, ctx: &str,
+    client: &donto_client::DontoClient,
+    prefix: &str,
+    ctx: &str,
 ) -> (uuid::Uuid, uuid::Uuid) {
     let a = client
         .assert(
-            &StatementInput::new(
-                format!("{prefix}/a"), "ex:claims", Object::iri("ex:X"),
-            ).with_context(ctx),
+            &StatementInput::new(format!("{prefix}/a"), "ex:claims", Object::iri("ex:X"))
+                .with_context(ctx),
         )
-        .await.unwrap();
+        .await
+        .unwrap();
     let b = client
         .assert(
-            &StatementInput::new(
-                format!("{prefix}/b"), "ex:claims", Object::iri("ex:Y"),
-            ).with_context(ctx),
+            &StatementInput::new(format!("{prefix}/b"), "ex:claims", Object::iri("ex:Y"))
+                .with_context(ctx),
         )
-        .await.unwrap();
+        .await
+        .unwrap();
     (a, b)
 }
 
@@ -41,13 +43,15 @@ async fn supports_and_rebuts() {
 
     let sup_id = client
         .assert_argument(a, b, "supports", &ctx, Some(0.8), None, None)
-        .await.unwrap();
+        .await
+        .unwrap();
 
     let pool = client.pool();
     let c = pool.get().await.unwrap();
     let rows = c
         .query("select * from donto_arguments_for($1)", &[&b])
-        .await.unwrap();
+        .await
+        .unwrap();
     assert_eq!(rows.len(), 1);
     assert_eq!(rows[0].get::<_, uuid::Uuid>("argument_id"), sup_id);
     assert_eq!(rows[0].get::<_, String>("relation"), "supports");
@@ -64,11 +68,11 @@ async fn self_argument_rejected() {
 
     let a = client
         .assert(
-            &StatementInput::new(
-                format!("{prefix}/a"), "ex:p", Object::iri("ex:o"),
-            ).with_context(&ctx),
+            &StatementInput::new(format!("{prefix}/a"), "ex:p", Object::iri("ex:o"))
+                .with_context(&ctx),
         )
-        .await.unwrap();
+        .await
+        .unwrap();
 
     let err = client
         .assert_argument(a, a, "supports", &ctx, None, None, None)
@@ -88,10 +92,12 @@ async fn argument_replacement_closes_prior() {
 
     let id1 = client
         .assert_argument(a, b, "supports", &ctx, Some(0.5), None, None)
-        .await.unwrap();
+        .await
+        .unwrap();
     let id2 = client
         .assert_argument(a, b, "supports", &ctx, Some(0.9), None, None)
-        .await.unwrap();
+        .await
+        .unwrap();
     assert_ne!(id1, id2);
 
     // Only the latest is open.
@@ -104,7 +110,9 @@ async fn argument_replacement_closes_prior() {
                and relation = 'supports' and upper(tx_time) is null",
             &[&a, &b],
         )
-        .await.unwrap().get(0);
+        .await
+        .unwrap()
+        .get(0);
     assert_eq!(open_count, 1);
 
     // History preserved: both rows exist.
@@ -115,7 +123,9 @@ async fn argument_replacement_closes_prior() {
                and relation = 'supports'",
             &[&a, &b],
         )
-        .await.unwrap().get(0);
+        .await
+        .unwrap()
+        .get(0);
     assert_eq!(total, 2);
 }
 
@@ -129,19 +139,23 @@ async fn retract_argument() {
 
     let arg_id = client
         .assert_argument(a, b, "rebuts", &ctx, None, None, None)
-        .await.unwrap();
+        .await
+        .unwrap();
 
     let pool = client.pool();
     let c = pool.get().await.unwrap();
     let retracted: bool = c
         .query_one("select donto_retract_argument($1)", &[&arg_id])
-        .await.unwrap().get(0);
+        .await
+        .unwrap()
+        .get(0);
     assert!(retracted);
 
     // No open arguments for b anymore.
     let rows = c
         .query("select * from donto_arguments_for($1)", &[&b])
-        .await.unwrap();
+        .await
+        .unwrap();
     assert_eq!(rows.len(), 0);
 }
 
@@ -155,48 +169,60 @@ async fn contradiction_frontier() {
     // Claim X, two attackers, one supporter.
     let target = client
         .assert(
-            &StatementInput::new(
-                format!("{prefix}/target"), "ex:claims", Object::iri("ex:X"),
-            ).with_context(&ctx),
+            &StatementInput::new(format!("{prefix}/target"), "ex:claims", Object::iri("ex:X"))
+                .with_context(&ctx),
         )
-        .await.unwrap();
+        .await
+        .unwrap();
 
     for i in 0..2 {
         let attacker = client
             .assert(
                 &StatementInput::new(
-                    format!("{prefix}/attacker{i}"), "ex:claims",
+                    format!("{prefix}/attacker{i}"),
+                    "ex:claims",
                     Object::iri(format!("ex:not-X-{i}")),
-                ).with_context(&ctx),
+                )
+                .with_context(&ctx),
             )
-            .await.unwrap();
+            .await
+            .unwrap();
         client
             .assert_argument(attacker, target, "rebuts", &ctx, None, None, None)
-            .await.unwrap();
+            .await
+            .unwrap();
     }
 
     let supporter = client
         .assert(
             &StatementInput::new(
-                format!("{prefix}/supporter"), "ex:claims", Object::iri("ex:also-X"),
-            ).with_context(&ctx),
+                format!("{prefix}/supporter"),
+                "ex:claims",
+                Object::iri("ex:also-X"),
+            )
+            .with_context(&ctx),
         )
-        .await.unwrap();
+        .await
+        .unwrap();
     client
         .assert_argument(supporter, target, "supports", &ctx, None, None, None)
-        .await.unwrap();
+        .await
+        .unwrap();
 
     let pool = client.pool();
     let c = pool.get().await.unwrap();
     let rows = c
-        .query(
-            "select * from donto_contradiction_frontier($1)",
-            &[&ctx],
-        )
-        .await.unwrap();
+        .query("select * from donto_contradiction_frontier($1)", &[&ctx])
+        .await
+        .unwrap();
 
-    let target_row = rows.iter().find(|r| r.get::<_, uuid::Uuid>("statement_id") == target);
-    assert!(target_row.is_some(), "target must appear in contradiction frontier");
+    let target_row = rows
+        .iter()
+        .find(|r| r.get::<_, uuid::Uuid>("statement_id") == target);
+    assert!(
+        target_row.is_some(),
+        "target must appear in contradiction frontier"
+    );
     let row = target_row.unwrap();
     assert_eq!(row.get::<_, i64>("attack_count"), 2);
     assert_eq!(row.get::<_, i64>("support_count"), 1);

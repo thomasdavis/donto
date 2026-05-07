@@ -34,9 +34,18 @@ async fn main() -> Result<()> {
     let client = DontoClient::from_dsn(&args.dsn)?;
     client.migrate().await?;
     let lean = match dontosrv::lean::LeanClient::try_spawn(args.lean_engine.as_deref()).await {
-        Ok(Some(c)) => { tracing::info!("lean engine attached"); Some(c) }
-        Ok(None)    => { tracing::info!("lean engine not configured"); None }
-        Err(e)      => { tracing::warn!(%e, "lean engine spawn failed; lean: shapes will be unavailable"); None }
+        Ok(Some(c)) => {
+            tracing::info!("lean engine attached");
+            Some(c)
+        }
+        Ok(None) => {
+            tracing::info!("lean engine not configured");
+            None
+        }
+        Err(e) => {
+            tracing::warn!(%e, "lean engine spawn failed; lean: shapes will be unavailable");
+            None
+        }
     };
     let state = Arc::new(dontosrv::AppState { client, lean });
     let app = dontosrv::router(state);

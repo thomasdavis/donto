@@ -8,7 +8,7 @@
 
 mod common;
 
-use common::{connect, tag};
+use common::connect;
 
 async fn register_predicate(client: &donto_client::DontoClient, iri: &str) {
     let c = client.pool().get().await.unwrap();
@@ -26,10 +26,7 @@ async fn normalize_splits_camel_case() {
     let c = client.pool().get().await.unwrap();
 
     let r: String = c
-        .query_one(
-            "select donto_normalize_predicate($1)",
-            &[&"ex:bornIn"],
-        )
+        .query_one("select donto_normalize_predicate($1)", &[&"ex:bornIn"])
         .await
         .unwrap()
         .get(0);
@@ -45,10 +42,7 @@ async fn normalize_handles_auxiliary_prefix() {
     // auxiliaries, just splits + lowercases. Trigram similarity vs "born in"
     // is what carries the recall (verified in the next test).
     let r: String = c
-        .query_one(
-            "select donto_normalize_predicate($1)",
-            &[&"ex:wasBornIn"],
-        )
+        .query_one("select donto_normalize_predicate($1)", &[&"ex:wasBornIn"])
         .await
         .unwrap()
         .get(0);
@@ -102,8 +96,8 @@ async fn suggest_alignments_returns_candidates() {
     let token = format!("xq{}", uuid::Uuid::new_v4().simple());
 
     let source = format!("test:ln-suggest/{token}Source");
-    let near = format!("test:ln-suggest/was{}Source", token); // shares "<token>Source"
-    let far = format!("test:ln-suggest/totallyUnrelated");
+    let near = format!("test:ln-suggest/was{token}Source"); // shares "<token>Source"
+    let far = "test:ln-suggest/totallyUnrelated".to_string();
 
     register_predicate(&client, &source).await;
     register_predicate(&client, &near).await;

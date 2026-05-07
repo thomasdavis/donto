@@ -29,3 +29,6 @@ rio_turtle        = { workspace = true }
 clap_mangen       = "0.2"
 clap_complete     = "4"
 reqwest           = { workspace = true }
+
+[lints]
+workspace = true

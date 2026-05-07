@@ -31,7 +31,10 @@ async fn char_span_stores_offsets_and_surface() {
     let client = pg_or_skip!(connect().await);
     let (_, rev_id) = setup_doc_and_rev(&client, "span-basic").await;
 
-    let span_id = client.create_char_span(rev_id, 4, 9, Some("quick")).await.unwrap();
+    let span_id = client
+        .create_char_span(rev_id, 4, 9, Some("quick"))
+        .await
+        .unwrap();
 
     let pool = client.pool();
     let c = pool.get().await.unwrap();
@@ -46,7 +49,10 @@ async fn char_span_stores_offsets_and_surface() {
     assert_eq!(row.get::<_, String>("span_type"), "char_offset");
     assert_eq!(row.get::<_, i32>("start_offset"), 4);
     assert_eq!(row.get::<_, i32>("end_offset"), 9);
-    assert_eq!(row.get::<_, Option<String>>("surface_text").as_deref(), Some("quick"));
+    assert_eq!(
+        row.get::<_, Option<String>>("surface_text").as_deref(),
+        Some("quick")
+    );
 }
 
 #[tokio::test]
@@ -69,9 +75,18 @@ async fn overlapping_spans_query() {
 
     // "The quick brown fox jumps over the lazy dog."
     //  0   4     10    16  20    26   31   35  39  43
-    let s1 = client.create_char_span(rev_id, 0, 9, Some("The quick")).await.unwrap();
-    let s2 = client.create_char_span(rev_id, 4, 15, Some("quick brown")).await.unwrap();
-    let _s3 = client.create_char_span(rev_id, 20, 25, Some("jumps")).await.unwrap();
+    let s1 = client
+        .create_char_span(rev_id, 0, 9, Some("The quick"))
+        .await
+        .unwrap();
+    let s2 = client
+        .create_char_span(rev_id, 4, 15, Some("quick brown"))
+        .await
+        .unwrap();
+    let _s3 = client
+        .create_char_span(rev_id, 20, 25, Some("jumps"))
+        .await
+        .unwrap();
 
     let pool = client.pool();
     let c = pool.get().await.unwrap();

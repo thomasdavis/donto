@@ -15,10 +15,12 @@ async fn ensure_agent_is_idempotent() {
 
     let id1 = client
         .ensure_agent(&iri, "llm", Some("Claude"), Some("claude-sonnet-4-6"))
-        .await.unwrap();
+        .await
+        .unwrap();
     let id2 = client
         .ensure_agent(&iri, "llm", Some("Claude"), Some("claude-sonnet-4-6"))
-        .await.unwrap();
+        .await
+        .unwrap();
     assert_eq!(id1, id2);
 }
 
@@ -30,9 +32,13 @@ async fn bind_agent_to_context() {
 
     let agent_id = client
         .ensure_agent(&iri, "extractor", Some("NER Bot"), None)
-        .await.unwrap();
+        .await
+        .unwrap();
 
-    client.bind_agent_context(agent_id, &ctx, "owner").await.unwrap();
+    client
+        .bind_agent_context(agent_id, &ctx, "owner")
+        .await
+        .unwrap();
 
     let pool = client.pool();
     let c = pool.get().await.unwrap();
@@ -43,7 +49,8 @@ async fn bind_agent_to_context() {
             "select context, role from donto_agent_contexts($1)",
             &[&agent_id],
         )
-        .await.unwrap();
+        .await
+        .unwrap();
     assert_eq!(rows.len(), 1);
     assert_eq!(rows[0].get::<_, String>("context"), ctx);
     assert_eq!(rows[0].get::<_, String>("role"), "owner");
@@ -54,7 +61,8 @@ async fn bind_agent_to_context() {
             "select agent_id, iri, agent_type, role from donto_context_agents($1)",
             &[&ctx],
         )
-        .await.unwrap();
+        .await
+        .unwrap();
     assert_eq!(rows.len(), 1);
     assert_eq!(rows[0].get::<_, uuid::Uuid>("agent_id"), agent_id);
     assert_eq!(rows[0].get::<_, String>("agent_type"), "extractor");
@@ -66,10 +74,19 @@ async fn role_upgrade_on_rebind() {
     let iri = format!("test:agent/{}", tag("ag-role"));
     let ctx = ctx(&client, "ag-role").await;
 
-    let agent_id = client.ensure_agent(&iri, "human", None, None).await.unwrap();
+    let agent_id = client
+        .ensure_agent(&iri, "human", None, None)
+        .await
+        .unwrap();
 
-    client.bind_agent_context(agent_id, &ctx, "reader").await.unwrap();
-    client.bind_agent_context(agent_id, &ctx, "contributor").await.unwrap();
+    client
+        .bind_agent_context(agent_id, &ctx, "reader")
+        .await
+        .unwrap();
+    client
+        .bind_agent_context(agent_id, &ctx, "contributor")
+        .await
+        .unwrap();
 
     let pool = client.pool();
     let c = pool.get().await.unwrap();
@@ -78,7 +95,9 @@ async fn role_upgrade_on_rebind() {
             "select role from donto_agent_context where agent_id = $1 and context = $2",
             &[&agent_id, &ctx],
         )
-        .await.unwrap().get(0);
+        .await
+        .unwrap()
+        .get(0);
     assert_eq!(role, "contributor", "rebind must update the role");
 }
 
@@ -98,7 +117,10 @@ async fn invalid_agent_type_rejected() {
         .err()
         .expect("invalid agent_type must violate check");
     let msg = format!("{err:?}");
-    assert!(msg.contains("agent_type"), "expected agent_type in error, got: {msg}");
+    assert!(
+        msg.contains("agent_type"),
+        "expected agent_type in error, got: {msg}"
+    );
 }
 
 #[tokio::test]
@@ -108,19 +130,27 @@ async fn multiple_agents_per_context() {
 
     let a1_iri = format!("test:agent/{}/a", tag("ag-multi"));
     let a2_iri = format!("test:agent/{}/b", tag("ag-multi"));
-    let a1 = client.ensure_agent(&a1_iri, "llm", None, None).await.unwrap();
-    let a2 = client.ensure_agent(&a2_iri, "human", None, None).await.unwrap();
+    let a1 = client
+        .ensure_agent(&a1_iri, "llm", None, None)
+        .await
+        .unwrap();
+    let a2 = client
+        .ensure_agent(&a2_iri, "human", None, None)
+        .await
+        .unwrap();
 
     client.bind_agent_context(a1, &ctx, "owner").await.unwrap();
-    client.bind_agent_context(a2, &ctx, "contributor").await.unwrap();
+    client
+        .bind_agent_context(a2, &ctx, "contributor")
+        .await
+        .unwrap();
 
     let pool = client.pool();
     let c = pool.get().await.unwrap();
     let count: i64 = c
-        .query_one(
-            "select count(*) from donto_context_agents($1)",
-            &[&ctx],
-        )
-        .await.unwrap().get(0);
+        .query_one("select count(*) from donto_context_agents($1)", &[&ctx])
+        .await
+        .unwrap()
+        .get(0);
     assert_eq!(count, 2);
 }

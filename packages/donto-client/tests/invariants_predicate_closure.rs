@@ -49,21 +49,29 @@ async fn exact_equivalent_appears_bidirectionally() {
 
     let c = client.pool().get().await.unwrap();
     // a → b
-    let n_ab: i64 = c.query_one(
-        "select count(*) from donto_predicate_closure \
+    let n_ab: i64 = c
+        .query_one(
+            "select count(*) from donto_predicate_closure \
          where predicate_iri = $1 and equivalent_iri = $2 \
            and relation = 'exact_equivalent' and not swap_direction",
-        &[&a, &b],
-    ).await.unwrap().get(0);
+            &[&a, &b],
+        )
+        .await
+        .unwrap()
+        .get(0);
     assert_eq!(n_ab, 1, "exact_equivalent must propagate a → b");
 
     // b → a
-    let n_ba: i64 = c.query_one(
-        "select count(*) from donto_predicate_closure \
+    let n_ba: i64 = c
+        .query_one(
+            "select count(*) from donto_predicate_closure \
          where predicate_iri = $1 and equivalent_iri = $2 \
            and relation = 'exact_equivalent' and not swap_direction",
-        &[&b, &a],
-    ).await.unwrap().get(0);
+            &[&b, &a],
+        )
+        .await
+        .unwrap()
+        .get(0);
     assert_eq!(n_ba, 1, "exact_equivalent must propagate b → a");
 }
 
@@ -94,21 +102,32 @@ async fn inverse_equivalent_sets_swap_direction() {
     rebuild_closure_with_retry(&client).await;
 
     let c = client.pool().get().await.unwrap();
-    let swap_pc: bool = c.query_one(
-        "select swap_direction from donto_predicate_closure \
+    let swap_pc: bool = c
+        .query_one(
+            "select swap_direction from donto_predicate_closure \
          where predicate_iri = $1 and equivalent_iri = $2 \
            and relation = 'inverse_equivalent'",
-        &[&parent, &child],
-    ).await.unwrap().get(0);
+            &[&parent, &child],
+        )
+        .await
+        .unwrap()
+        .get(0);
     assert!(swap_pc, "inverse_equivalent must set swap_direction = true");
 
-    let swap_cp: bool = c.query_one(
-        "select swap_direction from donto_predicate_closure \
+    let swap_cp: bool = c
+        .query_one(
+            "select swap_direction from donto_predicate_closure \
          where predicate_iri = $1 and equivalent_iri = $2 \
            and relation = 'inverse_equivalent'",
-        &[&child, &parent],
-    ).await.unwrap().get(0);
-    assert!(swap_cp, "inverse_equivalent must be bidirectional with swap");
+            &[&child, &parent],
+        )
+        .await
+        .unwrap()
+        .get(0);
+    assert!(
+        swap_cp,
+        "inverse_equivalent must be bidirectional with swap"
+    );
 }
 
 #[tokio::test]
@@ -144,23 +163,28 @@ async fn sub_property_of_propagates_upward_only() {
     let c = client.pool().get().await.unwrap();
 
     // broad → narrow (the upward-only edge) must exist.
-    let upward: i64 = c.query_one(
-        "select count(*) from donto_predicate_closure \
+    let upward: i64 = c
+        .query_one(
+            "select count(*) from donto_predicate_closure \
          where predicate_iri = $1 and equivalent_iri = $2 and relation = 'sub_property_of'",
-        &[&broad, &narrow],
-    ).await.unwrap().get(0);
+            &[&broad, &narrow],
+        )
+        .await
+        .unwrap()
+        .get(0);
     assert_eq!(upward, 1, "sub_property_of must propagate the upward edge");
 
     // narrow → broad (with relation = sub_property_of) must NOT exist.
-    let downward: i64 = c.query_one(
-        "select count(*) from donto_predicate_closure \
+    let downward: i64 = c
+        .query_one(
+            "select count(*) from donto_predicate_closure \
          where predicate_iri = $1 and equivalent_iri = $2 and relation = 'sub_property_of'",
-        &[&narrow, &broad],
-    ).await.unwrap().get(0);
-    assert_eq!(
-        downward, 0,
-        "sub_property_of must not propagate downward"
-    );
+            &[&narrow, &broad],
+        )
+        .await
+        .unwrap()
+        .get(0);
+    assert_eq!(downward, 0, "sub_property_of must not propagate downward");
 }
 
 #[tokio::test]
@@ -210,18 +234,26 @@ async fn close_match_above_threshold_only() {
     rebuild_closure_with_retry(&client).await;
 
     let c = client.pool().get().await.unwrap();
-    let high: i64 = c.query_one(
-        "select count(*) from donto_predicate_closure \
+    let high: i64 = c
+        .query_one(
+            "select count(*) from donto_predicate_closure \
          where predicate_iri = $1 and equivalent_iri = $2 and relation = 'close_match'",
-        &[&high_a, &high_b],
-    ).await.unwrap().get(0);
+            &[&high_a, &high_b],
+        )
+        .await
+        .unwrap()
+        .get(0);
     assert_eq!(high, 1, "close_match above threshold must appear");
 
-    let low: i64 = c.query_one(
-        "select count(*) from donto_predicate_closure \
+    let low: i64 = c
+        .query_one(
+            "select count(*) from donto_predicate_closure \
          where predicate_iri = $1 and equivalent_iri = $2 and relation = 'close_match'",
-        &[&low_a, &low_b],
-    ).await.unwrap().get(0);
+            &[&low_a, &low_b],
+        )
+        .await
+        .unwrap()
+        .get(0);
     assert_eq!(low, 0, "close_match below threshold must NOT appear");
 }
 
@@ -301,5 +333,8 @@ async fn self_identity_rows_exist_for_active_predicates() {
         .await
         .unwrap()
         .get(0);
-    assert_eq!(n, 1, "self-identity row required for every active predicate");
+    assert_eq!(
+        n, 1,
+        "self-identity row required for every active predicate"
+    );
 }

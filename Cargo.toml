@@ -24,6 +24,27 @@ authors = ["donto contributors"]
 repository = "https://github.com/thomasdavis/donto"
 description = "donto: bitemporal paraconsistent quad store on Postgres + Lean sidecar"
 
+# Workspace-wide clippy lint config. CI runs `cargo clippy --workspace
+# --all-targets -- -D warnings`. The lints below are pre-existing
+# patterns whose remediation would mean rewriting working code without
+# behavioural improvement; allowing them is intentional.
+[workspace.lints.rust]
+# Some serde-deserialised types (e.g. usage / token counts) are kept as
+# fields for completeness even when no Rust code reads them.
+dead_code = "allow"
+
+[workspace.lints.clippy]
+# Client methods mirror SQL function signatures one-to-one; 8+ params is
+# normal. Builder structs would just shuffle complexity around.
+too_many_arguments = "allow"
+# `.err().expect("...")` and `.expect_err("...")` are equivalent.
+err_expect = "allow"
+# Manual `impl Default` is sometimes more explicit than `#[derive(Default)]`.
+derivable_impls = "allow"
+# `Iterator::last` on DoubleEndedIterator is a micro-optimisation hint;
+# the affected sites iterate small CLI argument lists.
+double_ended_iterator_last = "allow"
+
 [workspace.dependencies]
 tokio          = { version = "1", features = ["macros", "rt-multi-thread", "fs", "io-util"] }
 tokio-postgres = { version = "0.7", features = ["with-uuid-1", "with-chrono-0_4", "with-serde_json-1"] }

@@ -181,7 +181,9 @@ pub async fn retract(
     Json(req): Json<RetractReq>,
 ) -> impl IntoResponse {
     match s.client.retract(req.statement_id).await {
-        Ok(ok) => Json(json!({ "statement_id": req.statement_id, "retracted": ok })).into_response(),
+        Ok(ok) => {
+            Json(json!({ "statement_id": req.statement_id, "retracted": ok })).into_response()
+        }
         Err(e) => Json(json!({ "error": e.to_string() })).into_response(),
     }
 }

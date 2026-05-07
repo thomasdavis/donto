@@ -28,7 +28,7 @@ use tokio::sync::Mutex;
 use tokio::time;
 
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
-const READY_TIMEOUT:   Duration = Duration::from_secs(10);
+const READY_TIMEOUT: Duration = Duration::from_secs(10);
 
 #[derive(Debug, Clone)]
 pub struct LeanClient {
@@ -49,7 +49,7 @@ struct Inner {
 struct ChildHandle {
     /// We keep the Child to reap it; killed on Drop.
     _child: Child,
-    stdin:  ChildStdin,
+    stdin: ChildStdin,
     stdout: BufReader<ChildStdout>,
 }
 
@@ -58,13 +58,24 @@ impl LeanClient {
     /// `Ok(None)` if no path is configured (sidecar absent path); errors
     /// only on a real spawn failure.
     pub async fn try_spawn(bin: Option<&str>) -> Result<Option<Self>> {
-        let Some(bin) = bin else { return Ok(None); };
+        let Some(bin) = bin else {
+            return Ok(None);
+        };
         let mut cmd = Command::new(bin);
-        cmd.stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped());
-        let mut child = cmd.spawn()
+        cmd.stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+        let mut child = cmd
+            .spawn()
             .with_context(|| format!("spawning lean engine at {bin}"))?;
-        let stdin  = child.stdin.take().ok_or_else(|| anyhow!("no stdin on lean child"))?;
-        let stdout = child.stdout.take().ok_or_else(|| anyhow!("no stdout on lean child"))?;
+        let stdin = child
+            .stdin
+            .take()
+            .ok_or_else(|| anyhow!("no stdin on lean child"))?;
+        let stdout = child
+            .stdout
+            .take()
+            .ok_or_else(|| anyhow!("no stdout on lean child"))?;
         let mut stdout = BufReader::new(stdout);
 
         // Read banner line.
@@ -80,12 +91,24 @@ impl LeanClient {
                 }
             }
             Ok(Err(e)) => return Err(anyhow!("read banner: {e}")),
-            Err(_)     => return Err(anyhow!("lean engine did not greet within {:?}", READY_TIMEOUT)),
+            Err(_) => {
+                return Err(anyhow!(
+                    "lean engine did not greet within {:?}",
+                    READY_TIMEOUT
+                ))
+            }
         }
 
-        let handle = ChildHandle { _child: child, stdin, stdout };
+        let handle = ChildHandle {
+            _child: child,
+            stdin,
+            stdout,
+        };
         Ok(Some(Self {
-            inner: Arc::new(Mutex::new(Inner { child: Some(handle), bin: bin.into() })),
+            inner: Arc::new(Mutex::new(Inner {
+                child: Some(handle),
+                bin: bin.into(),
+            })),
         }))
     }
 
@@ -110,12 +133,19 @@ impl LeanClient {
             let v: Value = serde_json::from_str(resp.trim())
                 .with_context(|| format!("parse lean response: {resp:?}"))?;
             Ok::<_, anyhow::Error>(v)
-        }).await;
+        })
+        .await;
 
         match result {
-            Ok(Ok(v))   => Ok(v),
-            Ok(Err(e))  => { g.child = None; Err(e) }
-            Err(_)      => { g.child = None; Err(anyhow!("lean engine timeout after {:?}", REQUEST_TIMEOUT)) }
+            Ok(Ok(v)) => Ok(v),
+            Ok(Err(e)) => {
+                g.child = None;
+                Err(e)
+            }
+            Err(_) => {
+                g.child = None;
+                Err(anyhow!("lean engine timeout after {:?}", REQUEST_TIMEOUT))
+            }
         }
     }
 

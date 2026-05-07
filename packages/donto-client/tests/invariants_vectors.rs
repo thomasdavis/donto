@@ -19,16 +19,17 @@ async fn store_and_retrieve_vector() {
 
     let stmt_id = client
         .assert(
-            &StatementInput::new(
-                format!("{prefix}/s"), "ex:p", Object::iri("ex:o"),
-            ).with_context(&ctx),
+            &StatementInput::new(format!("{prefix}/s"), "ex:p", Object::iri("ex:o"))
+                .with_context(&ctx),
         )
-        .await.unwrap();
+        .await
+        .unwrap();
 
     let embedding: Vec<f32> = vec![1.0, 0.0, 0.0, 0.0];
     let vec_id = client
         .store_vector("statement", stmt_id, "test-model", Some("v1"), &embedding)
-        .await.unwrap();
+        .await
+        .unwrap();
 
     let pool = client.pool();
     let c = pool.get().await.unwrap();
@@ -38,7 +39,8 @@ async fn store_and_retrieve_vector() {
              from donto_vector where vector_id = $1",
             &[&vec_id],
         )
-        .await.unwrap();
+        .await
+        .unwrap();
     assert_eq!(row.get::<_, String>("subject_type"), "statement");
     assert_eq!(row.get::<_, uuid::Uuid>("subject_id"), stmt_id);
     assert_eq!(row.get::<_, String>("model_id"), "test-model");
@@ -56,16 +58,22 @@ async fn store_vector_upserts() {
 
     let stmt_id = client
         .assert(
-            &StatementInput::new(
-                format!("{prefix}/s"), "ex:p", Object::iri("ex:o"),
-            ).with_context(&ctx),
+            &StatementInput::new(format!("{prefix}/s"), "ex:p", Object::iri("ex:o"))
+                .with_context(&ctx),
         )
-        .await.unwrap();
+        .await
+        .unwrap();
 
     let v1: Vec<f32> = vec![1.0, 0.0, 0.0];
     let v2: Vec<f32> = vec![0.0, 1.0, 0.0];
-    client.store_vector("statement", stmt_id, "model-A", Some("v1"), &v1).await.unwrap();
-    client.store_vector("statement", stmt_id, "model-A", Some("v2"), &v2).await.unwrap();
+    client
+        .store_vector("statement", stmt_id, "model-A", Some("v1"), &v1)
+        .await
+        .unwrap();
+    client
+        .store_vector("statement", stmt_id, "model-A", Some("v2"), &v2)
+        .await
+        .unwrap();
 
     let pool = client.pool();
     let c = pool.get().await.unwrap();
@@ -75,7 +83,9 @@ async fn store_vector_upserts() {
              where subject_type = 'statement' and subject_id = $1 and model_id = 'model-A'",
             &[&stmt_id],
         )
-        .await.unwrap().get(0);
+        .await
+        .unwrap()
+        .get(0);
     assert_eq!(count, 1, "upsert must not create duplicates");
 
     let stored: Vec<f32> = c
@@ -84,7 +94,9 @@ async fn store_vector_upserts() {
              where subject_type = 'statement' and subject_id = $1 and model_id = 'model-A'",
             &[&stmt_id],
         )
-        .await.unwrap().get(0);
+        .await
+        .unwrap()
+        .get(0);
     assert_eq!(stored, v2, "upsert must use the latest embedding");
 }
 
@@ -100,7 +112,9 @@ async fn cosine_similarity_correct() {
             "select donto_cosine_similarity(array[1,0,0]::float4[], array[1,0,0]::float4[])",
             &[],
         )
-        .await.unwrap().get(0);
+        .await
+        .unwrap()
+        .get(0);
     assert!((sim - 1.0).abs() < 1e-6);
 
     // Orthogonal vectors → 0.0
@@ -109,7 +123,9 @@ async fn cosine_similarity_correct() {
             "select donto_cosine_similarity(array[1,0,0]::float4[], array[0,1,0]::float4[])",
             &[],
         )
-        .await.unwrap().get(0);
+        .await
+        .unwrap()
+        .get(0);
     assert!(sim.abs() < 1e-6);
 
     // Opposite vectors → -1.0
@@ -118,7 +134,9 @@ async fn cosine_similarity_correct() {
             "select donto_cosine_similarity(array[1,0]::float4[], array[-1,0]::float4[])",
             &[],
         )
-        .await.unwrap().get(0);
+        .await
+        .unwrap()
+        .get(0);
     assert!((sim + 1.0).abs() < 1e-6);
 }
 
@@ -133,7 +151,9 @@ async fn cosine_dimension_mismatch_is_null() {
             "select donto_cosine_similarity(array[1,0]::float4[], array[1,0,0]::float4[])",
             &[],
         )
-        .await.unwrap().get(0);
+        .await
+        .unwrap()
+        .get(0);
     assert!(sim.is_none(), "dimension mismatch must return null");
 }
 
@@ -147,19 +167,26 @@ async fn nearest_vectors_ranked() {
     let model_id = format!("test-nn-{}", uuid::Uuid::new_v4().simple());
     let mut ids = Vec::new();
     let embeddings: Vec<Vec<f32>> = vec![
-        vec![1.0, 0.0, 0.0],   // close to query
-        vec![0.0, 1.0, 0.0],   // orthogonal
-        vec![0.9, 0.1, 0.0],   // very close to query
+        vec![1.0, 0.0, 0.0], // close to query
+        vec![0.0, 1.0, 0.0], // orthogonal
+        vec![0.9, 0.1, 0.0], // very close to query
     ];
     for (i, emb) in embeddings.iter().enumerate() {
         let stmt_id = client
             .assert(
                 &StatementInput::new(
-                    format!("{prefix}/s{i}"), "ex:p", Object::iri(format!("ex:o{i}")),
-                ).with_context(&ctx),
+                    format!("{prefix}/s{i}"),
+                    "ex:p",
+                    Object::iri(format!("ex:o{i}")),
+                )
+                .with_context(&ctx),
             )
-            .await.unwrap();
-        client.store_vector("statement", stmt_id, &model_id, None, emb).await.unwrap();
+            .await
+            .unwrap();
+        client
+            .store_vector("statement", stmt_id, &model_id, None, emb)
+            .await
+            .unwrap();
         ids.push(stmt_id);
     }
 
@@ -172,7 +199,8 @@ async fn nearest_vectors_ranked() {
              from donto_nearest_vectors('statement', $2, $1::float4[], 3)",
             &[&query_vec, &model_id.as_str()],
         )
-        .await.unwrap();
+        .await
+        .unwrap();
 
     assert!(rows.len() >= 3, "should return all 3 vectors");
     // First result should be the identical vector.

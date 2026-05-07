@@ -19,32 +19,46 @@ async fn link_span_to_statement() {
     // Create a statement.
     let stmt_id = client
         .assert(
-            &StatementInput::new(
-                format!("{prefix}/s"), "ex:p", Object::iri("ex:o"),
-            ).with_context(&ctx),
+            &StatementInput::new(format!("{prefix}/s"), "ex:p", Object::iri("ex:o"))
+                .with_context(&ctx),
         )
-        .await.unwrap();
+        .await
+        .unwrap();
 
     // Create a document + revision + span.
     let doc_iri = format!("test:doc/{prefix}");
-    let doc_id = client.ensure_document(&doc_iri, "text/plain", None, None, None).await.unwrap();
-    let rev_id = client.add_revision(doc_id, Some("evidence text"), None, None).await.unwrap();
-    let span_id = client.create_char_span(rev_id, 0, 8, Some("evidence")).await.unwrap();
+    let doc_id = client
+        .ensure_document(&doc_iri, "text/plain", None, None, None)
+        .await
+        .unwrap();
+    let rev_id = client
+        .add_revision(doc_id, Some("evidence text"), None, None)
+        .await
+        .unwrap();
+    let span_id = client
+        .create_char_span(rev_id, 0, 8, Some("evidence"))
+        .await
+        .unwrap();
 
     // Link them.
     let link_id = client
         .link_evidence_span(stmt_id, span_id, "extracted_from", Some(0.9), Some(&ctx))
-        .await.unwrap();
+        .await
+        .unwrap();
 
     let pool = client.pool();
     let c = pool.get().await.unwrap();
     let rows = c
         .query("select * from donto_evidence_for($1)", &[&stmt_id])
-        .await.unwrap();
+        .await
+        .unwrap();
     assert_eq!(rows.len(), 1);
     assert_eq!(rows[0].get::<_, uuid::Uuid>("link_id"), link_id);
     assert_eq!(rows[0].get::<_, String>("link_type"), "extracted_from");
-    assert_eq!(rows[0].get::<_, Option<uuid::Uuid>>("target_span_id"), Some(span_id));
+    assert_eq!(
+        rows[0].get::<_, Option<uuid::Uuid>>("target_span_id"),
+        Some(span_id)
+    );
     let conf: f64 = rows[0].get("confidence");
     assert!((conf - 0.9).abs() < 1e-9);
 }
@@ -57,28 +71,34 @@ async fn link_run_to_statement() {
 
     let stmt_id = client
         .assert(
-            &StatementInput::new(
-                format!("{prefix}/s"), "ex:p", Object::iri("ex:o"),
-            ).with_context(&ctx),
+            &StatementInput::new(format!("{prefix}/s"), "ex:p", Object::iri("ex:o"))
+                .with_context(&ctx),
         )
-        .await.unwrap();
+        .await
+        .unwrap();
 
     let run_id = client
         .start_extraction(Some("claude"), None, None, Some(&ctx))
-        .await.unwrap();
+        .await
+        .unwrap();
 
     let link_id = client
         .link_evidence_run(stmt_id, run_id, "produced_by", Some(&ctx))
-        .await.unwrap();
+        .await
+        .unwrap();
 
     let pool = client.pool();
     let c = pool.get().await.unwrap();
     let rows = c
         .query("select * from donto_evidence_for($1)", &[&stmt_id])
-        .await.unwrap();
+        .await
+        .unwrap();
     assert_eq!(rows.len(), 1);
     assert_eq!(rows[0].get::<_, uuid::Uuid>("link_id"), link_id);
-    assert_eq!(rows[0].get::<_, Option<uuid::Uuid>>("target_run_id"), Some(run_id));
+    assert_eq!(
+        rows[0].get::<_, Option<uuid::Uuid>>("target_run_id"),
+        Some(run_id)
+    );
 }
 
 #[tokio::test]
@@ -91,11 +111,11 @@ async fn exactly_one_target_enforced() {
     let prefix = tag("ev-multi");
     let stmt_id = client
         .assert(
-            &StatementInput::new(
-                format!("{prefix}/s"), "ex:p", Object::iri("ex:o"),
-            ).with_context(&ctx),
+            &StatementInput::new(format!("{prefix}/s"), "ex:p", Object::iri("ex:o"))
+                .with_context(&ctx),
         )
-        .await.unwrap();
+        .await
+        .unwrap();
 
     // Zero targets must fail.
     let err = c
@@ -122,34 +142,48 @@ async fn retract_evidence_link() {
 
     let stmt_id = client
         .assert(
-            &StatementInput::new(
-                format!("{prefix}/s"), "ex:p", Object::iri("ex:o"),
-            ).with_context(&ctx),
+            &StatementInput::new(format!("{prefix}/s"), "ex:p", Object::iri("ex:o"))
+                .with_context(&ctx),
         )
-        .await.unwrap();
+        .await
+        .unwrap();
 
     let doc_iri = format!("test:doc/{prefix}");
-    let doc_id = client.ensure_document(&doc_iri, "text/plain", None, None, None).await.unwrap();
-    let rev_id = client.add_revision(doc_id, Some("text"), None, None).await.unwrap();
+    let doc_id = client
+        .ensure_document(&doc_iri, "text/plain", None, None, None)
+        .await
+        .unwrap();
+    let rev_id = client
+        .add_revision(doc_id, Some("text"), None, None)
+        .await
+        .unwrap();
     let span_id = client.create_char_span(rev_id, 0, 4, None).await.unwrap();
 
     let link_id = client
         .link_evidence_span(stmt_id, span_id, "extracted_from", None, None)
-        .await.unwrap();
+        .await
+        .unwrap();
 
     // Retract it.
     let pool = client.pool();
     let c = pool.get().await.unwrap();
     let retracted: bool = c
         .query_one("select donto_retract_evidence_link($1)", &[&link_id])
-        .await.unwrap().get(0);
+        .await
+        .unwrap()
+        .get(0);
     assert!(retracted);
 
     // evidence_for no longer returns it.
     let rows = c
         .query("select * from donto_evidence_for($1)", &[&stmt_id])
-        .await.unwrap();
-    assert_eq!(rows.len(), 0, "retracted link must vanish from current view");
+        .await
+        .unwrap();
+    assert_eq!(
+        rows.len(),
+        0,
+        "retracted link must vanish from current view"
+    );
 
     // But the row still exists (tx_time closed).
     let closed: bool = c
@@ -157,8 +191,13 @@ async fn retract_evidence_link() {
             "select upper(tx_time) is not null from donto_evidence_link where link_id = $1",
             &[&link_id],
         )
-        .await.unwrap().get(0);
-    assert!(closed, "retracted link row must persist with closed tx_time");
+        .await
+        .unwrap()
+        .get(0);
+    assert!(
+        closed,
+        "retracted link row must persist with closed tx_time"
+    );
 }
 
 #[tokio::test]
@@ -169,11 +208,11 @@ async fn link_does_not_mutate_statement() {
 
     let stmt_id = client
         .assert(
-            &StatementInput::new(
-                format!("{prefix}/s"), "ex:p", Object::iri("ex:o"),
-            ).with_context(&ctx),
+            &StatementInput::new(format!("{prefix}/s"), "ex:p", Object::iri("ex:o"))
+                .with_context(&ctx),
         )
-        .await.unwrap();
+        .await
+        .unwrap();
 
     let pool = client.pool();
     let c = pool.get().await.unwrap();
@@ -182,19 +221,35 @@ async fn link_does_not_mutate_statement() {
             "select content_hash from donto_statement where statement_id = $1",
             &[&stmt_id],
         )
-        .await.unwrap().get(0);
+        .await
+        .unwrap()
+        .get(0);
 
     let doc_iri = format!("test:doc/{prefix}");
-    let doc_id = client.ensure_document(&doc_iri, "text/plain", None, None, None).await.unwrap();
-    let rev_id = client.add_revision(doc_id, Some("text"), None, None).await.unwrap();
+    let doc_id = client
+        .ensure_document(&doc_iri, "text/plain", None, None, None)
+        .await
+        .unwrap();
+    let rev_id = client
+        .add_revision(doc_id, Some("text"), None, None)
+        .await
+        .unwrap();
     let span_id = client.create_char_span(rev_id, 0, 4, None).await.unwrap();
-    client.link_evidence_span(stmt_id, span_id, "extracted_from", None, None).await.unwrap();
+    client
+        .link_evidence_span(stmt_id, span_id, "extracted_from", None, None)
+        .await
+        .unwrap();
 
     let hash_after: Vec<u8> = c
         .query_one(
             "select content_hash from donto_statement where statement_id = $1",
             &[&stmt_id],
         )
-        .await.unwrap().get(0);
-    assert_eq!(hash_before, hash_after, "evidence link must not mutate statement");
+        .await
+        .unwrap()
+        .get(0);
+    assert_eq!(
+        hash_before, hash_after,
+        "evidence link must not mutate statement"
+    );
 }

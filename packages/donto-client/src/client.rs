@@ -386,11 +386,7 @@ impl DontoClient {
     }
 
     /// Alexandria §3.3: ephemeral weight read — DontoQL `with weights(scope=ctx)`.
-    pub async fn weight_of(
-        &self,
-        statement_id: Uuid,
-        scope: Option<&ContextScope>,
-    ) -> Result<i64> {
+    pub async fn weight_of(&self, statement_id: Uuid, scope: Option<&ContextScope>) -> Result<i64> {
         let scope_json: Option<Json> = scope.map(|s| s.to_json());
         let c = self.pool.get().await?;
         let row = c
@@ -512,10 +508,7 @@ impl DontoClient {
     pub async fn context_env_get(&self, context: &str, key: &str) -> Result<Option<Json>> {
         let c = self.pool.get().await?;
         let row = c
-            .query_one(
-                "select donto_context_env_get($1, $2)",
-                &[&context, &key],
-            )
+            .query_one("select donto_context_env_get($1, $2)", &[&context, &key])
             .await?;
         Ok(row.get::<_, Option<Json>>(0))
     }
@@ -723,7 +716,9 @@ impl DontoClient {
         let row = c
             .query_one(
                 "select donto_assert_argument($1, $2, $3, $4, $5, $6, $7)",
-                &[&source, &target, &relation, &context, &strength, &agent_id, &evidence],
+                &[
+                    &source, &target, &relation, &context, &strength, &agent_id, &evidence,
+                ],
             )
             .await?;
         Ok(row.get::<_, Uuid>(0))
@@ -744,7 +739,14 @@ impl DontoClient {
         let row = c
             .query_one(
                 "select donto_emit_obligation($1, $2, $3, $4, $5, $6)",
-                &[&statement_id, &obligation_type, &context, &priority, &detail, &assigned_agent],
+                &[
+                    &statement_id,
+                    &obligation_type,
+                    &context,
+                    &priority,
+                    &detail,
+                    &assigned_agent,
+                ],
             )
             .await?;
         Ok(row.get::<_, Uuid>(0))
@@ -780,7 +782,13 @@ impl DontoClient {
         let row = c
             .query_one(
                 "select donto_store_vector($1, $2, $3, $4, $5)",
-                &[&subject_type, &subject_id, &model_id, &model_version, &embedding],
+                &[
+                    &subject_type,
+                    &subject_id,
+                    &model_id,
+                    &model_version,
+                    &embedding,
+                ],
             )
             .await?;
         Ok(row.get::<_, Uuid>(0))
@@ -829,10 +837,7 @@ impl DontoClient {
     pub async fn retract_alignment(&self, alignment_id: Uuid) -> Result<bool> {
         let c = self.pool.get().await?;
         let row = c
-            .query_one(
-                "select donto_retract_alignment($1)",
-                &[&alignment_id],
-            )
+            .query_one("select donto_retract_alignment($1)", &[&alignment_id])
             .await?;
         Ok(row.get::<_, bool>(0))
     }
@@ -1040,17 +1045,10 @@ impl DontoClient {
 
     /// Batch rebuild canonical shadows for a context (or all current
     /// statements when context is None). Returns the count rebuilt.
-    pub async fn rebuild_shadows(
-        &self,
-        context: Option<&str>,
-        limit: Option<i32>,
-    ) -> Result<i32> {
+    pub async fn rebuild_shadows(&self, context: Option<&str>, limit: Option<i32>) -> Result<i32> {
         let c = self.pool.get().await?;
         let row = c
-            .query_one(
-                "select donto_rebuild_shadows($1, $2)",
-                &[&context, &limit],
-            )
+            .query_one("select donto_rebuild_shadows($1, $2)", &[&context, &limit])
             .await?;
         Ok(row.get::<_, i32>(0))
     }

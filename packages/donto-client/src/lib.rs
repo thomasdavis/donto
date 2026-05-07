@@ -7,6 +7,11 @@
 //! at startup or run `cargo run -p donto-cli -- migrate`.
 
 #![warn(missing_debug_implementations, rust_2018_idioms)]
+// Client-method signatures mirror SQL function signatures one-to-one;
+// the SQL functions take 8+ parameters by design, and rewriting the
+// Rust API to use builder structs solely to satisfy clippy is the
+// kind of churn this project's CLAUDE.md non-negotiables warn against.
+#![allow(clippy::too_many_arguments)]
 
 pub mod client;
 pub mod error;

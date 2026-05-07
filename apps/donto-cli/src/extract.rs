@@ -67,7 +67,10 @@ struct ExtractedFact {
     object: FactObject,
     #[serde(default = "default_tier", deserialize_with = "deser_flexible_u8")]
     tier: u8,
-    #[serde(default = "default_confidence", deserialize_with = "deser_flexible_f64")]
+    #[serde(
+        default = "default_confidence",
+        deserialize_with = "deser_flexible_f64"
+    )]
     confidence: f64,
     #[serde(default)]
     notes: Option<String>,
@@ -82,7 +85,9 @@ fn deser_flexible_u8<'de, D: serde::Deserializer<'de>>(d: D) -> std::result::Res
     }
 }
 
-fn deser_flexible_f64<'de, D: serde::Deserializer<'de>>(d: D) -> std::result::Result<f64, D::Error> {
+fn deser_flexible_f64<'de, D: serde::Deserializer<'de>>(
+    d: D,
+) -> std::result::Result<f64, D::Error> {
     let v = serde_json::Value::deserialize(d)?;
     match v {
         serde_json::Value::Number(n) => Ok(n.as_f64().unwrap_or(0.7)),
@@ -91,8 +96,12 @@ fn deser_flexible_f64<'de, D: serde::Deserializer<'de>>(d: D) -> std::result::Re
     }
 }
 
-fn default_tier() -> u8 { 1 }
-fn default_confidence() -> f64 { 0.7 }
+fn default_tier() -> u8 {
+    1
+}
+fn default_confidence() -> f64 {
+    0.7
+}
 
 /// LLMs return objects in various shapes. We handle them all.
 #[derive(Debug)]
@@ -109,12 +118,12 @@ impl<'de> serde::Deserialize<'de> for FactObject {
                 if let Some(iri) = map.get("iri").and_then(|v| v.as_str()) {
                     Ok(FactObject::Iri(iri.to_string()))
                 } else if let Some(lit) = map.get("literal") {
-                    let lv: LiteralValue = serde_json::from_value(lit.clone())
-                        .map_err(serde::de::Error::custom)?;
+                    let lv: LiteralValue =
+                        serde_json::from_value(lit.clone()).map_err(serde::de::Error::custom)?;
                     Ok(FactObject::Lit(lv))
                 } else if map.contains_key("v") {
-                    let lv: LiteralValue = serde_json::from_value(v.clone())
-                        .map_err(serde::de::Error::custom)?;
+                    let lv: LiteralValue =
+                        serde_json::from_value(v.clone()).map_err(serde::de::Error::custom)?;
                     Ok(FactObject::Lit(lv))
                 } else {
                     Ok(FactObject::Lit(LiteralValue {
@@ -153,7 +162,9 @@ struct LiteralValue {
     lang: Option<String>,
 }
 
-fn default_dt() -> String { "xsd:string".into() }
+fn default_dt() -> String {
+    "xsd:string".into()
+}
 
 fn confidence_to_maturity(c: f64) -> u8 {
     match c {
@@ -198,7 +209,11 @@ pub async fn run(
     let text = std::fs::read_to_string(source_path)
         .with_context(|| format!("reading {}", source_path.display()))?;
 
-    eprintln!("extracting from {} ({} chars) with {model}...", source_name, text.len());
+    eprintln!(
+        "extracting from {} ({} chars) with {model}...",
+        source_name,
+        text.len()
+    );
 
     let facts = call_llm(api_key, model, &text).await?;
     let num_facts = facts.len() as u64;
@@ -218,25 +233,34 @@ pub async fn run(
         }
     }
 
-    eprintln!("  extracted {num_facts} facts across {} tiers", count_active_tiers(&tiers));
+    eprintln!(
+        "  extracted {num_facts} facts across {} tiers",
+        count_active_tiers(&tiers)
+    );
 
-    let stmts: Vec<StatementInput> = facts.iter().map(|f| fact_to_statement(f, context)).collect();
+    let stmts: Vec<StatementInput> = facts
+        .iter()
+        .map(|f| fact_to_statement(f, context))
+        .collect();
 
     let ingested = if dry_run {
         eprintln!("  dry-run: skipping ingest");
         for (i, fact) in facts.iter().enumerate() {
-            println!("{}", serde_json::json!({
-                "n": i + 1,
-                "subject": fact.subject,
-                "predicate": fact.predicate,
-                "object": match &fact.object {
-                    FactObject::Iri(iri) => serde_json::json!({"iri": iri}),
-                    FactObject::Lit(lit) => serde_json::json!({"v": lit.v, "dt": lit.dt}),
-                },
-                "tier": fact.tier,
-                "confidence": fact.confidence,
-                "notes": fact.notes,
-            }));
+            println!(
+                "{}",
+                serde_json::json!({
+                    "n": i + 1,
+                    "subject": fact.subject,
+                    "predicate": fact.predicate,
+                    "object": match &fact.object {
+                        FactObject::Iri(iri) => serde_json::json!({"iri": iri}),
+                        FactObject::Lit(lit) => serde_json::json!({"v": lit.v, "dt": lit.dt}),
+                    },
+                    "tier": fact.tier,
+                    "confidence": fact.confidence,
+                    "notes": fact.notes,
+                })
+            );
         }
         0
     } else {
@@ -313,10 +337,12 @@ async fn call_llm(api_key: &str, model: &str, text: &str) -> Result<Vec<Extracte
         .unwrap_or(content.trim())
         .trim();
 
-    let output: ExtractionOutput =
-        serde_json::from_str(json_str).with_context(|| {
-            format!("parsing extraction JSON (first 200 chars): {}", &json_str[..json_str.len().min(200)])
-        })?;
+    let output: ExtractionOutput = serde_json::from_str(json_str).with_context(|| {
+        format!(
+            "parsing extraction JSON (first 200 chars): {}",
+            &json_str[..json_str.len().min(200)]
+        )
+    })?;
 
     Ok(output.facts)
 }

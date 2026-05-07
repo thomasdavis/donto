@@ -169,11 +169,7 @@ async fn extra_roles_from_jsonb_are_asserted() {
             "select count(*) from donto_statement \
              where subject = $1 and predicate = $2 \
                and object_iri = $3 and upper(tx_time) is null",
-            &[
-                &frame_iri,
-                &role_iri_pred,
-                &format!("{prefix}/professor"),
-            ],
+            &[&frame_iri, &role_iri_pred, &format!("{prefix}/professor")],
         )
         .await
         .unwrap()

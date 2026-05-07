@@ -212,7 +212,12 @@ pub async fn nearest_predicates(
 ) -> impl IntoResponse {
     match s
         .client
-        .nearest_predicates(&req.embedding, &req.model_id, req.domain.as_deref(), req.limit)
+        .nearest_predicates(
+            &req.embedding,
+            &req.model_id,
+            req.domain.as_deref(),
+            req.limit,
+        )
         .await
     {
         Ok(rows) => Json(json!({ "candidates": rows })).into_response(),
@@ -230,8 +235,9 @@ pub async fn materialize_shadow(
     Json(req): Json<MaterializeShadowReq>,
 ) -> impl IntoResponse {
     match s.client.materialize_shadow(req.statement_id).await {
-        Ok(id) => Json(json!({ "statement_id": req.statement_id, "shadow_id": id }))
-            .into_response(),
+        Ok(id) => {
+            Json(json!({ "statement_id": req.statement_id, "shadow_id": id })).into_response()
+        }
         Err(e) => Json(json!({ "error": e.to_string() })).into_response(),
     }
 }

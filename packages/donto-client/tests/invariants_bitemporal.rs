@@ -59,18 +59,24 @@ async fn double_retract_is_idempotent_and_silent() {
 async fn as_of_anywhere_in_open_window_returns_row() {
     let c = pg_or_skip!(common::connect().await);
     let ctx = common::ctx(&c, "bt_as_of").await;
+    let prefix = common::tag("bt_as_of");
+    let subj = format!("{prefix}/a");
 
     let id = c
-        .assert(&StatementInput::new("ex:a", "ex:p", Object::iri("ex:b")).with_context(&ctx))
+        .assert(&StatementInput::new(&subj, "ex:p", Object::iri("ex:b")).with_context(&ctx))
         .await
         .unwrap();
+
+    // Brief sleep so Utc::now() is unambiguously after the assert in
+    // Postgres microsecond resolution.
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
 
     // Sample 5 timestamps spread across an open window: all must see the row.
     for offset_ms in [10i64, 50, 100, 200, 500] {
         let probe = Utc::now() + Duration::milliseconds(offset_ms);
         let n = c
             .match_pattern(
-                Some("ex:a"),
+                Some(&subj),
                 Some("ex:p"),
                 None,
                 Some(&ContextScope::just(&ctx)),
@@ -90,11 +96,14 @@ async fn as_of_anywhere_in_open_window_returns_row() {
 async fn as_of_after_retraction_does_not_show_row() {
     let c = pg_or_skip!(common::connect().await);
     let ctx = common::ctx(&c, "bt_after_retract").await;
+    let prefix = common::tag("bt_after_retract");
+    let subj = format!("{prefix}/a");
 
     let id = c
-        .assert(&StatementInput::new("ex:a", "ex:p", Object::iri("ex:b")).with_context(&ctx))
+        .assert(&StatementInput::new(&subj, "ex:p", Object::iri("ex:b")).with_context(&ctx))
         .await
         .unwrap();
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
     let before_retract = Utc::now();
     tokio::time::sleep(std::time::Duration::from_millis(50)).await;
     c.retract(id).await.unwrap();
@@ -103,7 +112,7 @@ async fn as_of_after_retraction_does_not_show_row() {
 
     let pre = c
         .match_pattern(
-            Some("ex:a"),
+            Some(&subj),
             Some("ex:p"),
             None,
             Some(&ContextScope::just(&ctx)),
@@ -118,7 +127,7 @@ async fn as_of_after_retraction_does_not_show_row() {
 
     let post = c
         .match_pattern(
-            Some("ex:a"),
+            Some(&subj),
             Some("ex:p"),
             None,
             Some(&ContextScope::just(&ctx)),

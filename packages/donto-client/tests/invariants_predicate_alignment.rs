@@ -103,17 +103,7 @@ async fn register_all_six_relation_types() {
         let source = format!("{prefix}/s{i}");
         let target = format!("{prefix}/t{i}");
         let id = client
-            .register_alignment(
-                &source,
-                &target,
-                *rel,
-                0.9,
-                None,
-                None,
-                None,
-                None,
-                None,
-            )
+            .register_alignment(&source, &target, *rel, 0.9, None, None, None, None, None)
             .await
             .unwrap_or_else(|e| panic!("relation {} should register: {e:?}", rel.as_str()));
 
@@ -240,14 +230,8 @@ async fn registration_with_confidence_validity_provenance() {
         .unwrap();
     let conf: f64 = row.get("confidence");
     assert!((conf - 0.85).abs() < 1e-9);
-    assert_eq!(
-        row.get::<_, Option<NaiveDate>>("vlo"),
-        Some(valid_lo)
-    );
-    assert_eq!(
-        row.get::<_, Option<NaiveDate>>("vhi"),
-        Some(valid_hi)
-    );
+    assert_eq!(row.get::<_, Option<NaiveDate>>("vlo"), Some(valid_lo));
+    assert_eq!(row.get::<_, Option<NaiveDate>>("vhi"), Some(valid_hi));
     let prov: serde_json::Value = row.get("provenance");
     assert_eq!(prov["method"], "manual");
     assert_eq!(prov["reviewer"], "alice");
