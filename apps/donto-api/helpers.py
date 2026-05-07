@@ -61,85 +61,55 @@ def parse_fact_object(obj):
     return None, {"v": obj, "dt": "xsd:string"}
 
 
-EXTRACTION_PROMPT = """You are a predicate extraction engine. Given a source text (article, transcript,
-essay, interview, etc.), extract the MAXIMUM CONCEIVABLE number of atomic
-predicates — (subject, predicate, object) triples.
+EXTRACTION_PROMPT = """You are a predicate extraction engine. Given a source text,
+extract the MAXIMUM number of atomic (subject, predicate, object) triples.
 
-Your goal is TOTAL EXTRACTION. Not a summary. Not the "main points." Every
-single relationship, claim, implication, presupposition, rhetorical move,
-and philosophical commitment expressed or implied by the text becomes a triple.
+Your goal is TOTAL EXTRACTION — every relationship, every property, every
+attribution, every event the text expresses or directly implies becomes a
+triple. Not a summary. Not the main points. Every single claim.
 
-You must INVENT predicate names yourself. Use camelCase. Be specific — prefer
-"graduatedFrom" over "relatedTo". Mint as many novel predicates as the text demands.
-
-## EXTRACTION TIERS — work through ALL of these. Do not stop at Tier 1.
-
-### Tier 1 — Surface facts (what the text explicitly states)
-Identity, classification, biography, affiliation, education, location, temporal,
-authorship, quantitative, attribution predicates.
-
-### Tier 2 — Relational and structural (how things connect)
-Causal, temporal ordering, mereological, spatial, comparison, dependency,
-contrast, succession predicates.
-
-### Tier 3 — Opinions, stances, and evaluative claims
-Evaluation, preference, advocacy, criticism, agreement, emotional stance.
-
-### Tier 4 — Epistemic and modal (known, possible, necessary)
-Certainty, uncertainty, evidence, knowledge source, possibility, necessity, belief.
-
-### Tier 5 — Pragmatic and rhetorical (what the text DOES)
-Speech acts, rhetorical moves, hedging, emphasis, framing, audience.
-
-### Tier 6 — Presuppositions and implicature (assumed without stating)
-Presuppositions, implicature, existential commitments, absence.
-
-### Tier 7 — Philosophical and ontological (deep structure)
-Ontological, teleological, axiological, deontic, counterfactual, essentialism.
-
-### Tier 8 — Intertextual and contextual (beyond the text itself)
-References, cultural context, genre, historical.
+Mint predicate names yourself in camelCase. Be specific — prefer
+"graduatedFromUniversity" over "relatedTo".
 
 ## OUTPUT FORMAT
 
 Return a JSON object with a single "facts" array. Each fact:
 
 {
-  "subject": "ex:<kebab-case-subject>",
-  "predicate": "<camelCase predicate you invented>",
-  "object": { "iri": "ex:<kebab-case>" } OR { "literal": { "v": <value>, "dt": "<xsd type>" } },
-  "tier": <1-8>,
+  "subject":   "ex:<kebab-case-subject>",
+  "predicate": "<camelCase>",
+  "object":    {"iri": "ex:<kebab-case>"} | {"literal": {"v": <value>, "dt": "<xsd type>"}},
+  "anchor":    {"doc": "<doc-iri>", "start": <int>, "end": <int>} | null,
+  "hypothesis_only": <bool>,
   "confidence": <0.0-1.0>,
-  "notes": "<brief justification>"
+  "notes":     "<brief justification>"
 }
+
+If a claim is not supported by an explicit text span, set anchor=null
+AND hypothesis_only=true. Never invent an anchor.
 
 ## CONTENT FOCUS
 
-IGNORE website boilerplate entirely. Do NOT extract facts about:
-- Navigation menus, footer links, sidebar items
-- "Read more", "Learn more", "Visit", "Subscribe" UI elements
-- Cookie notices, privacy policies, copyright statements
-- Website section structure (hasMenuSection, hasFooterLink, etc.)
-- Generic CMS metadata (page layout, breadcrumbs, social links)
+IGNORE website boilerplate (nav, footer, cookie notices, CMS chrome).
+Extract from the substantive document content only.
 
-Focus ONLY on the substantive article/document content. If the text is a
-web page, extract from the main body content only — the actual article,
-report, record, or document. Website chrome is noise.
+## RULES
 
-## CRITICAL RULES
+1. IRIs must be kebab-lower-case: "ex:mrs-watson", not "ex:MrsWatson".
+2. Never use boolean objects — invent a predicate instead.
+3. Prefer IRIs over literals for entities.
+4. Literals are short: a name, a date, a quote, a number — not a sentence.
+5. Confidence: 1.0 stated, 0.9 minor inference, 0.7 significant, 0.5 speculative.
+6. 15-30+ distinct subjects per 500-word article.
+7. Decompose aggressively. Mint predicates freely.
+8. Bias toward MORE triples. Target 100-500+ depending on length.
+9. Every fact must be grounded in the text or marked hypothesis_only.
 
-1. ALL IRIs must be kebab-lower-case: "ex:mrs-watson", NOT "ex:MrsWatson".
-2. NEVER use boolean objects. Use predicates instead.
-3. Prefer IRIs over string literals for entities.
-4. String literals must be SHORT (name, date, quote, number — not sentences).
-5. Confidence: 1.0 = directly stated, 0.9 = minor inference, 0.7 = significant, 0.5 = speculative.
-6. Tier labels must be honest — article metadata is Tier 1, not Tier 8.
-7. 15-30+ distinct subjects per 500-word article.
-8. Decompose aggressively. Mint predicates freely.
-9. Bias toward MORE triples. Target 100-500+ depending on article length.
-10. EVERY predicate must be grounded in the text.
+For multi-pass exhaustive extraction with explicit aperture lenses
+(surface / linguistic / presupposition / inferential / conceivable /
+recursive), see `extraction/apertures.py` and `run_exhaustive`.
 
-Return ONLY the JSON. No commentary before or after."""
+Return ONLY the JSON. No commentary."""
 
 
 async def srv_post(path: str, body=None):
@@ -384,14 +354,51 @@ async def ingest_facts(facts: list[dict], context: str) -> int:
     return 0
 
 
-def compute_tiers(facts: list[dict]) -> dict:
-    """Compute tier breakdown from a list of extracted facts."""
-    tiers = {f"t{i}": 0 for i in range(1, 9)}
+def compute_yield(facts: list[dict]) -> dict:
+    """Compute extraction-yield metrics from a list of facts.
+
+    Replaces the 8-tier breakdown with signals that actually scale with
+    extraction effort: how many distinct claims, how anchored they are,
+    how many are hypothesis-only, and (when an exhaustive multi-pass
+    run is in play) how many came from each aperture.
+
+    Reads `aperture` (set by `extraction.exhaustive`), `anchor`, and
+    `hypothesis_only` from each fact. Falls back gracefully when these
+    fields are absent — single-pass output still gets totals and
+    diversity counts, just no per-aperture breakdown.
+    """
+    if not facts:
+        return {
+            "total_facts": 0,
+            "distinct_predicates": 0,
+            "distinct_subjects": 0,
+            "anchor_coverage": 0.0,
+            "hypothesis_density": 0.0,
+            "facts_per_aperture": {},
+        }
+    by_aperture: dict[str, int] = {}
+    anchored = 0
+    hypothetical = 0
     for f in facts:
-        t = f.get("tier", 1)
-        if isinstance(t, str):
-            try: t = int(t)
-            except: t = 1
-        key = f"t{min(max(t, 1), 8)}"
-        tiers[key] = tiers.get(key, 0) + 1
-    return tiers
+        ap = f.get("aperture")
+        if ap:
+            by_aperture[ap] = by_aperture.get(ap, 0) + 1
+        if f.get("anchor"):
+            anchored += 1
+        if f.get("hypothesis_only"):
+            hypothetical += 1
+    return {
+        "total_facts": len(facts),
+        "distinct_predicates": len({f.get("predicate") for f in facts if f.get("predicate")}),
+        "distinct_subjects":   len({f.get("subject")   for f in facts if f.get("subject")}),
+        "anchor_coverage":     round(anchored / len(facts), 3),
+        "hypothesis_density":  round(hypothetical / len(facts), 3),
+        "facts_per_aperture":  by_aperture,
+    }
+
+
+# Back-compat shim. Existing callers still receive a dict shaped like
+# the old 8-tier histogram, but the contents are zeros — tiers are no
+# longer mined. Callers should migrate to `compute_yield`.
+def compute_tiers(_facts: list[dict]) -> dict:
+    return {f"t{i}": 0 for i in range(1, 9)}

@@ -31,7 +31,7 @@ from temporalio.service import RPCError
 from helpers import (
     DONTOSRV, OPENROUTER_URL, OPENROUTER_KEY, DEFAULT_MODEL, FALLBACK_MODEL,
     srv, openrouter, resolve_model, confidence_to_maturity, parse_fact_object,
-    EXTRACTION_PROMPT, call_openrouter, ingest_facts, compute_tiers,
+    EXTRACTION_PROMPT, call_openrouter, ingest_facts, compute_yield,
 )
 from helpers import srv_post as _helpers_srv_post
 from workflows import ExtractionWorkflow
@@ -399,7 +399,7 @@ async def extract_and_ingest(req: ExtractIngestRequest):
     llm_ms = int((time.time() - t0) * 1000)
     logger.info(f"  LLM extraction: {len(facts)} facts in {llm_ms}ms cost={llm_meta.get('cost')}")
 
-    tiers = compute_tiers(facts)
+    yield_metrics = compute_yield(facts)
 
     t1 = time.time()
     ingested = await ingest_facts(facts, req.context)
@@ -412,7 +412,7 @@ async def extract_and_ingest(req: ExtractIngestRequest):
         "context": req.context,
         "facts_extracted": len(facts),
         "statements_ingested": ingested,
-        "tiers": tiers,
+        "yield": yield_metrics,
         "elapsed_ms": total_ms,
         "timing": {"llm_ms": llm_ms, "ingest_ms": ingest_ms},
         "usage": llm_meta,
@@ -1037,35 +1037,28 @@ async def extract(req: ExtractRequest):
     **Use this when you want to:**
     - Preview extracted facts before committing (`dry_run: true`)
     - Let the context be auto-generated from the model name
-    - Inspect the raw LLM output including tier labels, confidence scores, and justification notes
+    - Inspect the raw LLM output including aperture tags, confidence scores, and justification notes
 
     **With `dry_run: true`**, the response includes a `facts` array with every extracted fact,
-    each containing: subject, predicate, object, tier (1-8), confidence (0.0-1.0), and notes
-    (brief justification of why this fact was extracted from the text).
+    each containing: subject, predicate, object, anchor, hypothesis_only, confidence (0.0-1.0),
+    aperture (set when `extraction.exhaustive` is used), and notes.
 
     **Timing:** 30-120 seconds. Set HTTP timeout to 600s.
 
-    **Returns (dry_run=false):** `{model, context, facts_extracted, statements_ingested, tiers, elapsed_ms}`
+    **Returns (dry_run=false):** `{model, context, facts_extracted, statements_ingested, yield, elapsed_ms}`
 
-    **Returns (dry_run=true):** `{model, facts_extracted, tiers, dry_run: true, facts: [...], elapsed_ms}`
+    **Returns (dry_run=true):** `{model, facts_extracted, yield, dry_run: true, facts: [...], elapsed_ms}`
     """
     start = time.time()
     model = resolve_model(req.model)
     facts, llm_meta = await call_openrouter(req.text, model)
-
-    tiers = {f"t{i}": 0 for i in range(1, 9)}
-    for f in facts:
-        t = f.get("tier", 1)
-        if isinstance(t, str):
-            try: t = int(t)
-            except: t = 1
-        tiers[f"t{min(max(t, 1), 8)}"] = tiers.get(f"t{min(max(t, 1), 8)}", 0) + 1
+    yield_metrics = compute_yield(facts)
 
     if req.dry_run:
         return {
             "model": model,
             "facts_extracted": len(facts),
-            "tiers": tiers,
+            "yield": yield_metrics,
             "dry_run": True,
             "facts": facts,
             "elapsed_ms": int((time.time() - start) * 1000),
@@ -1079,7 +1072,155 @@ async def extract(req: ExtractRequest):
         "context": context,
         "facts_extracted": len(facts),
         "statements_ingested": ingested,
-        "tiers": tiers,
+        "yield": yield_metrics,
+        "elapsed_ms": int((time.time() - start) * 1000),
+    }
+
+
+# ── Exhaustive multi-aperture extraction ───────────────────────────────
+
+
+class ExhaustiveRequest(BaseModel):
+    text: str = Field(..., description="Source text to mine.")
+    context: Optional[str] = Field(None, description="Context IRI; auto-generated if omitted.")
+    model: str = Field("grok", description="Model shortcut or full OpenRouter model ID.")
+    apertures: Optional[list[str]] = Field(
+        None,
+        description="Subset of {surface, linguistic, presupposition, inferential, conceivable}. "
+                    "Defaults to all five. RECURSIVE is enabled separately via `recurse`.",
+    )
+    recurse: bool = Field(True, description="Run a RECURSIVE pass that re-mines facts about newly discovered entities.")
+    dry_run: bool = Field(False, description="Do not ingest; return the deduplicated fact set.")
+
+
+@app.post("/extract/exhaustive", tags=["Extract"],
+    summary="Multi-aperture extraction — surface, linguistic, presupposition, inferential, conceivable, recursive")
+async def extract_exhaustive(req: ExhaustiveRequest):
+    """Run multiple specialised extraction passes ("apertures") over the
+    same text, then union the results with content-hash deduplication.
+
+    The 8-tier prompt was a single pass labelling each fact with a tier;
+    this is N passes with N specialised prompts:
+
+    * **surface** — what the text explicitly states (anchored, asserted)
+    * **linguistic** — clause-by-clause syntactic decomposition
+    * **presupposition** — claims the text takes for granted (hypothesis_only)
+    * **inferential** — claims that follow from common knowledge
+    * **conceivable** — claims that *could* hold given entity types
+      (hypothesis_only — the "hairs on their head" lens)
+    * **recursive** — re-runs `surface` against newly discovered entities
+
+    Yields 3-10× more candidates than the single-pass /extract endpoint,
+    at proportionally higher cost. Hypothesis-only candidates flood the
+    candidate space but are flagged so curated releases drop them.
+
+    **Cost:** linear in number of apertures + recursion. ~5-7× a normal
+    extract. **Returns:** `{domain, facts, by_aperture, yield, dedup_collisions, recursion_depth}`.
+    """
+    from extraction import (  # local import — only loaded when this endpoint is hit
+        Aperture, run_exhaustive, DEFAULT_APERTURES,
+    )
+    from extraction.quarantine import list_sink
+
+    start = time.time()
+    model = resolve_model(req.model)
+
+    # Pick apertures
+    aps: tuple[Aperture, ...] = DEFAULT_APERTURES
+    if req.apertures:
+        try:
+            aps = tuple(Aperture(a) for a in req.apertures)
+        except ValueError as e:
+            raise HTTPException(400, f"unknown aperture: {e}")
+
+    # Adapt call_openrouter to the M5 ModelCaller signature.
+    async def caller(prompt: str, text: str, model_id: str):
+        # Inject the aperture's prompt as the system content via a
+        # one-off override of EXTRACTION_PROMPT-style call. helpers
+        # owns the openrouter client; we wrap its inner POST to swap
+        # the system prompt without duplicating the HTTP plumbing.
+        from helpers import openrouter, OPENROUTER_URL, OPENROUTER_KEY, clean_web_content
+        cleaned = clean_web_content(text)
+        resp = await openrouter.post(
+            OPENROUTER_URL,
+            headers={"Authorization": f"Bearer {OPENROUTER_KEY}", "Content-Type": "application/json"},
+            json={
+                "model": model_id, "temperature": 0.1, "max_tokens": 32768,
+                "messages": [
+                    {"role": "system", "content": prompt},
+                    {"role": "user", "content": f"Extract from this text:\n\n---\n{cleaned}\n---"},
+                ],
+            },
+        )
+        if resp.status_code != 200:
+            raise RuntimeError(f"OpenRouter {resp.status_code}: {resp.text[:300]}")
+        body = resp.json()
+        usage = body.get("usage", {})
+        meta = {
+            "model_used": body.get("model"),
+            "prompt_tokens": usage.get("prompt_tokens"),
+            "completion_tokens": usage.get("completion_tokens"),
+            "cost": usage.get("total_cost") or usage.get("cost"),
+        }
+        content = body["choices"][0]["message"]["content"].strip()
+        if content.startswith("```"):
+            content = content.lstrip("`")
+            if content.lower().startswith("json"):
+                content = content[4:]
+            content = content.rstrip("`").strip()
+        try:
+            parsed = json.loads(content)
+            facts = parsed.get("facts") or parsed.get("predicates") or []
+        except json.JSONDecodeError:
+            facts = []
+        return facts, meta
+
+    bucket, sink = list_sink()
+    outcome = await run_exhaustive(
+        text=req.text,
+        source_iri=req.context or f"src:exhaustive/{model.split('/')[-1]}",
+        model=model,
+        model_caller=caller,
+        authoriser=lambda *_: True,  # hook M0 trust kernel here when wiring policy
+        quarantine_sink=sink,
+        apertures=aps,
+        recurse=req.recurse,
+    )
+
+    by_aperture = [
+        {
+            "aperture": ar.aperture.value,
+            "raw": ar.raw_count,
+            "accepted": ar.accepted_count,
+            "quarantined": ar.quarantined_count,
+        }
+        for ar in outcome.by_aperture
+    ]
+
+    if req.dry_run:
+        return {
+            "domain": outcome.domain.value,
+            "facts": outcome.facts,
+            "by_aperture": by_aperture,
+            "yield": outcome.yield_metrics,
+            "dedup_collisions": outcome.dedup_collisions,
+            "recursion_depth": outcome.recursion_depth,
+            "dry_run": True,
+            "elapsed_ms": int((time.time() - start) * 1000),
+        }
+
+    context = req.context or f"ctx:exhaustive/{model.split('/')[-1]}"
+    ingested = await ingest_facts(outcome.facts, context)
+
+    return {
+        "domain": outcome.domain.value,
+        "context": context,
+        "facts_extracted": len(outcome.facts),
+        "statements_ingested": ingested,
+        "by_aperture": by_aperture,
+        "yield": outcome.yield_metrics,
+        "dedup_collisions": outcome.dedup_collisions,
+        "recursion_depth": outcome.recursion_depth,
         "elapsed_ms": int((time.time() - start) * 1000),
     }
 

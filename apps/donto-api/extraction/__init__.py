@@ -20,6 +20,8 @@ from .validation import validate_candidate, ValidationResult
 from .quarantine import quarantine_candidate
 from .policy_gate import source_permits_external_model
 from .dispatch import run_extraction, ExtractionOutcome
+from .apertures import Aperture, prompt_for_aperture
+from .exhaustive import run_exhaustive, ExhaustiveOutcome, ApertureResult, DEFAULT_APERTURES
 
 __all__ = [
     "Domain",
@@ -32,4 +34,10 @@ __all__ = [
     "source_permits_external_model",
     "run_extraction",
     "ExtractionOutcome",
+    "Aperture",
+    "prompt_for_aperture",
+    "run_exhaustive",
+    "ExhaustiveOutcome",
+    "ApertureResult",
+    "DEFAULT_APERTURES",
 ]
