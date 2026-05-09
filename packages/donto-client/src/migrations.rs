@@ -395,6 +395,26 @@ pub const MIGRATIONS: &[(&str, &str)] = &[
         "0117_rename_drop_v1000_suffix",
         include_str!("../../sql/migrations/0117_rename_drop_v1000_suffix.sql"),
     ),
+    (
+        "0118_maturity_audit",
+        include_str!("../../sql/migrations/0118_maturity_audit.sql"),
+    ),
+    (
+        "0119_detector_finding",
+        include_str!("../../sql/migrations/0119_detector_finding.sql"),
+    ),
+    (
+        "0120_paraconsistency_density",
+        include_str!("../../sql/migrations/0120_paraconsistency_density.sql"),
+    ),
+    (
+        "0121_paraconsistency_views_v2",
+        include_str!("../../sql/migrations/0121_paraconsistency_views_v2.sql"),
+    ),
+    (
+        "0122_detector_finding_retention",
+        include_str!("../../sql/migrations/0122_detector_finding_retention.sql"),
+    ),
 ];
 
 fn sha256_of(s: &str) -> Vec<u8> {

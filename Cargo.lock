@@ -495,6 +495,38 @@ dependencies = [
 ]
 
 [[package]]
+name = "donto-alert-sink"
+version = "0.0.1"
+dependencies = [
+ "chrono",
+ "donto-analytics",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 1.0.69",
+ "tracing",
+]
+
+[[package]]
+name = "donto-analytics"
+version = "0.0.1"
+dependencies = [
+ "anyhow",
+ "chrono",
+ "deadpool-postgres",
+ "donto-client",
+ "donto-synthetic",
+ "serde",
+ "serde_json",
+ "thiserror 1.0.69",
+ "tokio",
+ "tokio-postgres",
+ "tracing",
+ "tracing-subscriber",
+ "uuid",
+]
+
+[[package]]
 name = "donto-cli"
 version = "0.0.1"
 dependencies = [
@@ -503,6 +535,8 @@ dependencies = [
  "clap",
  "clap_complete",
  "clap_mangen",
+ "donto-alert-sink",
+ "donto-analytics",
  "donto-client",
  "donto-ingest",
  "donto-query",
@@ -608,6 +642,24 @@ dependencies = [
  "thiserror 1.0.69",
  "tokio",
  "tracing",
+ "uuid",
+]
+
+[[package]]
+name = "donto-synthetic"
+version = "0.0.1"
+dependencies = [
+ "anyhow",
+ "chrono",
+ "clap",
+ "deadpool-postgres",
+ "donto-client",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tokio-postgres",
+ "tracing",
+ "tracing-subscriber",
  "uuid",
 ]
 

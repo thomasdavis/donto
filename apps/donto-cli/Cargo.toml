@@ -13,6 +13,8 @@ path = "src/main.rs"
 
 [dependencies]
 donto-client      = { path = "../../packages/donto-client" }
+donto-analytics   = { path = "../../packages/donto-analytics" }
+donto-alert-sink  = { path = "../../packages/donto-alert-sink" }
 donto-query       = { path = "../../packages/donto-query" }
 donto-ingest      = { path = "../../packages/donto-ingest" }
 tokio             = { workspace = true }
