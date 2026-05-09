@@ -10,6 +10,8 @@ use donto_client::{AlignmentRelation, ContextScope, DontoClient, Polarity};
 use std::path::PathBuf;
 use uuid::Uuid;
 
+mod analyze;
+
 /// donto command-line interface.
 ///
 /// donto is a bitemporal, paraconsistent quad store with contexts. Every
@@ -299,6 +301,20 @@ enum Cmd {
         #[arg(value_enum, value_name = "SHELL")]
         shell: clap_complete::Shell,
     },
+
+    /// Run telemetry analyzers and anomaly detectors.
+    ///
+    /// Subcommands:
+    ///   rule-duration     Detect duration regressions in donto_derivation_report.
+    ///   paraconsistency   Aggregate paraconsistency density and upsert results.
+    ///
+    /// Findings are written to donto_detector_finding. Run `donto migrate`
+    /// first to create the required tables.
+    #[command(verbatim_doc_comment)]
+    Analyze {
+        #[command(subcommand)]
+        action: AnalyzeCmd,
+    },
 }
 
 #[derive(Subcommand, Debug)]
@@ -373,6 +389,115 @@ enum AlignCmd {
 
     /// Rebuild the materialized predicate closure index.
     Rebuild,
+}
+
+#[derive(Subcommand, Debug)]
+enum AnalyzeCmd {
+    /// Detect duration regressions in rule evaluation reports.
+    ///
+    /// Reads donto_derivation_report and flags rules whose most-recent
+    /// evaluations deviate from their 30-day rolling median by more than
+    /// k MAD-scaled standard deviations. Also flags rules where the
+    /// NULL rate of duration_ms exceeds 30% in the trailing 24 h (sidecar
+    /// health signal). Findings are written to donto_detector_finding.
+    ///
+    /// Examples:
+    ///   donto analyze rule-duration
+    ///   donto analyze rule-duration --since '14 days' --k 3.0
+    ///   donto analyze rule-duration --detector-iri donto:detector/rule-duration/v2
+    #[command(verbatim_doc_comment)]
+    RuleDuration {
+        /// How far back to look for rule evaluations (e.g. "7 days", "48 hours").
+        #[arg(long, default_value = "7 days", value_name = "INTERVAL")]
+        since: String,
+        /// MAD-z threshold for flagging a run as anomalous.
+        #[arg(long, default_value_t = 5.0, value_name = "K")]
+        k: f64,
+        /// IRI identifying this detector in donto_detector_finding.
+        #[arg(
+            long,
+            default_value = "donto:detector/rule-duration/v1",
+            value_name = "IRI"
+        )]
+        detector_iri: String,
+        /// Maximum recent runs to evaluate per rule.
+        #[arg(long, default_value_t = 100, value_name = "N")]
+        n_runs: usize,
+        /// Alert sink spec. Emit findings above 'info' to this channel in
+        /// addition to writing them to donto_detector_finding.
+        /// Values: 'stdout', 'file:///path/findings.jsonl'.
+        /// Also reads $DONTO_ALERT_SINK when flag is omitted.
+        #[arg(long, env = "DONTO_ALERT_SINK", value_name = "SPEC")]
+        alert_sink: Option<String>,
+    },
+
+    /// Aggregate paraconsistency density into donto_paraconsistency_density.
+    ///
+    /// Groups open statements by (subject, predicate) over the requested
+    /// window, counts distinct polarities and contexts, computes normalised
+    /// Shannon entropy as conflict_score, and upserts rows. The top-K views
+    /// donto_v_top_contested_predicates and donto_v_top_contested_subjects
+    /// then query the pre-aggregated table efficiently.
+    ///
+    /// Pairs whose conflict_score exceeds --min-emit-score also produce a
+    /// finding in donto_detector_finding (target_kind='predicate_pair'), and a
+    /// _self finding is always written so `donto analyze health` covers this
+    /// detector.
+    ///
+    /// Examples:
+    ///   donto analyze paraconsistency
+    ///   donto analyze paraconsistency --window-hours 48
+    ///   donto analyze paraconsistency --start 2026-01-01T00:00:00Z --end 2026-01-02T00:00:00Z
+    ///   donto analyze paraconsistency --min-emit-score 0.7 --alert-sink stdout
+    #[command(verbatim_doc_comment)]
+    Paraconsistency {
+        /// Trailing window size in hours (ending now). Ignored if --start/--end given.
+        #[arg(long, default_value_t = 24, value_name = "HOURS")]
+        window_hours: u64,
+        /// Explicit window start (ISO 8601). Overrides --window-hours.
+        #[arg(long, value_name = "ISO")]
+        start: Option<String>,
+        /// Explicit window end (ISO 8601). Defaults to now.
+        #[arg(long, value_name = "ISO")]
+        end: Option<String>,
+        /// IRI identifying this detector in donto_detector_finding.
+        #[arg(
+            long,
+            default_value = "donto:detector/paraconsistency/v1",
+            value_name = "IRI"
+        )]
+        detector_iri: String,
+        /// Conflict score threshold above which a (subject, predicate) pair
+        /// also writes a finding to donto_detector_finding. Lower = noisier.
+        #[arg(long, default_value_t = 0.6, value_name = "F")]
+        min_emit_score: f64,
+        /// Alert sink spec (same as rule-duration). Reads $DONTO_ALERT_SINK
+        /// when omitted; pass an empty string to opt out.
+        #[arg(long, env = "DONTO_ALERT_SINK", value_name = "SPEC")]
+        alert_sink: Option<String>,
+    },
+
+    /// Check that all known detectors have run recently.
+    ///
+    /// Reads the most-recent `_self` finding per detector_iri. Exits non-zero
+    /// if any detector has not run within --max-age-hours or if its reported
+    /// null_rate exceeds --max-null-rate (indicating sidecar health issues).
+    ///
+    /// Output is newline-delimited JSON, one object per detector.
+    ///
+    /// Examples:
+    ///   donto analyze health
+    ///   donto analyze health --max-age-hours 48
+    ///   donto analyze health --max-null-rate 0.5
+    #[command(verbatim_doc_comment)]
+    Health {
+        /// Maximum acceptable age of the last detector run (hours).
+        #[arg(long, default_value_t = 24, value_name = "H")]
+        max_age_hours: i64,
+        /// Maximum acceptable null_rate_observed from the _self payload.
+        #[arg(long, default_value_t = 0.3, value_name = "F")]
+        max_null_rate: f64,
+    },
 }
 
 #[derive(clap::ValueEnum, Clone, Debug)]
@@ -724,6 +849,9 @@ async fn main() -> Result<()> {
                     })
                 );
             }
+        }
+        Cmd::Analyze { action } => {
+            analyze::run(&client, action).await?;
         }
         Cmd::Shadow {
             subject,

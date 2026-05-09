@@ -26,6 +26,28 @@ type SelectStatementMsg struct {
 	StatementID string
 }
 
+// maturityELabel maps a stored maturity value to its E-level label.
+// Storage values are non-monotone vs E-level: stored 4 = E5 Certified,
+// stored 5 = E4 Corroborated. See packages/sql/migrations/0102_maturity_e_naming.sql.
+func maturityELabel(stored int) string {
+	switch stored {
+	case 0:
+		return "E0"
+	case 1:
+		return "E1"
+	case 2:
+		return "E2"
+	case 3:
+		return "E3"
+	case 4:
+		return "E5"
+	case 5:
+		return "E4"
+	default:
+		return fmt.Sprintf("?%d", stored)
+	}
+}
+
 const (
 	fieldSubject = iota
 	fieldPredicate
@@ -256,7 +278,7 @@ func (e Explorer) View() string {
 				}
 			}
 
-			matStr := fmt.Sprintf("L%d", s.Maturity)
+			matStr := maturityELabel(s.Maturity)
 			matColor := styles.MaturityColor(s.Maturity)
 
 			row := fmt.Sprintf(" %-36s  %-28s  %-22s  %-14s  %-8s  %s",

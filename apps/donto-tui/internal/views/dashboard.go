@@ -143,7 +143,7 @@ func (d Dashboard) renderMaturity(w int) string {
 		)
 	}
 
-	// Aggregate by maturity level across all contexts
+	// Aggregate by maturity stored value across all contexts
 	agg := make(map[int]int64)
 	var total int64
 	for _, b := range d.data.maturity {
@@ -151,12 +151,24 @@ func (d Dashboard) renderMaturity(w int) string {
 		total += b.Count
 	}
 
-	labels := []string{"raw", "parsed", "linked", "reviewed", "certified"}
+	// Storage values are non-monotone vs E-level: stored 4=E5 Certified,
+	// stored 5=E4 Corroborated. Iterate in E-level order to render correctly.
+	// See packages/sql/migrations/0102_maturity_e_naming.sql.
+	storedOrder := []int{0, 1, 2, 3, 5, 4}
+	labels := []string{
+		"E0 Raw",
+		"E1 Candidate",
+		"E2 Evidence",
+		"E3 Reviewed",
+		"E4 Corroborated",
+		"E5 Certified",
+	}
 	colors := []lipgloss.Color{
 		lipgloss.Color("#9CA3AF"),
 		lipgloss.Color("#60A5FA"),
 		lipgloss.Color("#34D399"),
 		lipgloss.Color("#FBBF24"),
+		lipgloss.Color("#F472B6"),
 		lipgloss.Color("#A78BFA"),
 	}
 
@@ -166,10 +178,9 @@ func (d Dashboard) renderMaturity(w int) string {
 	}
 
 	var rows []string
-	for i := 0; i < 5; i++ {
-		label := labels[i]
-		count := agg[i]
-		rows = append(rows, "  "+components.Gauge(label, count, total, barW, colors[i]))
+	for i, stored := range storedOrder {
+		count := agg[stored]
+		rows = append(rows, "  "+components.Gauge(labels[i], count, total, barW, colors[i]))
 	}
 
 	return styles.BoxStyle.Width(w).Render(

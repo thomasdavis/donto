@@ -1,0 +1,22 @@
+[package]
+name        = "donto-alert-sink"
+version     = { workspace = true }
+edition     = { workspace = true }
+rust-version = { workspace = true }
+license     = { workspace = true }
+description = "Pluggable alert delivery sinks for donto detector findings"
+repository  = { workspace = true }
+
+[dependencies]
+donto-analytics = { path = "../donto-analytics" }
+serde           = { workspace = true }
+serde_json      = { workspace = true }
+thiserror       = { workspace = true }
+tracing         = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }
+chrono   = { workspace = true }
+
+[lints]
+workspace = true

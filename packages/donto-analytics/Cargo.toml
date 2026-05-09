@@ -1,0 +1,32 @@
+[package]
+name        = "donto-analytics"
+version     = { workspace = true }
+edition     = { workspace = true }
+rust-version = { workspace = true }
+license     = { workspace = true }
+description = "Telemetry analysis and anomaly detection for donto"
+repository  = { workspace = true }
+
+[dependencies]
+donto-client       = { path = "../donto-client" }
+tokio              = { workspace = true }
+tokio-postgres     = { workspace = true }
+deadpool-postgres  = { workspace = true }
+uuid               = { workspace = true }
+chrono             = { workspace = true }
+serde              = { workspace = true }
+serde_json         = { workspace = true }
+thiserror          = { workspace = true }
+tracing            = { workspace = true }
+anyhow             = { workspace = true }
+
+[dev-dependencies]
+tokio              = { workspace = true, features = ["macros", "rt-multi-thread", "test-util"] }
+anyhow             = { workspace = true }
+tracing-subscriber = { workspace = true }
+uuid               = { workspace = true }
+serde_json         = { workspace = true }
+donto-synthetic    = { path = "../donto-synthetic" }
+
+[lints]
+workspace = true

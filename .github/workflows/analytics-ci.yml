@@ -1,0 +1,155 @@
+name: analytics-ci
+
+# Runs the analytics stack end-to-end: generate synthetic data, run detectors,
+# verify findings were written, run the full workspace test suite.
+#
+# Triggered alongside (not instead of) the base ci.yml so this job can be
+# extended independently when the analytics workstream moves faster than core.
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'packages/donto-analytics/**'
+      - 'packages/donto-synthetic/**'
+      - 'packages/donto-alert-sink/**'
+      - 'packages/sql/migrations/0118_*.sql'
+      - 'packages/sql/migrations/0119_*.sql'
+      - 'packages/sql/migrations/0120_*.sql'
+      - 'apps/donto-cli/src/analyze.rs'
+      - '.github/workflows/analytics-ci.yml'
+  pull_request:
+    paths:
+      - 'packages/donto-analytics/**'
+      - 'packages/donto-synthetic/**'
+      - 'packages/donto-alert-sink/**'
+      - 'packages/sql/migrations/0118_*.sql'
+      - 'packages/sql/migrations/0119_*.sql'
+      - 'packages/sql/migrations/0120_*.sql'
+      - 'apps/donto-cli/src/analyze.rs'
+      - '.github/workflows/analytics-ci.yml'
+
+jobs:
+  analytics:
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: donto
+          POSTGRES_PASSWORD: donto
+          POSTGRES_DB: donto
+        ports:
+          - 55432:5432
+        options: >-
+          --health-cmd "pg_isready -U donto -d donto"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      DONTO_TEST_DSN: postgres://donto:donto@127.0.0.1:55432/donto
+      DONTO_DSN:      postgres://donto:donto@127.0.0.1:55432/donto
+      RUST_BACKTRACE: 1
+      SCCACHE_GHA_ENABLED: "true"
+      RUSTC_WRAPPER: sccache
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install sccache
+        uses: mozilla-actions/sccache-action@v0.0.6
+
+      - name: Cache cargo registry / git
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: ${{ runner.os }}-cargo-analytics-${{ hashFiles('**/Cargo.lock', '**/Cargo.toml') }}
+
+      # ── Step 1: Build ────────────────────────────────────────────────────────
+      - name: cargo build (workspace)
+        run: cargo build --workspace --all-targets --locked
+
+      # ── Step 2: Apply migrations (0001 through 0120) ─────────────────────────
+      # This applies all migrations including:
+      #   0118_maturity_audit   — audit trigger for maturity changes
+      #   0119_detector_finding — donto_detector_finding table
+      #   0120_paraconsistency_density — density table + views
+      - name: Apply all migrations
+        run: cargo run -p donto-cli --quiet -- migrate
+
+      # ── Step 3: Generate synthetic dataset ──────────────────────────────────
+      # scale=0.05 targets ~25k statements (500k * 0.05).
+      #
+      # Why 0.05 instead of 0.01:
+      #   At scale=0.01 the generator produces ~4 derivation reports per rule.
+      #   Anomaly windows occupy ~0.4% of the timeline, giving < 0.01 expected
+      #   anomalous reports per rule.  The recall/precision check silently passes
+      #   via early-exit because the anomaly bucket is empty (I5).
+      #
+      #   At scale=0.05 (~25k statements):
+      #   - ~20 derivation reports per rule — enough for the rolling-window MAD-z
+      #     to have statistical mass.
+      #   - ~0.05 expected anomalous reports per rule — at least one anomaly row
+      #     is likely, exercising the detection path.
+      #
+      # Wall-time estimate (I5):
+      #   The data-engineer's offline suite runs 500k statements in ~N minutes on
+      #   a standard GHA runner.  25k is 5% of that, so generation + ingestion
+      #   should complete in well under 2 minutes.  Detection + assertion adds
+      #   < 30s.  Total analytics job budget remains ~5 minutes.
+      - name: Generate synthetic dataset (scale=0.05, seed=1)
+        run: cargo run -p donto-synthetic --quiet -- generate --seed 1 --scale 0.05
+
+      # ── Step 4: Run rule-duration detector ──────────────────────────────────
+      # --since '90 days' covers the full synthetic window.
+      # The detector emits one _self row per run (count ≥ 1 is guaranteed).
+      - name: Run rule-duration detector
+        run: |
+          cargo run -p donto-cli --quiet -- analyze rule-duration --since '90 days'
+
+      - name: Assert at least one finding row exists
+        run: |
+          count=$(psql "$DONTO_TEST_DSN" -At -c \
+            "select count(*) from donto_detector_finding \
+             where detector_iri = 'donto:detector/rule-duration/v1'")
+          echo "rule-duration finding rows: $count"
+          if [ "$count" -lt 1 ]; then
+            echo "ERROR: expected ≥1 finding row, got $count" >&2
+            exit 1
+          fi
+
+      # ── Step 5: Run paraconsistency analyzer ─────────────────────────────────
+      # --window-hours 2160 = 90 days, matching the synthetic window.
+      # The view may be empty if the synthetic data has no conflicts; we assert
+      # exit code 0 but only warn (not fail) on empty view.
+      - name: Run paraconsistency analyzer
+        run: |
+          cargo run -p donto-cli --quiet -- \
+            analyze paraconsistency --window-hours 2160
+
+      - name: Check donto_v_top_contested_predicates queryable
+        run: |
+          count=$(psql "$DONTO_TEST_DSN" -At -c \
+            "select count(*) from donto_v_top_contested_predicates")
+          echo "contested predicate rows: $count"
+          # Warn but do not fail: clean synthetic data may have zero conflicts.
+          if [ "$count" -eq 0 ]; then
+            echo "WARN: donto_v_top_contested_predicates is empty (no conflicts in window)"
+          fi
+
+      # ── Step 6: Full workspace tests with DONTO_TEST_DSN set ─────────────────
+      # DONTO_TEST_DSN being set causes pg_or_skip! tests to actually run instead
+      # of skipping. This exercises the full invariants suite including the
+      # maturity_audit, detector_finding, and health integration tests.
+      - name: cargo test (workspace, with Postgres)
+        run: cargo test --workspace --locked -- --nocapture
+
+      - name: sccache stats
+        if: always()
+        run: sccache --show-stats
