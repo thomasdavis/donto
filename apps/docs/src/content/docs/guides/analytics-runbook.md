@@ -60,12 +60,31 @@ Aggregates (subject, predicate) pairs with conflicting polarities into
 - `donto_v_top_contested_predicates` -- predicates with highest total conflict
 - `donto_v_top_contested_subjects`   -- subjects with highest peak conflict
 
+In addition to the density table, pairs whose `conflict_score` exceeds
+`--min-emit-score` (default `0.6`) are written to `donto_detector_finding`
+with `target_kind='predicate_pair'` and `severity='warning'` (or `'critical'`
+above `0.9`). A `_self` info finding is always written so this detector
+shows up in `donto analyze health` alongside `rule-duration`.
+
+`--alert-sink` works the same way as for `rule-duration`: above-info
+findings are forwarded to the sink in addition to being persisted.
+
 ```bash
-# Default: trailing 24 h window.
+# Default: trailing 24 h window, emit findings for pairs scoring >= 0.6.
 donto analyze paraconsistency
 
 # 90-day window (matches CI scale).
 donto analyze paraconsistency --window-hours 2160
+
+# Stricter emit threshold + forward to a JSONL file.
+donto analyze paraconsistency \
+  --window-hours 2160 \
+  --min-emit-score 0.8 \
+  --alert-sink file:///var/log/donto-conflicts.jsonl
+
+# Pin a per-environment detector IRI for multi-version deployments.
+donto analyze paraconsistency \
+  --detector-iri donto:detector/paraconsistency/staging-v1
 
 # Explicit window.
 donto analyze paraconsistency \

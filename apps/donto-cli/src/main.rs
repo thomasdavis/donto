@@ -439,10 +439,16 @@ enum AnalyzeCmd {
     /// donto_v_top_contested_predicates and donto_v_top_contested_subjects
     /// then query the pre-aggregated table efficiently.
     ///
+    /// Pairs whose conflict_score exceeds --min-emit-score also produce a
+    /// finding in donto_detector_finding (target_kind='predicate_pair'), and a
+    /// _self finding is always written so `donto analyze health` covers this
+    /// detector.
+    ///
     /// Examples:
     ///   donto analyze paraconsistency
     ///   donto analyze paraconsistency --window-hours 48
     ///   donto analyze paraconsistency --start 2026-01-01T00:00:00Z --end 2026-01-02T00:00:00Z
+    ///   donto analyze paraconsistency --min-emit-score 0.7 --alert-sink stdout
     #[command(verbatim_doc_comment)]
     Paraconsistency {
         /// Trailing window size in hours (ending now). Ignored if --start/--end given.
@@ -454,7 +460,19 @@ enum AnalyzeCmd {
         /// Explicit window end (ISO 8601). Defaults to now.
         #[arg(long, value_name = "ISO")]
         end: Option<String>,
-        /// Alert sink spec (same as rule-duration).
+        /// IRI identifying this detector in donto_detector_finding.
+        #[arg(
+            long,
+            default_value = "donto:detector/paraconsistency/v1",
+            value_name = "IRI"
+        )]
+        detector_iri: String,
+        /// Conflict score threshold above which a (subject, predicate) pair
+        /// also writes a finding to donto_detector_finding. Lower = noisier.
+        #[arg(long, default_value_t = 0.6, value_name = "F")]
+        min_emit_score: f64,
+        /// Alert sink spec (same as rule-duration). Reads $DONTO_ALERT_SINK
+        /// when omitted; pass an empty string to opt out.
         #[arg(long, env = "DONTO_ALERT_SINK", value_name = "SPEC")]
         alert_sink: Option<String>,
     },

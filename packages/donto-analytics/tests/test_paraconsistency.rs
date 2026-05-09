@@ -59,9 +59,13 @@ async fn analyzer_populates_density_table_from_conflicts() {
     // can be slightly ahead of the host clock under Docker/Hyper-V.
     let window_end = Utc::now() + Duration::seconds(5);
     let window_start = window_end - Duration::hours(1);
+    // Per-test detector IRI keeps detector_finding debris isolated.
+    let detector_iri = format!("donto:detector/paraconsistency/test:{tag}");
     let cfg = ParaconsistencyConfig {
         window_start,
         window_end,
+        detector_iri: detector_iri.clone(),
+        ..Default::default()
     };
 
     let report = run_analyzer(&client, &cfg).await.expect("analyzer run");
@@ -70,6 +74,20 @@ async fn analyzer_populates_density_table_from_conflicts() {
         report.pairs_upserted > 0,
         "expected upserted rows, got {}",
         report.pairs_upserted
+    );
+
+    // The default min_emit_score=0.6 and a clean 50/50 polarity split yields
+    // conflict_score=1.0 — every seeded pair should also produce a finding.
+    assert!(
+        report.pairs_emitted >= report.pairs_upserted,
+        "every conflicted pair should also emit a finding (emitted={}, upserted={})",
+        report.pairs_emitted,
+        report.pairs_upserted
+    );
+    // _self finding is always present — at minimum, findings has 1 entry.
+    assert!(
+        report.findings.iter().any(|f| f.target_kind == "_self"),
+        "_self finding must be present so analyze health covers this detector"
     );
 
     // Verify the top-K views return non-empty results.
@@ -126,7 +144,15 @@ async fn analyzer_populates_density_table_from_conflicts() {
         assert!(dp >= 2, "distinct_polarities={dp} should be >= 2");
     }
 
-    // Cleanup.
+    // Cleanup. detector_finding rows include both per-pair (target_id contains
+    // the tag) and the _self row (target_id is the run_id UUID); cleaning by
+    // detector_iri catches both.
+    c.execute(
+        "delete from donto_detector_finding where detector_iri = $1",
+        &[&detector_iri],
+    )
+    .await
+    .ok();
     c.execute(
         "delete from donto_paraconsistency_density where subject like $1",
         &[&format!("{tag}%")],
@@ -186,12 +212,15 @@ async fn analyzer_upsert_is_idempotent() {
     // +5s buffer guards against host/Postgres clock skew (see other test).
     let window_end = Utc::now() + Duration::seconds(5);
     let window_start = window_end - Duration::hours(1);
+    let detector_iri = format!("donto:detector/paraconsistency/test:{tag}");
     let cfg = ParaconsistencyConfig {
         window_start,
         window_end,
+        detector_iri: detector_iri.clone(),
+        ..Default::default()
     };
 
-    // Run twice — should not double-insert.
+    // Run twice — should not double-insert paraconsistency_density rows.
     run_analyzer(&client, &cfg).await.expect("first run");
     run_analyzer(&client, &cfg)
         .await
@@ -209,6 +238,12 @@ async fn analyzer_upsert_is_idempotent() {
         .get(0);
     assert_eq!(count, 1, "upsert must not duplicate rows");
 
+    c.execute(
+        "delete from donto_detector_finding where detector_iri = $1",
+        &[&detector_iri],
+    )
+    .await
+    .ok();
     c.execute(
         "delete from donto_paraconsistency_density where subject like $1",
         &[&format!("{tag}%")],

@@ -14,7 +14,7 @@ use donto_client::DontoClient;
 use uuid::Uuid;
 
 use crate::features::{fetch_rule_duration_features, RuleDurationFeature};
-use crate::findings::{record_finding, record_self_metric, Severity};
+use crate::findings::{record_finding, record_self_metric, Finding, Severity};
 use crate::time_series::{mad_zscore, null_rate};
 
 /// Configuration for the rule-duration detector.
@@ -51,6 +51,12 @@ impl Default for RuleDurationConfig {
 }
 
 /// Summary returned from a detector run (for the CLI to print).
+///
+/// `findings` includes every finding produced by this run — anomaly,
+/// null-rate health, and the trailing `_self` info row — in insertion order.
+/// Returning them inline lets the CLI hand non-Info ones to an `AlertSink`
+/// without a follow-up `recent_findings` query that would otherwise race
+/// against any concurrent writer.
 #[derive(Debug)]
 pub struct RuleDurationRunReport {
     pub run_id: Uuid,
@@ -59,6 +65,7 @@ pub struct RuleDurationRunReport {
     pub null_rate_findings: u64,
     pub self_finding_id: i64,
     pub overall_null_rate: f64,
+    pub findings: Vec<Finding>,
 }
 
 /// Run the rule-duration detector and persist findings. Returns a summary.
@@ -89,6 +96,9 @@ pub async fn run(
     let mut total_count = 0u64;
     let mut rules_skipped_insufficient_window: u64 = 0;
     let mut rules_evaluated: u64 = 0;
+    // Accumulate findings for inline return — eliminates the recent_findings
+    // re-fetch race in the CLI sink path.
+    let mut findings: Vec<Finding> = Vec::new();
 
     for (rule_iri, rows) in &grouped {
         // --- Null-rate check for trailing window ---
@@ -113,7 +123,7 @@ pub async fn run(
                 "n_trailing": n_trailing,
                 "run_id": run_id,
             });
-            record_finding(
+            let f = record_finding(
                 client,
                 &cfg.detector_iri,
                 "rule",
@@ -122,6 +132,7 @@ pub async fn run(
                 payload,
             )
             .await?;
+            findings.push(f);
             null_rate_findings += 1;
         }
 
@@ -177,7 +188,7 @@ pub async fn run(
                     } else {
                         Severity::Warning
                     };
-                    record_finding(
+                    let f = record_finding(
                         client,
                         &cfg.detector_iri,
                         "rule",
@@ -186,6 +197,7 @@ pub async fn run(
                         payload,
                     )
                     .await?;
+                    findings.push(f);
                     anomaly_findings += 1;
                 }
             }
@@ -203,7 +215,7 @@ pub async fn run(
     let overall_null_rate = null_rate(total_null, total_count);
     let findings_count = anomaly_findings + null_rate_findings;
 
-    let self_finding_id = record_self_metric(
+    let self_finding = record_self_metric(
         client,
         &cfg.detector_iri,
         run_id,
@@ -215,6 +227,8 @@ pub async fn run(
         rules_evaluated,
     )
     .await?;
+    let self_finding_id = self_finding.finding_id;
+    findings.push(self_finding);
 
     Ok(RuleDurationRunReport {
         run_id,
@@ -223,5 +237,6 @@ pub async fn run(
         null_rate_findings,
         self_finding_id,
         overall_null_rate,
+        findings,
     })
 }

@@ -39,8 +39,14 @@ pub struct Finding {
     pub payload: serde_json::Value,
 }
 
-/// Insert a finding into `donto_detector_finding`. Returns the assigned
-/// `finding_id` (bigserial).
+/// Insert a finding into `donto_detector_finding`. Returns the full `Finding`
+/// (including the assigned `finding_id` and `observed_at` set by the DB).
+///
+/// Returning the whole row — instead of just the id — lets detectors hand
+/// findings to an `AlertSink` without a follow-up query that would be racy
+/// against concurrent inserters (the previous implementation re-fetched the
+/// trailing N rows for the detector and was correct only as long as nothing
+/// else wrote in between).
 pub async fn record_finding(
     client: &DontoClient,
     detector_iri: &str,
@@ -48,14 +54,14 @@ pub async fn record_finding(
     target_id: &str,
     severity: Severity,
     payload: serde_json::Value,
-) -> Result<i64, donto_client::Error> {
+) -> Result<Finding, donto_client::Error> {
     let c = client.pool().get().await?;
     let row = c
         .query_one(
             "insert into donto_detector_finding
                  (detector_iri, target_kind, target_id, severity, payload)
              values ($1, $2, $3, $4, $5)
-             returning finding_id",
+             returning finding_id, observed_at",
             &[
                 &detector_iri,
                 &target_kind,
@@ -65,7 +71,15 @@ pub async fn record_finding(
             ],
         )
         .await?;
-    Ok(row.get(0))
+    Ok(Finding {
+        finding_id: row.get("finding_id"),
+        detector_iri: detector_iri.to_owned(),
+        target_kind: target_kind.to_owned(),
+        target_id: target_id.to_owned(),
+        severity,
+        observed_at: row.get("observed_at"),
+        payload,
+    })
 }
 
 /// Helper to build and record the mandatory `_self` self-metric finding.
@@ -85,7 +99,7 @@ pub async fn record_self_metric(
     null_rate_observed: f64,
     rules_skipped_insufficient_window: u64,
     rules_evaluated: u64,
-) -> Result<i64, donto_client::Error> {
+) -> Result<Finding, donto_client::Error> {
     let payload = serde_json::json!({
         "run_id": run_id,
         "lookback_window": lookback_window,
@@ -95,6 +109,26 @@ pub async fn record_self_metric(
         "rules_skipped_insufficient_window": rules_skipped_insufficient_window,
         "rules_evaluated": rules_evaluated,
     });
+    record_finding(
+        client,
+        detector_iri,
+        "_self",
+        &run_id.to_string(),
+        Severity::Info,
+        payload,
+    )
+    .await
+}
+
+/// Generic `_self` writer for analyzers that don't fit the rule-duration
+/// schema (e.g. paraconsistency, which has no per-rule null_rate). The full
+/// payload is taken as JSON and run_id is recorded as the `target_id`.
+pub async fn record_generic_self_metric(
+    client: &DontoClient,
+    detector_iri: &str,
+    run_id: Uuid,
+    payload: serde_json::Value,
+) -> Result<Finding, donto_client::Error> {
     record_finding(
         client,
         detector_iri,

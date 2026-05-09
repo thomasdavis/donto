@@ -287,17 +287,37 @@ pub async fn run(
             .or_default()
             .push(context.clone());
 
-        batch.push(serde_json::json!({
-            "subject":    subject,
-            "predicate":  predicate,
-            "object_iri": object_iri,
-            "object_lit": object_lit,
-            "context":    context,
-            "polarity":   polarity,
-            "maturity":   0,
-            "valid_lo":   valid_lo.map(|d| d.to_string()),
-            "valid_hi":   valid_hi.map(|d| d.to_string()),
-        }));
+        // Build the row with `Map` so we can OMIT object_lit when it's None.
+        // The `json!({"object_lit": object_lit})` shape would emit JSON null,
+        // and donto_assert_batch extracts object_lit via `->` (jsonb), which
+        // returns the JSONB scalar `null` (non-NULL) — that combined with a
+        // non-null object_iri trips the donto_statement_object_one_of XOR
+        // check. Omitting the key makes `->` return SQL NULL instead.
+        let mut row = serde_json::Map::new();
+        row.insert("subject".into(), serde_json::Value::String(subject.clone()));
+        row.insert(
+            "predicate".into(),
+            serde_json::Value::String(predicate.clone()),
+        );
+        if let Some(iri) = &object_iri {
+            row.insert("object_iri".into(), serde_json::Value::String(iri.clone()));
+        }
+        if let Some(lit) = &object_lit {
+            row.insert("object_lit".into(), lit.clone());
+        }
+        row.insert("context".into(), serde_json::Value::String(context.clone()));
+        row.insert(
+            "polarity".into(),
+            serde_json::Value::String(polarity.into()),
+        );
+        row.insert("maturity".into(), serde_json::json!(0));
+        if let Some(d) = valid_lo {
+            row.insert("valid_lo".into(), serde_json::Value::String(d.to_string()));
+        }
+        if let Some(d) = valid_hi {
+            row.insert("valid_hi".into(), serde_json::Value::String(d.to_string()));
+        }
+        batch.push(serde_json::Value::Object(row));
 
         if batch.len() == batch_size || stmt_idx == target_stmts - 1 {
             // Insert batch via donto_assert_batch.
@@ -395,7 +415,12 @@ pub async fn run(
     for chunk in maturity_pool[..promote_count].chunks(500) {
         let actor = rng_mature.weighted_pick(ACTORS);
         let txn = c.build_transaction().start().await?;
-        txn.execute("set local donto.actor = $1", &[&actor]).await?;
+        // set_config(name, value, is_local=true) is the function form of
+        // SET LOCAL — and unlike `SET LOCAL ... = $1` (which is rejected by
+        // Postgres because the parser needs a literal there), it accepts a
+        // bound parameter cleanly.
+        txn.execute("select set_config('donto.actor', $1, true)", &[actor])
+            .await?;
         for id in chunk {
             txn.execute(
                 "update donto_statement set flags = $1 \
@@ -412,7 +437,12 @@ pub async fn run(
     for chunk in e2_subset.chunks(500) {
         let actor = rng_mature.weighted_pick(ACTORS);
         let txn = c.build_transaction().start().await?;
-        txn.execute("set local donto.actor = $1", &[&actor]).await?;
+        // set_config(name, value, is_local=true) is the function form of
+        // SET LOCAL — and unlike `SET LOCAL ... = $1` (which is rejected by
+        // Postgres because the parser needs a literal there), it accepts a
+        // bound parameter cleanly.
+        txn.execute("select set_config('donto.actor', $1, true)", &[actor])
+            .await?;
         for id in chunk {
             txn.execute(
                 "update donto_statement set flags = $1 \
@@ -430,7 +460,12 @@ pub async fn run(
     {
         let actor = rng_mature.weighted_pick(ACTORS);
         let txn = c.build_transaction().start().await?;
-        txn.execute("set local donto.actor = $1", &[&actor]).await?;
+        // set_config(name, value, is_local=true) is the function form of
+        // SET LOCAL — and unlike `SET LOCAL ... = $1` (which is rejected by
+        // Postgres because the parser needs a literal there), it accepts a
+        // bound parameter cleanly.
+        txn.execute("select set_config('donto.actor', $1, true)", &[actor])
+            .await?;
         for id in e3_subset {
             txn.execute(
                 "update donto_statement set flags = $1 \
@@ -445,7 +480,12 @@ pub async fn run(
     {
         let actor = rng_mature.weighted_pick(ACTORS);
         let txn = c.build_transaction().start().await?;
-        txn.execute("set local donto.actor = $1", &[&actor]).await?;
+        // set_config(name, value, is_local=true) is the function form of
+        // SET LOCAL — and unlike `SET LOCAL ... = $1` (which is rejected by
+        // Postgres because the parser needs a literal there), it accepts a
+        // bound parameter cleanly.
+        txn.execute("select set_config('donto.actor', $1, true)", &[actor])
+            .await?;
         for id in e5_subset {
             txn.execute(
                 "update donto_statement set flags = $1 \
@@ -485,7 +525,11 @@ pub async fn run(
 
     // --- Phase 5: Derivation reports with anomaly windows ---
     let mut rng_deriv = rng.child(5);
-    let reports_per_rule = target_deriv / RULES.len();
+    // .max(1) so a tiny --scale that targets fewer reports than there are
+    // rules still emits at least one row per rule (otherwise integer division
+    // floors to zero and the synthetic dataset has no derivation_reports at
+    // all — silently breaking downstream detector tests).
+    let reports_per_rule = (target_deriv / RULES.len()).max(1);
     let mut deriv_count = 0usize;
     let mut anomaly_records: Vec<AnomalyRecord> = Vec::new();
 
@@ -591,7 +635,8 @@ pub async fn run(
 
     // --- Phase 6: Shape reports ---
     let mut rng_shape = rng.child(6);
-    let reports_per_shape = target_shapes / SHAPES.len();
+    // .max(1): see the rationale on reports_per_rule above.
+    let reports_per_shape = (target_shapes / SHAPES.len()).max(1);
     let mut shape_count = 0usize;
 
     for shape_iri in SHAPES {
@@ -651,7 +696,8 @@ pub async fn run(
         ("identity_hypothesis", &["created", "approved", "rejected"]),
         ("frame", &["created", "updated", "retracted"]),
     ];
-    let events_per_kind = target_events / target_kinds.len();
+    // .max(1): see the rationale on reports_per_rule above.
+    let events_per_kind = (target_events / target_kinds.len()).max(1);
     let mut event_count = 0usize;
     let mut rng_ev = rng.child(7);
 

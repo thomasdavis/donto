@@ -7,13 +7,21 @@
 //!   stdout              write findings as JSON lines to stdout
 //!   file:///path        append JSON lines to a file
 //!   (absent)            DB-only, no external emit
+//!
+//! Findings are forwarded by iterating `report.findings` returned by the
+//! detector. The previous implementation re-fetched the trailing N rows of
+//! `donto_detector_finding` for the detector's IRI, which was racy: any
+//! concurrent writer (a parallel test, a second scheduled run) could shift
+//! the window so a different finding got forwarded to the sink than was
+//! actually produced by this run.
 
 use anyhow::{bail, Result};
 use chrono::{DateTime, Duration, Utc};
+use donto_alert_sink::AlertSinkBox;
 use donto_analytics::{
     analyzer_paraconsistency::{run as run_paraconsistency, ParaconsistencyConfig},
     detector_rule_duration::{run as run_rule_duration, RuleDurationConfig},
-    findings::{fetch_self_metrics, recent_findings, Severity},
+    findings::{fetch_self_metrics, Finding, Severity},
 };
 use donto_client::DontoClient;
 
@@ -41,20 +49,7 @@ pub async fn run(client: &DontoClient, action: AnalyzeCmd) -> Result<()> {
                 .await
                 .map_err(|e| anyhow::anyhow!("rule-duration detector: {e}"))?;
 
-            // Optional alert sink: forward above-info findings.
-            if let Some(spec) = &alert_sink {
-                let sink = donto_alert_sink::sink_from_spec(spec)
-                    .map_err(|e| anyhow::anyhow!("invalid --alert-sink: {e}"))?;
-                let n_fwd = (report.anomaly_findings + report.null_rate_findings) as i64 + 1;
-                let recent = recent_findings(client, &cfg.detector_iri, n_fwd)
-                    .await
-                    .map_err(|e| anyhow::anyhow!("reading findings for sink: {e}"))?;
-                for f in &recent {
-                    if f.severity != Severity::Info {
-                        sink.emit(f)?;
-                    }
-                }
-            }
+            forward_to_sink(alert_sink.as_deref(), &report.findings)?;
 
             println!(
                 "{}",
@@ -73,21 +68,10 @@ pub async fn run(client: &DontoClient, action: AnalyzeCmd) -> Result<()> {
             window_hours,
             start,
             end,
+            detector_iri,
+            min_emit_score,
             alert_sink,
         } => {
-            // The paraconsistency analyzer writes to donto_paraconsistency_density,
-            // not to donto_detector_finding, so there are no Finding objects to
-            // forward to an alert sink.  Silently ignoring --alert-sink would be
-            // surprising, so we reject it explicitly instead.
-            if alert_sink.is_some() {
-                anyhow::bail!(
-                    "--alert-sink is not supported for `analyze paraconsistency`: \
-                     the analyzer writes to donto_paraconsistency_density (not \
-                     donto_detector_finding) and produces no Finding objects. \
-                     Query the view directly or use `analyze rule-duration` with \
-                     --alert-sink."
-                );
-            }
             let window_end: DateTime<Utc> = match &end {
                 Some(s) => s
                     .parse::<DateTime<Utc>>()
@@ -103,15 +87,24 @@ pub async fn run(client: &DontoClient, action: AnalyzeCmd) -> Result<()> {
             let cfg = ParaconsistencyConfig {
                 window_start,
                 window_end,
+                detector_iri,
+                min_emit_score,
             };
             let report = run_paraconsistency(client, &cfg)
                 .await
                 .map_err(|e| anyhow::anyhow!("paraconsistency analyzer: {e}"))?;
+
+            forward_to_sink(alert_sink.as_deref(), &report.findings)?;
+
             println!(
                 "{}",
                 serde_json::json!({
+                    "run_id": report.run_id,
                     "pairs_examined": report.pairs_examined,
                     "pairs_upserted": report.pairs_upserted,
+                    "pairs_emitted": report.pairs_emitted,
+                    "max_conflict_score": report.max_conflict_score,
+                    "self_finding_id": report.self_finding_id,
                     "window_start": window_start,
                     "window_end": window_end,
                 })
@@ -123,6 +116,25 @@ pub async fn run(client: &DontoClient, action: AnalyzeCmd) -> Result<()> {
             max_null_rate,
         } => {
             run_health(client, max_age_hours, max_null_rate).await?;
+        }
+    }
+    Ok(())
+}
+
+/// If `spec` is set, build the sink and forward every above-info `Finding`.
+/// Empty / whitespace-only spec is treated as "unset" so users can opt out
+/// per-invocation by passing `--alert-sink ''` even when `$DONTO_ALERT_SINK`
+/// is exported globally.
+fn forward_to_sink(spec: Option<&str>, findings: &[Finding]) -> Result<()> {
+    let Some(spec) = spec.map(str::trim).filter(|s| !s.is_empty()) else {
+        return Ok(());
+    };
+    let sink: AlertSinkBox = donto_alert_sink::sink_from_spec(spec)
+        .map_err(|e| anyhow::anyhow!("invalid --alert-sink: {e}"))?;
+    for f in findings {
+        if f.severity != Severity::Info {
+            sink.emit(f)
+                .map_err(|e| anyhow::anyhow!("alert sink: {e}"))?;
         }
     }
     Ok(())
@@ -237,6 +249,16 @@ mod tests {
     fn parse_since_bad_unit() {
         assert!(parse_since_interval("3 weeks").is_err());
     }
+
+    #[test]
+    fn forward_to_sink_unset_is_noop() {
+        // When the spec is None or empty, no sink is built and no error
+        // is returned even if findings carry above-info severity.
+        let f: Vec<super::Finding> = vec![];
+        assert!(super::forward_to_sink(None, &f).is_ok());
+        assert!(super::forward_to_sink(Some(""), &f).is_ok());
+        assert!(super::forward_to_sink(Some("   "), &f).is_ok());
+    }
 }
 
 // ── integration tests ─────────────────────────────────────────────────────────
@@ -320,7 +342,10 @@ mod integration {
             .find(|r| r.detector_iri == detector)
             .expect("our detector's _self finding should be present");
         let age = chrono::Utc::now() - ours.last_run_at;
-        assert!(age.num_hours() < 1, "expected fresh finding, got age={age:?}");
+        assert!(
+            age.num_hours() < 1,
+            "expected fresh finding, got age={age:?}"
+        );
         assert!(
             ours.null_rate_observed <= 0.3,
             "expected healthy null_rate, got {}",

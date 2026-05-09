@@ -34,7 +34,7 @@ async fn raw_insert_statement(
 #[tokio::test]
 async fn maturity_update_writes_audit_row_with_guc_actor() {
     let client = pg_or_skip!(common::connect().await);
-    let c = client.pool().get().await.unwrap();
+    let mut c = client.pool().get().await.unwrap();
 
     // Unique IRI prefix for per-test isolation.
     let prefix = common::tag("mat-audit");
@@ -68,20 +68,30 @@ async fn maturity_update_writes_audit_row_with_guc_actor() {
     let stmt_id: Uuid =
         raw_insert_statement(&c, &subject, &predicate, "ex:1900", &ctx_iri, 0i16).await;
 
-    // Step 2: Set donto.actor GUC to a specific actor.
+    // Step 2: Set donto.actor GUC and UPDATE inside one explicit transaction so
+    // SET LOCAL covers the UPDATE before commit. Without this wrapper,
+    // tokio_postgres auto-commits each execute() and SET LOCAL scopes only to
+    // its own implicit mini-transaction — the GUC is gone before the trigger
+    // fires, and the audit row records actor='system' instead of the intended
+    // actor. This is exactly the gotcha documented in the analytics runbook.
+    // SET LOCAL takes a literal, not a parameter binding (it's parsed before
+    // bind), so the value must be formatted into the SQL. The actor value is
+    // a static string in this test, so there's no injection surface.
     let actor = "agent:human-curator-1";
-    c.execute(&format!("set local donto.actor = '{actor}'"), &[])
+    let txn = c.build_transaction().start().await.unwrap();
+    txn.batch_execute(&format!("set local donto.actor = '{actor}'"))
         .await
         .unwrap();
 
     // Step 3: UPDATE flags to E2 (stored 2 << 2 = 8, polarity 0 = asserted).
     // flags = (2 << 2) | 0 = 8
-    c.execute(
+    txn.execute(
         "update donto_statement set flags = 8 where statement_id = $1",
         &[&stmt_id],
     )
     .await
     .unwrap();
+    txn.commit().await.unwrap();
 
     // Step 4: Assert one audit row was written with the expected fields.
     let rows = c
