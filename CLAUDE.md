@@ -88,7 +88,7 @@ still build; CI installs it via `mozilla-actions/sccache-action`.
 
 `flags smallint` packs:
 - bits 0-1: polarity (0=asserted, 1=negated, 2=absent, 3=unknown)
-- bits 2-4: maturity (0..4)
+- bits 2-4: maturity (0..5; non-monotone vs E-level — see `0102_maturity_e_naming.sql`: stored 4=E5 Certified, stored 5=E4 Corroborated; values 6-7 reserved)
 - bits 5-15: reserved
 
 Helpers: `donto_pack_flags`, `donto_polarity`, `donto_maturity`.

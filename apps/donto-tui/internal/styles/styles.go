@@ -19,11 +19,12 @@ var (
 	Subtle    = ColorGray
 
 	// Maturity gradient: L0 gray → L1 blue → L2 teal → L3 gold → L4 bright gold
-	colorMaturityL0 = lipgloss.Color("#6B7280")
-	colorMaturityL1 = lipgloss.Color("#3B82F6")
-	colorMaturityL2 = lipgloss.Color("#14B8A6")
-	colorMaturityL3 = lipgloss.Color("#D97706")
-	colorMaturityL4 = lipgloss.Color("#FBBF24")
+	colorMaturityE0 = lipgloss.Color("#6B7280")
+	colorMaturityE1 = lipgloss.Color("#3B82F6")
+	colorMaturityE2 = lipgloss.Color("#14B8A6")
+	colorMaturityE3 = lipgloss.Color("#D97706")
+	colorMaturityE4 = lipgloss.Color("#F472B6")
+	colorMaturityE5 = lipgloss.Color("#FBBF24")
 )
 
 // ── Polarity / maturity helpers ────────────────────────────────────────
@@ -44,24 +45,28 @@ func PolarityColor(pol string) lipgloss.Color {
 	}
 }
 
-// MaturityColor returns the palette color for a maturity level (0-4).
-func MaturityColor(level int) lipgloss.Color {
-	switch level {
+// MaturityColor returns the palette color for a maturity stored value.
+// Storage values are non-monotone vs E-level: stored 4 = E5 Certified,
+// stored 5 = E4 Corroborated. See packages/sql/migrations/0102_maturity_e_naming.sql.
+func MaturityColor(stored int) lipgloss.Color {
+	switch stored {
 	case 0:
-		return colorMaturityL0
+		return colorMaturityE0
 	case 1:
-		return colorMaturityL1
+		return colorMaturityE1
 	case 2:
-		return colorMaturityL2
+		return colorMaturityE2
 	case 3:
-		return colorMaturityL3
+		return colorMaturityE3
 	case 4:
-		return colorMaturityL4
+		return colorMaturityE5
+	case 5:
+		return colorMaturityE4
 	default:
-		if level < 0 {
-			return colorMaturityL0
+		if stored < 0 {
+			return colorMaturityE0
 		}
-		return colorMaturityL4
+		return colorMaturityE5
 	}
 }
 
