@@ -4,6 +4,15 @@ This file is the working contract for any AI/agent contributing to donto.
 Read it once per session. Keep it terse — extend only when you've learned
 something a future contributor would otherwise re-learn the hard way.
 
+## Account
+
+**The only gcloud account is `thomasalwyndavis@gmail.com`.** Never
+switch to or run commands as any other account (including
+`thomas@beamible.com`, which exists in the credential store but is not
+to be used). If a gcloud command fails because of permissions or
+billing, surface the error — don't work around it by changing
+accounts.
+
 ## What donto is
 
 A bitemporal, paraconsistent quad store. Postgres extension (`pg_donto`) +
