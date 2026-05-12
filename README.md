@@ -643,6 +643,10 @@ turbo.json                   Turborepo pipeline config
 - [`PRD.md`](PRD.md) — top-level pointer to the canonical PRD.
 - [`docs/DONTO-PRD.md`](docs/DONTO-PRD.md) — **canonical
   product requirements**. The canonical reference.
+- [`docs/PRODUCTION.md`](docs/PRODUCTION.md) — **production runbook**
+  for `genes.apexpots.com`: topology, deploy, backups, ops.
+- [`docs/DEV.md`](docs/DEV.md) — **developing on the box**: SSH,
+  workspace layout, `dev`/`dep` commands, daily backup, gh CLI.
 - [`apps/docs`](apps/docs) — Starlight documentation site with
   migration reference, schema gap audit, and guides.
 - [`ANTHROPOLOGY_README.md`](ANTHROPOLOGY_README.md) — research
