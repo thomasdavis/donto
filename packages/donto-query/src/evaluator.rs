@@ -57,6 +57,14 @@ pub async fn evaluate(client: &DontoClient, q: &Query) -> Result<Vec<EvalRow>, E
     let q_resolved = apply_preset(client, q).await?;
     let q = &q_resolved;
 
+    // Up-front validation: fail fast on a malformed POLICY ALLOWS
+    // action before any pattern matching, otherwise unconstrained
+    // queries scan the whole store before the per-statement check
+    // surfaces the error.
+    if let Some(action) = q.policy_allows.as_deref() {
+        validate_policy_action(action)?;
+    }
+
     // EXPANDS_FROM concept(C) USING schema_lens(L) — resolve C to a
     // set of predicates via lens-scoped alignments, then filter
     // matched statements to those whose predicate is in the set.
@@ -586,6 +594,38 @@ async fn retain_with_overlay(
 ///     actions in the migration, so this matches that intent)
 ///   * `revocation_status != 'active'` → policy is ignored (treated
 ///     as no policy at all). Tests for revocation are M0 work.
+/// Whitelist of POLICY ALLOWS action names against the policy
+/// capsule's documented key set. Kept at module scope so the
+/// pre-flight validator and the per-statement retainer share one
+/// source of truth.
+const KNOWN_POLICY_ACTIONS: &[&str] = &[
+    "read_metadata",
+    "read_content",
+    "quote",
+    "view_anchor_location",
+    "derive_claims",
+    "derive_embeddings",
+    "translate",
+    "summarize",
+    "export_claims",
+    "export_sources",
+    "export_anchors",
+    "train_model",
+    "publish_release",
+    "share_with_third_party",
+    "federated_query",
+];
+
+fn validate_policy_action(action: &str) -> Result<(), EvalError> {
+    if !KNOWN_POLICY_ACTIONS.iter().any(|a| *a == action) {
+        return Err(EvalError::Unsupported(format!(
+            "POLICY ALLOWS unknown action `{action}` (valid: {})",
+            KNOWN_POLICY_ACTIONS.join(", ")
+        )));
+    }
+    Ok(())
+}
+
 async fn retain_policy_allows(
     client: &DontoClient,
     stmts: Vec<Statement>,
@@ -594,31 +634,7 @@ async fn retain_policy_allows(
     if stmts.is_empty() {
         return Ok(stmts);
     }
-    // Whitelist action names against the policy capsule's documented
-    // key set so untrusted callers can't inject arbitrary JSON paths.
-    const KNOWN_ACTIONS: &[&str] = &[
-        "read_metadata",
-        "read_content",
-        "quote",
-        "view_anchor_location",
-        "derive_claims",
-        "derive_embeddings",
-        "translate",
-        "summarize",
-        "export_claims",
-        "export_sources",
-        "export_anchors",
-        "train_model",
-        "publish_release",
-        "share_with_third_party",
-        "federated_query",
-    ];
-    if !KNOWN_ACTIONS.iter().any(|a| *a == action) {
-        return Err(EvalError::Unsupported(format!(
-            "POLICY ALLOWS unknown action `{action}` (valid: {})",
-            KNOWN_ACTIONS.join(", ")
-        )));
-    }
+    validate_policy_action(action)?;
     let ids: Vec<uuid::Uuid> = stmts.iter().map(|s| s.statement_id).collect();
     let conn = client
         .pool()
