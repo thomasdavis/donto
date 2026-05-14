@@ -11,7 +11,8 @@
 use crate::algebra::*;
 use donto_client::{ContextScope, DontoClient, Object, Statement};
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
+use uuid::Uuid;
 
 /// Pull a [`Statement`] out of either match path.
 trait IntoStatement {
@@ -56,45 +57,17 @@ pub async fn evaluate(client: &DontoClient, q: &Query) -> Result<Vec<EvalRow>, E
     let q_resolved = apply_preset(client, q).await?;
     let q = &q_resolved;
 
-    // DontoQL v2 clauses that have parsed shape but no executable
-    // kernel yet. Declare the gap honestly rather than silently
-    // returning misleading results. Tracking: PRD §11 v2 verdicts.
-    if q.policy_allows.is_some() {
-        return Err(EvalError::Unsupported(
-            "POLICY ALLOWS evaluation requires the Trust Kernel \
-             policy-join (PRD M0); statement→source→policy lookup is \
-             not yet wired into donto_match. Statement parses but does \
-             not filter."
-                .into(),
-        ));
-    }
-    if q.schema_lens.is_some() {
-        return Err(EvalError::Unsupported(
-            "SCHEMA_LENS evaluation requires the schema-lens registry \
-             (PRD §6.x); lens-aware predicate expansion is not yet \
-             implemented. Statement parses but does not filter."
-                .into(),
-        ));
-    }
-    if q.expands_from.is_some() {
-        return Err(EvalError::Unsupported(
-            "EXPANDS_FROM concept(..) USING schema_lens(..) requires \
-             the schema-lens registry + concept resolver (PRD §11.2 \
-             example 1). Statement parses but does not filter."
-                .into(),
-        ));
-    }
-    if matches!(
-        q.order_by,
-        OrderBy::ContradictionPressureDesc | OrderBy::ContradictionPressureAsc
-    ) {
-        return Err(EvalError::Unsupported(
-            "ORDER BY contradiction_pressure needs the evaluator to \
-             retain statement_ids per binding row so it can join \
-             against donto_contradiction_frontier. Refactor pending."
-                .into(),
-        ));
-    }
+    // EXPANDS_FROM concept(C) USING schema_lens(L) — resolve C to a
+    // set of predicates via lens-scoped alignments, then filter
+    // matched statements to those whose predicate is in the set.
+    // The set is computed once per query.
+    let expands_predicates: Option<std::collections::HashSet<String>> =
+        if let Some(ef) = &q.expands_from {
+            Some(load_concept_predicate_set(client, &ef.concept, &ef.schema_lens).await?)
+        } else {
+            None
+        };
+
     // WITH evidence is recorded but the row shape today is Bindings
     // only — evidence is not yet attached. Parse, then carry on; this
     // is a future-shape directive, not a filter.
@@ -103,10 +76,10 @@ pub async fn evaluate(client: &DontoClient, q: &Query) -> Result<Vec<EvalRow>, E
     let polarity = q.polarity;
     let scope = q.scope.clone();
 
-    let mut current: Vec<Bindings> = vec![Bindings::new()];
+    let mut current: Vec<(Bindings, Option<Uuid>)> = vec![(Bindings::new(), None)];
     for pat in &q.patterns {
-        let mut next: Vec<Bindings> = Vec::new();
-        for env in &current {
+        let mut next: Vec<(Bindings, Option<Uuid>)> = Vec::new();
+        for (env, _prev_id) in &current {
             let s_bound = substitute(&pat.subject, env);
             let p_bound = substitute(&pat.predicate, env);
             let o_bound = substitute(&pat.object, env);
@@ -191,10 +164,19 @@ pub async fn evaluate(client: &DontoClient, q: &Query) -> Result<Vec<EvalRow>, E
                 )
                 .await?;
             }
+            if let Some(action) = q.policy_allows.as_deref() {
+                stmts = retain_policy_allows(client, stmts, action).await?;
+            }
+            if let Some(lens) = q.schema_lens.as_deref() {
+                stmts = retain_in_schema_lens(client, stmts, lens).await?;
+            }
+            if let Some(allowed_predicates) = &expands_predicates {
+                stmts.retain(|s| allowed_predicates.contains(&s.predicate));
+            }
 
             for st in stmts {
                 if let Some(env2) = unify(env, pat, &st) {
-                    next.push(env2);
+                    next.push((env2, Some(st.statement_id)));
                 }
             }
         }
@@ -205,12 +187,35 @@ pub async fn evaluate(client: &DontoClient, q: &Query) -> Result<Vec<EvalRow>, E
     }
 
     // Apply FILTER expressions.
-    current.retain(|env| q.filters.iter().all(|f| eval_filter(f, env)));
+    current.retain(|(env, _)| q.filters.iter().all(|f| eval_filter(f, env)));
+
+    // ORDER BY contradiction_pressure — sort by net attack pressure of
+    // the most recently matched statement_id. Computed in SQL via
+    // donto_contradiction_frontier; rows without a frontier entry
+    // (no rebuttals/undercuts against them) sort to pressure = 0.
+    if matches!(
+        q.order_by,
+        OrderBy::ContradictionPressureDesc | OrderBy::ContradictionPressureAsc
+    ) {
+        let frontier = load_contradiction_pressure(client).await?;
+        let desc = matches!(q.order_by, OrderBy::ContradictionPressureDesc);
+        current.sort_by(|a, b| {
+            // contradiction_pressure = attacks - supports = -net_pressure.
+            // Higher pressure = more contradicted.
+            let pa = pressure_for(&frontier, a.1);
+            let pb = pressure_for(&frontier, b.1);
+            if desc {
+                pb.cmp(&pa)
+            } else {
+                pa.cmp(&pb)
+            }
+        });
+    }
 
     // PROJECT.
     let rows: Vec<EvalRow> = current
         .into_iter()
-        .map(|env| {
+        .map(|(env, _id)| {
             if q.project.is_empty() {
                 EvalRow(env)
             } else {
@@ -229,6 +234,109 @@ pub async fn evaluate(client: &DontoClient, q: &Query) -> Result<Vec<EvalRow>, E
     let off = q.offset.unwrap_or(0) as usize;
     let lim = q.limit.unwrap_or(rows.len() as u64) as usize;
     Ok(rows.into_iter().skip(off).take(lim).collect())
+}
+
+/// Build a `statement_id -> contradiction_pressure` map by calling
+/// `donto_contradiction_frontier(NULL)`. Contradiction pressure is
+/// defined as `attack_count - support_count` (i.e. the negation of
+/// `net_pressure`) so higher = more contradicted, matching the natural
+/// reading of `ORDER BY contradiction_pressure DESC`.
+async fn load_contradiction_pressure(
+    client: &DontoClient,
+) -> Result<HashMap<Uuid, i64>, EvalError> {
+    let conn = client
+        .pool()
+        .get()
+        .await
+        .map_err(|e| EvalError::Client(donto_client::Error::Pool(e)))?;
+    let rows = conn
+        .query(
+            "select statement_id, attack_count, support_count \
+             from donto_contradiction_frontier(NULL)",
+            &[],
+        )
+        .await
+        .map_err(|e| EvalError::Client(donto_client::Error::Postgres(e)))?;
+    let mut out = HashMap::with_capacity(rows.len());
+    for r in rows {
+        let id: Uuid = r.get(0);
+        let attacks: i64 = r.get(1);
+        let supports: i64 = r.get(2);
+        out.insert(id, attacks - supports);
+    }
+    Ok(out)
+}
+
+fn pressure_for(map: &HashMap<Uuid, i64>, id: Option<Uuid>) -> i64 {
+    id.and_then(|i| map.get(&i).copied()).unwrap_or(0)
+}
+
+/// SCHEMA_LENS: retain statements that have a secondary-context
+/// membership with `role='schema_lens'` for the given lens IRI.
+/// A statement's primary context is NOT considered a lens membership
+/// — schema_lens is explicitly a *secondary* attachment (see
+/// migration `0103_multi_context.sql`, role enum).
+async fn retain_in_schema_lens(
+    client: &DontoClient,
+    stmts: Vec<Statement>,
+    lens_iri: &str,
+) -> Result<Vec<Statement>, EvalError> {
+    if stmts.is_empty() {
+        return Ok(stmts);
+    }
+    let ids: Vec<uuid::Uuid> = stmts.iter().map(|s| s.statement_id).collect();
+    let conn = client
+        .pool()
+        .get()
+        .await
+        .map_err(|e| EvalError::Client(donto_client::Error::Pool(e)))?;
+    let rows = conn
+        .query(
+            "select statement_id from donto_statement_context \
+             where statement_id = any($1::uuid[]) \
+               and context = $2 and role = 'schema_lens'",
+            &[&ids, &lens_iri],
+        )
+        .await
+        .map_err(|e| EvalError::Client(donto_client::Error::Postgres(e)))?;
+    let keep: std::collections::HashSet<uuid::Uuid> =
+        rows.iter().map(|r| r.get::<_, uuid::Uuid>(0)).collect();
+    Ok(stmts
+        .into_iter()
+        .filter(|s| keep.contains(&s.statement_id))
+        .collect())
+}
+
+/// EXPANDS_FROM concept(C) USING schema_lens(L): resolve C to its
+/// expansion-set under the named lens. The set is every alignment
+/// edge with `source_iri = C AND scope = L AND safe_for_query_expansion`,
+/// plus C itself (the concept is its own predicate root).
+async fn load_concept_predicate_set(
+    client: &DontoClient,
+    concept: &str,
+    lens: &str,
+) -> Result<std::collections::HashSet<String>, EvalError> {
+    let conn = client
+        .pool()
+        .get()
+        .await
+        .map_err(|e| EvalError::Client(donto_client::Error::Pool(e)))?;
+    let rows = conn
+        .query(
+            "select target_iri from donto_predicate_alignment \
+             where source_iri = $1 and scope = $2 \
+               and upper(tx_time) is null \
+               and safe_for_query_expansion = true",
+            &[&concept, &lens],
+        )
+        .await
+        .map_err(|e| EvalError::Client(donto_client::Error::Postgres(e)))?;
+    let mut set: std::collections::HashSet<String> = rows
+        .iter()
+        .map(|r| r.get::<_, String>(0))
+        .collect();
+    set.insert(concept.to_string());
+    Ok(set)
 }
 
 /// Translate a `PRESET <name>` clause into concrete query adjustments.
@@ -456,6 +564,84 @@ async fn retain_with_overlay(
         .map_err(|e| EvalError::Client(donto_client::Error::Pool(e)))?;
     let rows = conn
         .query(sql.as_str(), &[&ids, &allowed_vec])
+        .await
+        .map_err(|e| EvalError::Client(donto_client::Error::Postgres(e)))?;
+    let keep: std::collections::HashSet<uuid::Uuid> =
+        rows.iter().map(|r| r.get::<_, uuid::Uuid>(0)).collect();
+    Ok(stmts
+        .into_iter()
+        .filter(|s| keep.contains(&s.statement_id))
+        .collect())
+}
+
+/// Drop statements whose policy explicitly disallows the named
+/// action. Policy chain: statement → evidence_link → document →
+/// policy_capsule. Action keys live in `allowed_actions` JSONB.
+///
+/// Permissive defaults:
+///   * statement with **no** evidence link → kept (no policy claim)
+///   * evidence link with no policy → kept (untyped source)
+///   * policy with no entry for the action → dropped (closed-world;
+///     unknown_restricted policy_kind defaults to deny across all
+///     actions in the migration, so this matches that intent)
+///   * `revocation_status != 'active'` → policy is ignored (treated
+///     as no policy at all). Tests for revocation are M0 work.
+async fn retain_policy_allows(
+    client: &DontoClient,
+    stmts: Vec<Statement>,
+    action: &str,
+) -> Result<Vec<Statement>, EvalError> {
+    if stmts.is_empty() {
+        return Ok(stmts);
+    }
+    // Whitelist action names against the policy capsule's documented
+    // key set so untrusted callers can't inject arbitrary JSON paths.
+    const KNOWN_ACTIONS: &[&str] = &[
+        "read_metadata",
+        "read_content",
+        "quote",
+        "view_anchor_location",
+        "derive_claims",
+        "derive_embeddings",
+        "translate",
+        "summarize",
+        "export_claims",
+        "export_sources",
+        "export_anchors",
+        "train_model",
+        "publish_release",
+        "share_with_third_party",
+        "federated_query",
+    ];
+    if !KNOWN_ACTIONS.iter().any(|a| *a == action) {
+        return Err(EvalError::Unsupported(format!(
+            "POLICY ALLOWS unknown action `{action}` (valid: {})",
+            KNOWN_ACTIONS.join(", ")
+        )));
+    }
+    let ids: Vec<uuid::Uuid> = stmts.iter().map(|s| s.statement_id).collect();
+    let conn = client
+        .pool()
+        .get()
+        .await
+        .map_err(|e| EvalError::Client(donto_client::Error::Pool(e)))?;
+    // Keep statement if no evidence link with an active policy
+    // explicitly denies the action.
+    let sql = format!(
+        "select s.statement_id \
+         from unnest($1::uuid[]) as s(statement_id) \
+         where not exists ( \
+           select 1 from donto_evidence_link el \
+           join donto_document d on d.document_id = el.target_document_id \
+           join donto_policy_capsule p on p.policy_iri = d.policy_id \
+           where el.statement_id = s.statement_id \
+             and upper(el.tx_time) is null \
+             and p.revocation_status = 'active' \
+             and coalesce((p.allowed_actions->>'{action}')::boolean, false) = false \
+         )"
+    );
+    let rows = conn
+        .query(sql.as_str(), &[&ids])
         .await
         .map_err(|e| EvalError::Client(donto_client::Error::Postgres(e)))?;
     let keep: std::collections::HashSet<uuid::Uuid> =

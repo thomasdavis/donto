@@ -1,9 +1,11 @@
 # DontoQL — donto's native query language
 
-**Status:** v2 spec landed in `packages/donto-query/`. Some clauses parse
-but evaluate to `Unsupported` until the kernel piece behind them
-(Trust Kernel HTTP middleware, schema-lens registry, etc.) lands. See
-[§ Clause coverage](#clause-coverage) for the live verdict per clause.
+**Status:** v2 spec landed in `packages/donto-query/`. Every clause
+defined in PRD §11 is parsed *and evaluated end-to-end* against
+existing storage. The one exception is `WITH evidence`, which is
+parsed and recorded but does not yet change the result-row shape —
+evidence attachment is a future-shape change, not a filter. See
+[§ Clause coverage](#clause-coverage) for per-clause specifics.
 
 DontoQL is a small, line-oriented graph query language with strong
 defaults for donto's invariants: contradictions are first-class,
@@ -99,19 +101,18 @@ Everything else is opt-in.
 | `EXTRACTION_LEVEL`         | ✅      | ✅         | Filter via `donto_stmt_extraction_level` overlay.                             |
 | `TRANSACTION_TIME AS_OF`   | ✅      | ✅         | Bitemporal time-travel; routed to `donto_match`'s `p_as_of_tx`.               |
 | `AS_OF`                    | ✅      | ✅         | Shorthand for the above.                                                      |
-| `POLICY ALLOWS`            | ✅      | ❌ deferred| Needs statement→source→policy join (PRD M0 HTTP middleware).                  |
-| `SCHEMA_LENS`              | ✅      | ❌ deferred| Needs schema-lens registry.                                                   |
-| `EXPANDS_FROM … USING …`   | ✅      | ❌ deferred| Needs schema-lens + concept resolver.                                         |
-| `ORDER BY contradiction_pressure` | ✅ | ❌ deferred| Needs evaluator to retain `statement_id` per binding for the join.            |
-| `WITH evidence = …`        | ✅      | ☑ recorded | Parses to `EvidenceShape`; today the result-row shape is `Bindings` only.    |
+| `POLICY ALLOWS`            | ✅      | ✅         | Filters via `donto_evidence_link → donto_document → donto_policy_capsule.allowed_actions`. Permissive default for statements with no evidence link. |
+| `SCHEMA_LENS`              | ✅      | ✅         | Filters via `donto_statement_context.role='schema_lens'` membership.          |
+| `EXPANDS_FROM … USING …`   | ✅      | ✅         | Resolves the concept's predicates via `donto_predicate_alignment.scope=<lens>`; filters statement predicates to the set. |
+| `ORDER BY contradiction_pressure` | ✅ | ✅      | Sorts by attack pressure from `donto_contradiction_frontier`; rows without an attack get pressure 0. |
+| `WITH evidence = …`        | ✅      | ☑ recorded | Parses to `EvidenceShape`; today the result-row shape is `Bindings` only. Evidence attachment is the next result-shape change. |
 | `PROJECT`                  | ✅      | ✅         | Filter the output columns. Empty `PROJECT` ≡ all bound vars.                  |
-| `LIMIT` / `OFFSET`         | ✅      | ✅         | Applied after FILTER and PROJECT.                                             |
+| `LIMIT` / `OFFSET`         | ✅      | ✅         | Applied after FILTER, ORDER BY, and PROJECT.                                  |
 
-The deferred clauses still **parse cleanly** — programs written
-against the full v2 surface won't surface mysterious "unknown
-clause" errors as kernels land. Each deferred clause returns
-`EvalError::Unsupported` with the exact reason and the PRD milestone
-where it's tracked.
+Every clause that filters returns rows from the DB end-to-end. The
+only non-executing clause is `WITH evidence`, which sets a
+future-shape directive — the parser stores it; the evaluator does
+not yet attach evidence rows to the output.
 
 ---
 
@@ -286,10 +287,19 @@ POLICY ALLOWS read_metadata
 POLICY ALLOWS publish_release
 ```
 
-**Deferred.** Parses cleanly and stores in `Query.policy_allows`, but
-the evaluator returns `Unsupported`. Needs the
-statement→source→policy join from the Trust Kernel HTTP middleware
-(PRD M0; the SQL substrate in migrations `0111`/`0112` exists).
+Drops statements whose source-policy explicitly denies the named
+action. Resolution: statement → `donto_evidence_link` →
+`donto_document.policy_id` → `donto_policy_capsule.allowed_actions`.
+Permissive defaults: statements with **no evidence link** are kept
+(no policy claim, no policy refusal); evidence links to documents
+with no policy_id are kept; revoked policies are ignored.
+
+Allowed action names (whitelisted to prevent JSON-path injection):
+`read_metadata`, `read_content`, `quote`, `view_anchor_location`,
+`derive_claims`, `derive_embeddings`, `translate`, `summarize`,
+`export_claims`, `export_sources`, `export_anchors`, `train_model`,
+`publish_release`, `share_with_third_party`, `federated_query`.
+Unknown actions raise `EvalError::Unsupported`.
 
 ### `SCHEMA_LENS`
 
@@ -298,8 +308,11 @@ SCHEMA_LENS ex:linguistics-core
 SCHEMA_LENS bare_name
 ```
 
-**Deferred.** Records the lens to apply. Evaluator pending the
-schema-lens registry.
+Keeps only statements that have a **secondary-context** membership
+with `role='schema_lens'` for the given lens IRI (added via
+`donto_add_statement_context($id, $lens, 'schema_lens')`). The
+primary context is **not** considered a lens membership — lens is
+explicitly a secondary attachment per migration `0103`.
 
 ### `EXPANDS_FROM … USING …`
 
@@ -308,8 +321,15 @@ EXPANDS_FROM concept ex:case_marking
 USING schema_lens ex:linguistics-core
 ```
 
-**Deferred.** PRD §11.2 example 1. Parses to `Query.expands_from`
-(`{ concept, schema_lens }`); evaluator pending.
+PRD §11.2 example 1. Resolves the concept to a predicate set under
+the lens by reading `donto_predicate_alignment` rows whose
+`source_iri = <concept> AND scope = <lens> AND safe_for_query_expansion = true`,
+plus the concept itself. Statements whose predicate is outside that
+set are dropped.
+
+Combine with `PREDICATES STRICT` if you want the lens-resolved set
+to be the *only* expansion (otherwise the default predicate-closure
+expansion can pull in additional predicates).
 
 ### `ORDER BY` (one named order only)
 
@@ -318,9 +338,10 @@ ORDER BY contradiction_pressure DESC
 ORDER_BY contradiction_pressure         # default DESC
 ```
 
-The only named ordering is `contradiction_pressure`, computed from
-`donto_contradiction_frontier`. **Deferred** at the evaluator until
-the binding pipeline retains per-row `statement_id`.
+The only named ordering is `contradiction_pressure`, defined as
+`attack_count − support_count` for the binding's most-recent
+matched `statement_id` (joined against `donto_contradiction_frontier`).
+Rows without an attack edge sort to pressure = 0.
 
 There is no implicit ordering. donto deliberately exposes no default
 order — leak-prone callers should always `ORDER BY` explicitly when

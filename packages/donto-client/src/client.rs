@@ -432,7 +432,7 @@ impl DontoClient {
         rows.into_iter()
             .map(|r| {
                 let object_lit_json: Json = r.try_get("object_lit")?;
-                let object_lit: Literal = serde_json::from_value(object_lit_json)?;
+                let object_lit: Literal = parse_literal_lenient(object_lit_json)?;
                 let polarity_s: String = r.try_get("polarity")?;
                 let polarity = Polarity::parse(&polarity_s)
                     .ok_or_else(|| Error::Invalid(format!("unknown polarity {polarity_s}")))?;
@@ -1365,7 +1365,7 @@ fn statement_from_row(row: &Row) -> Result<Statement> {
     let object_lit: Option<Json> = row.try_get("object_lit")?;
     let object = match (object_iri, object_lit) {
         (Some(i), None) => Object::Iri(i),
-        (None, Some(l)) => Object::Literal(serde_json::from_value::<Literal>(l)?),
+        (None, Some(l)) => Object::Literal(parse_literal_lenient(l)?),
         _ => {
             return Err(Error::Invalid(
                 "statement row has neither/both object kinds".into(),
@@ -1392,6 +1392,32 @@ fn statement_from_row(row: &Row) -> Result<Statement> {
     })
 }
 
+/// Decode a `donto_statement.object_lit` value into a `Literal`,
+/// tolerating one level of accidental string-wrapping. Some old
+/// ingestion paths inserted `'{"v":..., "dt":...}'::jsonb` — that is,
+/// a JSON *string* containing JSON — instead of the parsed object.
+/// We treat those as recoverable: if the direct decode fails and the
+/// payload is a string, parse that string as JSON and try again.
+fn parse_literal_lenient(j: Json) -> Result<Literal> {
+    match serde_json::from_value::<Literal>(j.clone()) {
+        Ok(l) => Ok(l),
+        Err(direct_err) => {
+            if let serde_json::Value::String(s) = j {
+                let inner: serde_json::Value = serde_json::from_str(&s).map_err(|_| {
+                    Error::Invalid(format!(
+                        "object_lit is a string but not valid JSON: {direct_err}"
+                    ))
+                })?;
+                serde_json::from_value::<Literal>(inner).map_err(|e| {
+                    Error::Invalid(format!("object_lit unwrap+decode failed: {e}"))
+                })
+            } else {
+                Err(direct_err.into())
+            }
+        }
+    }
+}
+
 fn row_to_aligned_statement(row: Row) -> Result<AlignedStatement> {
     let statement = statement_from_row(&row)?;
     Ok(AlignedStatement {
@@ -1399,4 +1425,51 @@ fn row_to_aligned_statement(row: Row) -> Result<AlignedStatement> {
         matched_via: row.try_get("matched_via")?,
         alignment_confidence: row.try_get("alignment_confidence")?,
     })
+}
+
+#[cfg(test)]
+mod parse_literal_tests {
+    use super::*;
+
+    #[test]
+    fn parses_direct_object_form() {
+        let j = serde_json::json!({"v": 30, "dt": "xsd:integer"});
+        let l = parse_literal_lenient(j).unwrap();
+        assert_eq!(l.dt, "xsd:integer");
+        assert_eq!(l.v, serde_json::json!(30));
+    }
+
+    #[test]
+    fn parses_double_encoded_string_form() {
+        // Some old ingestion paths inserted the JSON object as a
+        // JSON-encoded string. Make sure we recover.
+        let j = serde_json::Value::String(
+            r#"{"v": 21, "dt": "xsd:integer"}"#.to_string(),
+        );
+        let l = parse_literal_lenient(j).unwrap();
+        assert_eq!(l.dt, "xsd:integer");
+        assert_eq!(l.v, serde_json::json!(21));
+    }
+
+    #[test]
+    fn parses_double_encoded_with_lang() {
+        let j = serde_json::Value::String(
+            r#"{"v": "hello", "dt": "rdf:langString", "lang": "en"}"#.to_string(),
+        );
+        let l = parse_literal_lenient(j).unwrap();
+        assert_eq!(l.lang.as_deref(), Some("en"));
+        assert_eq!(l.v, serde_json::json!("hello"));
+    }
+
+    #[test]
+    fn rejects_garbage_string() {
+        let j = serde_json::Value::String("not json at all".to_string());
+        assert!(parse_literal_lenient(j).is_err());
+    }
+
+    #[test]
+    fn rejects_non_object_non_string_value() {
+        let j = serde_json::Value::Number(serde_json::Number::from(42));
+        assert!(parse_literal_lenient(j).is_err());
+    }
 }
