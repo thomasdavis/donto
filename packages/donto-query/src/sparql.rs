@@ -90,18 +90,12 @@ pub fn parse_sparql(src: &str) -> Result<Query, ParseError> {
     }
 
     Ok(Query {
-        scope: None,
-        scope_preset: None,
         patterns,
         filters,
-        polarity: Some(donto_client::Polarity::Asserted),
-        min_maturity: 0,
-        identity: IdentityMode::Default,
         project,
         limit,
         offset,
-        predicate_expansion: PredicateExpansion::Expand,
-        as_of_tx: None,
+        ..Query::default()
     })
 }
 

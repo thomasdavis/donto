@@ -56,6 +56,50 @@ pub async fn evaluate(client: &DontoClient, q: &Query) -> Result<Vec<EvalRow>, E
     let q_resolved = apply_preset(client, q).await?;
     let q = &q_resolved;
 
+    // DontoQL v2 clauses that have parsed shape but no executable
+    // kernel yet. Declare the gap honestly rather than silently
+    // returning misleading results. Tracking: PRD §11 v2 verdicts.
+    if q.policy_allows.is_some() {
+        return Err(EvalError::Unsupported(
+            "POLICY ALLOWS evaluation requires the Trust Kernel \
+             policy-join (PRD M0); statement→source→policy lookup is \
+             not yet wired into donto_match. Statement parses but does \
+             not filter."
+                .into(),
+        ));
+    }
+    if q.schema_lens.is_some() {
+        return Err(EvalError::Unsupported(
+            "SCHEMA_LENS evaluation requires the schema-lens registry \
+             (PRD §6.x); lens-aware predicate expansion is not yet \
+             implemented. Statement parses but does not filter."
+                .into(),
+        ));
+    }
+    if q.expands_from.is_some() {
+        return Err(EvalError::Unsupported(
+            "EXPANDS_FROM concept(..) USING schema_lens(..) requires \
+             the schema-lens registry + concept resolver (PRD §11.2 \
+             example 1). Statement parses but does not filter."
+                .into(),
+        ));
+    }
+    if matches!(
+        q.order_by,
+        OrderBy::ContradictionPressureDesc | OrderBy::ContradictionPressureAsc
+    ) {
+        return Err(EvalError::Unsupported(
+            "ORDER BY contradiction_pressure needs the evaluator to \
+             retain statement_ids per binding row so it can join \
+             against donto_contradiction_frontier. Refactor pending."
+                .into(),
+        ));
+    }
+    // WITH evidence is recorded but the row shape today is Bindings
+    // only — evidence is not yet attached. Parse, then carry on; this
+    // is a future-shape directive, not a filter.
+    let _ = q.evidence_shape;
+
     let polarity = q.polarity;
     let scope = q.scope.clone();
 
@@ -74,7 +118,7 @@ pub async fn evaluate(client: &DontoClient, q: &Query) -> Result<Vec<EvalRow>, E
                 _ => None,
             };
 
-            let stmts: Vec<Statement> = match q.predicate_expansion {
+            let mut stmts: Vec<Statement> = match q.predicate_expansion {
                 PredicateExpansion::Expand => {
                     client
                         .match_pattern(
@@ -121,6 +165,32 @@ pub async fn evaluate(client: &DontoClient, q: &Query) -> Result<Vec<EvalRow>, E
                     .map(IntoStatement::into_statement)
                     .collect(),
             };
+
+            // Sparse-overlay filters (MODALITY, EXTRACTION_LEVEL).
+            // One round-trip per filter per pattern; drops matched
+            // statements that lack the overlay row or don't satisfy
+            // the requested value set. Both clauses default to
+            // "any" when None, so the cost is zero in that case.
+            if let Some(allowed) = &q.modality {
+                stmts = retain_with_overlay(
+                    client,
+                    stmts,
+                    "donto_stmt_modality",
+                    "modality",
+                    allowed,
+                )
+                .await?;
+            }
+            if let Some(allowed) = &q.extraction_level {
+                stmts = retain_with_overlay(
+                    client,
+                    stmts,
+                    "donto_stmt_extraction_level",
+                    "level",
+                    allowed,
+                )
+                .await?;
+            }
 
             for st in stmts {
                 if let Some(env2) = unify(env, pat, &st) {
@@ -344,3 +414,54 @@ fn literal_num(t: &Term) -> Option<f64> {
 
 #[allow(dead_code)]
 fn _unused(_: ContextScope) {}
+
+/// Drop statements whose `statement_id` lacks an overlay row in
+/// `<table>` with `<col> in (allowed)`. Used by the MODALITY and
+/// EXTRACTION_LEVEL clauses to filter through sparse overlays.
+///
+/// Returns the input unchanged if `allowed` is empty (no filter).
+/// One SQL round-trip per call regardless of input size.
+async fn retain_with_overlay(
+    client: &DontoClient,
+    stmts: Vec<Statement>,
+    table: &str,
+    col: &str,
+    allowed: &[String],
+) -> Result<Vec<Statement>, EvalError> {
+    if allowed.is_empty() || stmts.is_empty() {
+        return Ok(stmts);
+    }
+    // Table and column names are not user-supplied — callers pass
+    // string literals — so direct interpolation is safe. (Defence:
+    // pattern-match against an allow-list.)
+    let (table, col) = match (table, col) {
+        ("donto_stmt_modality", "modality") => ("donto_stmt_modality", "modality"),
+        ("donto_stmt_extraction_level", "level") => ("donto_stmt_extraction_level", "level"),
+        _ => {
+            return Err(EvalError::Unsupported(format!(
+                "retain_with_overlay: unknown (table, col) = ({table}, {col})"
+            )));
+        }
+    };
+    let ids: Vec<uuid::Uuid> = stmts.iter().map(|s| s.statement_id).collect();
+    let allowed_vec: Vec<String> = allowed.iter().map(|s| s.to_string()).collect();
+    let sql = format!(
+        "select statement_id from {table} \
+         where statement_id = any($1::uuid[]) and {col} = any($2::text[])"
+    );
+    let conn = client
+        .pool()
+        .get()
+        .await
+        .map_err(|e| EvalError::Client(donto_client::Error::Pool(e)))?;
+    let rows = conn
+        .query(sql.as_str(), &[&ids, &allowed_vec])
+        .await
+        .map_err(|e| EvalError::Client(donto_client::Error::Postgres(e)))?;
+    let keep: std::collections::HashSet<uuid::Uuid> =
+        rows.iter().map(|r| r.get::<_, uuid::Uuid>(0)).collect();
+    Ok(stmts
+        .into_iter()
+        .filter(|s| keep.contains(&s.statement_id))
+        .collect())
+}
