@@ -421,6 +421,41 @@ enum ReleaseCmd {
         #[arg(long, value_name = "PATH")]
         manifest: Option<PathBuf>,
     },
+    /// Build a ReleaseManifest from a JSON ReleaseSpec on disk.
+    /// Emits the manifest to stdout (or --out).
+    Build {
+        #[arg(long, value_name = "PATH")]
+        spec: PathBuf,
+        #[arg(long, value_name = "PATH")]
+        out: Option<PathBuf>,
+    },
+    /// Drive the full release pipeline:
+    ///   1. build_release(spec)            → ReleaseManifest
+    ///   2. write_native_jsonl             → <out>/manifest.jsonl
+    ///   3. envelope::sign (--seed-hex)    → <out>/envelope.json
+    ///   4. write_ro_crate_metadata        → <out>/ro-crate-metadata.json
+    ///   5. write_cldf_release (optional)  → <out>/<rel>-metadata.json + CSVs
+    ///
+    /// The result is a citable, signed release directory.
+    Pipeline {
+        #[arg(long, value_name = "PATH")]
+        spec: PathBuf,
+        /// Output directory. Created if missing.
+        #[arg(long, value_name = "DIR")]
+        out_dir: PathBuf,
+        /// 32-byte Ed25519 seed in hex. Use `keygen` to generate one.
+        #[arg(long, value_name = "HEX")]
+        seed_hex: String,
+        /// Also write a CLDF release export (only meaningful for
+        /// linguistic datasets; lossy_count is reported and the
+        /// export is skipped if > --max-cldf-loss).
+        #[arg(long)]
+        cldf: bool,
+        /// Refuse to emit the CLDF export if lossy_count exceeds
+        /// this. Default: 0 (strict).
+        #[arg(long, default_value_t = 0, value_name = "N")]
+        max_cldf_loss: u64,
+    },
 }
 
 #[derive(Subcommand, Debug)]
@@ -980,6 +1015,119 @@ async fn main() -> Result<()> {
                         .with_context(|| "verify signature")?;
                     println!("ok: envelope signature verified (manifest hash not re-checked)");
                 }
+            }
+            ReleaseCmd::Build { spec, out } => {
+                let spec_text = std::fs::read_to_string(&spec)
+                    .with_context(|| format!("reading spec {spec:?}"))?;
+                let spec_value: donto_release::ReleaseSpec =
+                    serde_json::from_str(&spec_text).with_context(|| "spec must be JSON")?;
+                let manifest = donto_release::build_release(&client, &spec_value)
+                    .await
+                    .with_context(|| "build_release")?;
+                let body = serde_json::to_string_pretty(&manifest)?;
+                match out {
+                    Some(path) => {
+                        std::fs::write(&path, &body)?;
+                        eprintln!("wrote manifest to {path:?}");
+                    }
+                    None => println!("{body}"),
+                }
+            }
+            ReleaseCmd::Pipeline {
+                spec,
+                out_dir,
+                seed_hex,
+                cldf,
+                max_cldf_loss,
+            } => {
+                let spec_text = std::fs::read_to_string(&spec)?;
+                let spec_value: donto_release::ReleaseSpec = serde_json::from_str(&spec_text)?;
+                std::fs::create_dir_all(&out_dir)?;
+
+                // 1. Build manifest.
+                let manifest = donto_release::build_release(&client, &spec_value).await?;
+                eprintln!(
+                    "[1/5] built manifest: {} statements, releasable={}",
+                    manifest.statement_checksums.len(),
+                    manifest.policy_report.releasable,
+                );
+
+                // 2. Native JSONL.
+                let jsonl_path = out_dir.join("manifest.jsonl");
+                donto_release::write_native_jsonl(&manifest, &jsonl_path)?;
+                eprintln!("[2/5] wrote {jsonl_path:?}");
+
+                // 3. Ed25519 envelope.
+                let seed_bytes = hex::decode(seed_hex.trim())?;
+                if seed_bytes.len() != 32 {
+                    anyhow::bail!("seed_hex must decode to 32 bytes");
+                }
+                let mut seed = [0u8; 32];
+                seed.copy_from_slice(&seed_bytes);
+                let kp = donto_release::envelope::Keypair::from_seed(seed);
+                let manifest_value = serde_json::to_value(&manifest)?;
+                let env = donto_release::envelope::sign(&manifest_value, &kp)?;
+                let env_path = out_dir.join("envelope.json");
+                std::fs::write(&env_path, serde_json::to_vec_pretty(&env)?)?;
+                eprintln!("[3/5] wrote {env_path:?} signed by {}", env.issuer_did);
+
+                // 4. RO-Crate metadata.
+                let mut extras: Vec<(&str, &str)> =
+                    vec![("envelope.json", "application/json")];
+                let mut cldf_summary: Option<donto_release::CldfExportSummary> = None;
+                if cldf {
+                    // 5. Optional CLDF export — needs the actual
+                    // statements, so re-query.
+                    let scope = donto_client::ContextScope::any_of(spec_value.contexts.clone());
+                    let stmts = client
+                        .match_pattern(
+                            None,
+                            None,
+                            None,
+                            Some(&scope),
+                            Some(donto_client::Polarity::Asserted),
+                            spec_value.min_maturity,
+                            spec_value.as_of,
+                            None,
+                        )
+                        .await?;
+                    let summary =
+                        donto_release::write_cldf_release(&manifest, &stmts, &out_dir)?;
+                    if summary.lossy_count > max_cldf_loss {
+                        anyhow::bail!(
+                            "CLDF export refused: lossy_count {} > max_cldf_loss {}",
+                            summary.lossy_count,
+                            max_cldf_loss
+                        );
+                    }
+                    extras.push(("languages.csv", "text/csv"));
+                    extras.push(("parameters.csv", "text/csv"));
+                    extras.push(("codes.csv", "text/csv"));
+                    extras.push(("values.csv", "text/csv"));
+                    cldf_summary = Some(summary);
+                    eprintln!("[5/5] CLDF export OK (lossy_count={})", cldf_summary.as_ref().unwrap().lossy_count);
+                } else {
+                    eprintln!("[5/5] CLDF export skipped (--cldf not set)");
+                }
+
+                donto_release::write_ro_crate_metadata(&manifest, &out_dir, &extras)?;
+                eprintln!(
+                    "[4/5] wrote {:?}",
+                    out_dir.join("ro-crate-metadata.json")
+                );
+
+                // Final summary line as JSON for tooling.
+                println!(
+                    "{}",
+                    serde_json::json!({
+                        "out_dir": out_dir,
+                        "release_id": manifest.release_id,
+                        "manifest_sha256": manifest.manifest_sha256,
+                        "issuer_did": env.issuer_did,
+                        "statements": manifest.statement_checksums.len(),
+                        "cldf_summary": cldf_summary,
+                    })
+                );
             }
         },
         Cmd::Align { action } => match action {
