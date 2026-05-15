@@ -5,6 +5,7 @@ members = [
     "packages/donto-query",
     "packages/donto-ingest",
     "packages/donto-ling-cldf",
+    "packages/donto-ling-ud",
     "packages/donto-migrate",
     "packages/donto-release",
     "packages/donto-analytics",

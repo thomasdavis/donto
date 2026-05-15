@@ -609,6 +609,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "donto-ling-ud"
+version = "0.0.1"
+dependencies = [
+ "anyhow",
+ "donto-client",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 1.0.69",
+ "tokio",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
 name = "donto-migrate"
 version = "0.0.1"
 dependencies = [
