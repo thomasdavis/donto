@@ -4,6 +4,8 @@
 //! consume the same [`crate::ReleaseManifest`] when wired in (M7+).
 
 use crate::ReleaseManifest;
+use donto_client::{Object, Statement};
+use std::collections::{BTreeMap, BTreeSet};
 use std::io::Write;
 use std::path::Path;
 
@@ -156,7 +158,271 @@ fn sorted_pretty(v: &serde_json::Value) -> Result<Vec<u8>, serde_json::Error> {
     serde_json::to_vec_pretty(&sort(v))
 }
 
-// TODO(M7+): CLDF exporter (NFR-005).
+/// Write a CLDF directory (the inverse of `donto-ling-cldf`'s
+/// importer) from a [`ReleaseManifest`] plus the statements it
+/// describes. Produces:
+///
+///   <crate_dir>/
+///     <release_id>-metadata.json   # JSON-LD descriptor
+///     languages.csv                # LanguageTable
+///     parameters.csv               # ParameterTable
+///     codes.csv                    # CodeTable
+///     values.csv                   # ValueTable
+///
+/// The exporter assumes the statements follow the
+/// donto-ling-cldf import convention:
+///   - Subjects with `rdf:type ling:Language` go to LanguageTable.
+///   - Subjects with `rdf:type ling:Code` go to CodeTable
+///     (with a `ling:codeFor` edge pointing to the parameter).
+///   - Predicates that appear on language→object edges (other
+///     than `rdf:type`, `ling:name`, `ling:glottocode`) are
+///     ParameterTable rows.
+///   - Those edges themselves become ValueTable rows.
+///
+/// Statements that don't fit any of the above are recorded
+/// in the returned `lossy_count` so the caller can decide
+/// whether to abort the export.
+pub fn write_cldf_release(
+    manifest: &ReleaseManifest,
+    statements: &[Statement],
+    crate_dir: &Path,
+) -> Result<CldfExportSummary, crate::ReleaseError> {
+    std::fs::create_dir_all(crate_dir)?;
+
+    // 1. Pass: classify statements.
+    let mut languages: BTreeMap<String, LangRow> = BTreeMap::new();
+    let mut codes: BTreeMap<String, CodeRow> = BTreeMap::new();
+    let mut value_stmts: Vec<&Statement> = Vec::new();
+    for st in statements {
+        match (st.predicate.as_str(), &st.object) {
+            ("rdf:type", Object::Iri(o)) if o == "ling:Language" => {
+                languages
+                    .entry(st.subject.clone())
+                    .or_insert_with(|| LangRow::new(&st.subject));
+            }
+            ("rdf:type", Object::Iri(o)) if o == "ling:Code" => {
+                codes
+                    .entry(st.subject.clone())
+                    .or_insert_with(|| CodeRow::new(&st.subject));
+            }
+            _ => {}
+        }
+    }
+    // 2. Pass: fold language/code metadata.
+    for st in statements {
+        match (st.predicate.as_str(), &st.object) {
+            ("ling:name", Object::Literal(l)) => {
+                if let Some(lang) = languages.get_mut(&st.subject) {
+                    lang.name = literal_string(l);
+                } else if let Some(code) = codes.get_mut(&st.subject) {
+                    code.name = literal_string(l);
+                }
+            }
+            ("ling:glottocode", Object::Literal(l)) => {
+                if let Some(lang) = languages.get_mut(&st.subject) {
+                    lang.glottocode = literal_string(l);
+                }
+            }
+            ("ling:codeFor", Object::Iri(p)) => {
+                if let Some(code) = codes.get_mut(&st.subject) {
+                    code.parameter_id = Some(local_part(p));
+                }
+            }
+            _ => {}
+        }
+    }
+    // 3. Pass: collect parameter IDs and value rows.
+    let mut parameters: BTreeSet<String> = BTreeSet::new();
+    let mut lossy_count: u64 = 0;
+    for st in statements {
+        // Skip the type/meta predicates we already consumed.
+        if matches!(
+            st.predicate.as_str(),
+            "rdf:type" | "ling:name" | "ling:glottocode" | "ling:codeFor"
+        ) {
+            continue;
+        }
+        // Subject must be a Language.
+        if !languages.contains_key(&st.subject) {
+            lossy_count += 1;
+            continue;
+        }
+        parameters.insert(st.predicate.clone());
+        value_stmts.push(st);
+    }
+
+    // 4. Write the four TSV/CSV tables. We use CSV (RFC 4180) for
+    // maximum tooling compatibility — donto-ling-cldf accepts both.
+    let lang_path = crate_dir.join("languages.csv");
+    write_csv(
+        &lang_path,
+        &["ID", "Name", "Glottocode"],
+        languages.values().map(|l| {
+            vec![
+                local_part(&l.iri),
+                l.name.clone().unwrap_or_default(),
+                l.glottocode.clone().unwrap_or_default(),
+            ]
+        }),
+    )?;
+
+    let param_path = crate_dir.join("parameters.csv");
+    write_csv(
+        &param_path,
+        &["ID", "Name", "Description"],
+        parameters.iter().map(|p| {
+            vec![local_part(p), local_part(p), String::new()]
+        }),
+    )?;
+
+    let code_path = crate_dir.join("codes.csv");
+    write_csv(
+        &code_path,
+        &["ID", "Parameter_ID", "Name"],
+        codes.values().map(|c| {
+            vec![
+                local_part(&c.iri),
+                c.parameter_id.clone().unwrap_or_default(),
+                c.name.clone().unwrap_or_default(),
+            ]
+        }),
+    )?;
+
+    let value_path = crate_dir.join("values.csv");
+    let mut value_rows: Vec<Vec<String>> = Vec::with_capacity(value_stmts.len());
+    for (i, st) in value_stmts.iter().enumerate() {
+        let value_str = match &st.object {
+            Object::Iri(i2) => local_part(i2),
+            Object::Literal(l) => literal_string(l).unwrap_or_default(),
+        };
+        value_rows.push(vec![
+            format!("v{i}"),
+            local_part(&st.subject),
+            local_part(&st.predicate),
+            value_str,
+        ]);
+    }
+    write_csv(
+        &value_path,
+        &["ID", "Language_ID", "Parameter_ID", "Value"],
+        value_rows.into_iter(),
+    )?;
+
+    // 5. Metadata file.
+    let metadata_iri = format!("cldf:{}", manifest.release_id);
+    let meta = serde_json::json!({
+        "@context": ["http://www.w3.org/ns/csvw", {"@language": "en"}],
+        "dc:identifier": metadata_iri,
+        "dc:title": if manifest.citation.title.is_empty() {
+            manifest.release_id.clone()
+        } else {
+            manifest.citation.title.clone()
+        },
+        "tables": [
+            {"url": "languages.csv",
+             "dc:conformsTo": "http://cldf.clld.org/v1.0/terms.rdf#LanguageTable"},
+            {"url": "parameters.csv",
+             "dc:conformsTo": "http://cldf.clld.org/v1.0/terms.rdf#ParameterTable"},
+            {"url": "codes.csv",
+             "dc:conformsTo": "http://cldf.clld.org/v1.0/terms.rdf#CodeTable"},
+            {"url": "values.csv",
+             "dc:conformsTo": "http://cldf.clld.org/v1.0/terms.rdf#ValueTable"}
+        ]
+    });
+    let meta_path = crate_dir.join(format!("{}-metadata.json", safe_basename(&manifest.release_id)));
+    std::fs::write(&meta_path, serde_json::to_vec_pretty(&meta)?)?;
+
+    Ok(CldfExportSummary {
+        languages: languages.len() as u64,
+        parameters: parameters.len() as u64,
+        codes: codes.len() as u64,
+        values: value_stmts.len() as u64,
+        lossy_count,
+    })
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct CldfExportSummary {
+    pub languages: u64,
+    pub parameters: u64,
+    pub codes: u64,
+    pub values: u64,
+    /// Statements that didn't fit any of the four canonical CLDF
+    /// roles. The export does not refuse — the caller decides.
+    pub lossy_count: u64,
+}
+
+#[derive(Debug, Clone)]
+struct LangRow {
+    iri: String,
+    name: Option<String>,
+    glottocode: Option<String>,
+}
+impl LangRow {
+    fn new(iri: &str) -> Self {
+        Self {
+            iri: iri.to_string(),
+            name: None,
+            glottocode: None,
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+struct CodeRow {
+    iri: String,
+    parameter_id: Option<String>,
+    name: Option<String>,
+}
+impl CodeRow {
+    fn new(iri: &str) -> Self {
+        Self {
+            iri: iri.to_string(),
+            parameter_id: None,
+            name: None,
+        }
+    }
+}
+
+fn write_csv<I>(
+    path: &Path,
+    header: &[&str],
+    rows: I,
+) -> Result<(), crate::ReleaseError>
+where
+    I: IntoIterator<Item = Vec<String>>,
+{
+    let mut wtr = csv::Writer::from_path(path).map_err(|e| {
+        crate::ReleaseError::Io(std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))
+    })?;
+    wtr.write_record(header).map_err(|e| {
+        crate::ReleaseError::Io(std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))
+    })?;
+    for row in rows {
+        wtr.write_record(&row).map_err(|e| {
+            crate::ReleaseError::Io(std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))
+        })?;
+    }
+    wtr.flush().map_err(crate::ReleaseError::Io)?;
+    Ok(())
+}
+
+fn local_part(iri: &str) -> String {
+    iri.rsplit('/').next().unwrap_or(iri).to_string()
+}
+
+fn literal_string(l: &donto_client::Literal) -> Option<String> {
+    match &l.v {
+        serde_json::Value::String(s) => Some(s.clone()),
+        other => Some(other.to_string()),
+    }
+}
+
+fn safe_basename(s: &str) -> String {
+    s.chars()
+        .map(|c| if c.is_alphanumeric() || c == '-' || c == '_' { c } else { '_' })
+        .collect()
+}
 
 #[cfg(test)]
 mod tests {

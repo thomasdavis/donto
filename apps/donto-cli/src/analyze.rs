@@ -20,6 +20,9 @@ use chrono::{DateTime, Duration, Utc};
 use donto_alert_sink::AlertSinkBox;
 use donto_analytics::{
     analyzer_paraconsistency::{run as run_paraconsistency, ParaconsistencyConfig},
+    analyzer_reviewer_acceptance::{
+        run_analyzer as run_reviewer_acceptance, ReviewerAcceptanceConfig,
+    },
     detector_rule_duration::{run as run_rule_duration, RuleDurationConfig},
     findings::{fetch_self_metrics, Finding, Severity},
 };
@@ -105,6 +108,48 @@ pub async fn run(client: &DontoClient, action: AnalyzeCmd) -> Result<()> {
                     "pairs_emitted": report.pairs_emitted,
                     "max_conflict_score": report.max_conflict_score,
                     "self_finding_id": report.self_finding_id,
+                    "window_start": window_start,
+                    "window_end": window_end,
+                })
+            );
+        }
+
+        AnalyzeCmd::ReviewerAcceptance {
+            window_hours,
+            start,
+            end,
+            detector_iri,
+            warn_reject_rate,
+            alert_sink,
+        } => {
+            let window_end: DateTime<Utc> = match &end {
+                Some(s) => s
+                    .parse::<DateTime<Utc>>()
+                    .map_err(|e| anyhow::anyhow!("bad --end: {e}"))?,
+                None => Utc::now(),
+            };
+            let window_start: DateTime<Utc> = match &start {
+                Some(s) => s
+                    .parse::<DateTime<Utc>>()
+                    .map_err(|e| anyhow::anyhow!("bad --start: {e}"))?,
+                None => window_end - Duration::hours(window_hours as i64),
+            };
+            let cfg = ReviewerAcceptanceConfig {
+                window_start,
+                window_end,
+                detector_iri,
+                warn_reject_rate,
+            };
+            let report = run_reviewer_acceptance(client, &cfg)
+                .await
+                .map_err(|e| anyhow::anyhow!("reviewer-acceptance analyzer: {e}"))?;
+            forward_to_sink(alert_sink.as_deref(), &report.findings)?;
+            println!(
+                "{}",
+                serde_json::json!({
+                    "buckets": report.buckets.len(),
+                    "buckets_emitted": report.buckets_emitted,
+                    "findings": report.findings.len(),
                     "window_start": window_start,
                     "window_end": window_end,
                 })

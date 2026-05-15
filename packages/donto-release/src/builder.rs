@@ -12,6 +12,7 @@
 use crate::manifest::{
     Citation, LossReport, ReleaseManifest, StatementChecksum,
 };
+use std::collections::BTreeMap;
 use crate::policy::evaluate_policy;
 use crate::ReleaseError;
 use chrono::{DateTime, Utc};
@@ -47,6 +48,18 @@ pub struct ReleaseSpec {
     /// Transformation manifest — opaque IRIs (e.g. extraction-run IRIs).
     /// Sorted before hashing.
     pub transformations: Vec<String>,
+    /// Optional pre-computed loss notes from adapter runs that
+    /// contributed to this release. Each entry: format → human note.
+    /// Folded into the manifest's LossReport.note + per-adapter counts.
+    #[serde(default)]
+    pub adapter_losses: BTreeMap<String, String>,
+    /// If true, the builder queries `donto_document` for the
+    /// release's contributing contexts and tries to auto-populate
+    /// missing Citation fields (authors from creators, year from
+    /// source_date, etc.). Anything the caller supplied via
+    /// `citation` takes precedence.
+    #[serde(default)]
+    pub auto_citation: bool,
 }
 
 impl ReleaseSpec {
@@ -61,6 +74,8 @@ impl ReleaseSpec {
             citation: Citation::default(),
             source_versions: vec![],
             transformations: vec![],
+            adapter_losses: BTreeMap::new(),
+            auto_citation: false,
         }
     }
 }
@@ -115,6 +130,33 @@ pub async fn build_release(
     let mut transforms = spec.transformations.clone();
     transforms.sort();
 
+    // Build the loss report from any caller-supplied adapter losses.
+    let mut loss_report = LossReport::default();
+    if !spec.adapter_losses.is_empty() {
+        let mut notes = Vec::with_capacity(spec.adapter_losses.len());
+        for (adapter, note) in &spec.adapter_losses {
+            loss_report
+                .adapter_versions
+                .insert(adapter.clone(), "v1".into());
+            notes.push(format!("[{adapter}] {note}"));
+            // Best-effort row-count parsing: if the note contains
+            // a leading integer (e.g. "12 rows dropped: …"), accumulate.
+            if let Some(num) = note.split_whitespace().next().and_then(|t| t.parse::<u64>().ok()) {
+                loss_report.dropped_rows += num;
+            }
+        }
+        notes.sort();
+        loss_report.note = notes.join("; ");
+    }
+
+    // Optionally auto-populate Citation gaps from contributing
+    // documents. Only fills fields the caller left empty.
+    let citation = if spec.auto_citation {
+        derive_citation_from_documents(client, &contributing_contexts, spec.citation.clone()).await?
+    } else {
+        spec.citation.clone()
+    };
+
     let mut manifest = ReleaseManifest {
         release_id: spec.release_id.clone(),
         // created_at is *not* part of the canonical hash — see
@@ -127,8 +169,8 @@ pub async fn build_release(
         transformations: transforms,
         statement_checksums: checksums,
         policy_report,
-        loss_report: LossReport::default(),
-        citation: spec.citation.clone(),
+        loss_report,
+        citation,
         manifest_sha256: String::new(),
     };
 
@@ -137,6 +179,91 @@ pub async fn build_release(
     h.update(&canonical);
     manifest.manifest_sha256 = hex::encode(h.finalize());
     Ok(manifest)
+}
+
+/// Auto-populate gaps in a [`Citation`] from the contributing
+/// documents. Reads `donto_document.creators` (JSONB array of
+/// strings or `{name: …}` objects) and `source_date` (JSONB,
+/// expected to contain `year` or an RFC-3339 timestamp) to fill
+/// the manifest's `authors`/`year` if the caller left them empty.
+/// Non-empty caller fields are never overwritten.
+async fn derive_citation_from_documents(
+    client: &DontoClient,
+    contexts: &BTreeSet<String>,
+    base: Citation,
+) -> Result<Citation, ReleaseError> {
+    let mut citation = base;
+    if !citation.authors.is_empty() && citation.year.is_some() {
+        return Ok(citation);
+    }
+    if contexts.is_empty() {
+        return Ok(citation);
+    }
+    let ctx_vec: Vec<String> = contexts.iter().cloned().collect();
+    let conn = client
+        .pool()
+        .get()
+        .await
+        .map_err(|e| ReleaseError::Client(donto_client::Error::Pool(e)))?;
+    // donto_document.iri matches donto_statement.context for source-kind contexts;
+    // when they don't match (most non-source contexts), this just returns 0 rows.
+    let rows = conn
+        .query(
+            "select creators, source_date \
+             from donto_document \
+             where iri = any($1::text[])",
+            &[&ctx_vec],
+        )
+        .await
+        .map_err(|e| ReleaseError::Client(donto_client::Error::Postgres(e)))?;
+
+    let mut all_authors: Vec<String> = Vec::new();
+    let mut min_year: Option<i32> = None;
+    for r in rows {
+        let creators: serde_json::Value = r.try_get(0).unwrap_or(serde_json::json!([]));
+        let source_date: Option<serde_json::Value> = r.try_get(1).ok();
+        if let serde_json::Value::Array(items) = creators {
+            for item in items {
+                let name = match item {
+                    serde_json::Value::String(s) => Some(s),
+                    serde_json::Value::Object(o) => o
+                        .get("name")
+                        .and_then(|v| v.as_str())
+                        .map(String::from),
+                    _ => None,
+                };
+                if let Some(n) = name {
+                    if !n.is_empty() && !all_authors.contains(&n) {
+                        all_authors.push(n);
+                    }
+                }
+            }
+        }
+        if let Some(sd) = source_date {
+            // Accept either {"year": 2026} or a ISO-8601 string.
+            let year = sd
+                .get("year")
+                .and_then(|v| v.as_i64())
+                .map(|v| v as i32)
+                .or_else(|| {
+                    sd.as_str()
+                        .and_then(|s| s.get(0..4))
+                        .and_then(|s| s.parse::<i32>().ok())
+                });
+            if let Some(y) = year {
+                min_year = Some(min_year.map_or(y, |m| m.min(y)));
+            }
+        }
+    }
+
+    if citation.authors.is_empty() && !all_authors.is_empty() {
+        all_authors.sort();
+        citation.authors = all_authors;
+    }
+    if citation.year.is_none() {
+        citation.year = min_year;
+    }
+    Ok(citation)
 }
 
 /// Canonical hash of a statement. Encodes the fields that define

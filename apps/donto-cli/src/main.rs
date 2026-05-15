@@ -583,6 +583,40 @@ enum AnalyzeCmd {
         alert_sink: Option<String>,
     },
 
+    /// Bucket reviewer decisions and emit warnings on high reject rates.
+    ///
+    /// Aggregates donto_review_decision rows by
+    /// (review_context, reviewer_id) over the window. Buckets with
+    /// reject_rate >= --warn-reject-rate and >=5 decisions become a
+    /// warning finding under target_kind='review_context'. Calibrates
+    /// extractor confidence against human review per PRD M5.
+    ///
+    /// Examples:
+    ///   donto analyze reviewer-acceptance
+    ///   donto analyze reviewer-acceptance --window-hours 168
+    ///   donto analyze reviewer-acceptance --warn-reject-rate 0.5 --alert-sink stdout
+    #[command(verbatim_doc_comment)]
+    ReviewerAcceptance {
+        /// Trailing window size in hours (ending now). Ignored if --start/--end given.
+        #[arg(long, default_value_t = 24, value_name = "HOURS")]
+        window_hours: u64,
+        #[arg(long, value_name = "ISO")]
+        start: Option<String>,
+        #[arg(long, value_name = "ISO")]
+        end: Option<String>,
+        #[arg(
+            long,
+            default_value = "donto:detector/reviewer-acceptance/v1",
+            value_name = "IRI"
+        )]
+        detector_iri: String,
+        /// Bucket warn threshold: reject_rate ≥ this AND total ≥ 5 → warning.
+        #[arg(long, default_value_t = 0.4, value_name = "F")]
+        warn_reject_rate: f64,
+        #[arg(long, env = "DONTO_ALERT_SINK", value_name = "SPEC")]
+        alert_sink: Option<String>,
+    },
+
     /// Check that all known detectors have run recently.
     ///
     /// Reads the most-recent `_self` finding per detector_iri. Exits non-zero
