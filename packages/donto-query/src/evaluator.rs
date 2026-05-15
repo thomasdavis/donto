@@ -44,8 +44,24 @@ pub enum EvalError {
 /// A single solution: variable name → bound value (term).
 pub type Bindings = BTreeMap<String, Term>;
 
+/// One evidence record attached to a result row when the query
+/// requests `WITH evidence = full | redacted_if_required`. Minimal
+/// surface for now: enough metadata to cite the source without
+/// pulling the entire source row.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct EvalRow(pub Bindings);
+pub struct EvidenceRow {
+    pub link_type: String,
+    pub target_document_iri: Option<String>,
+    pub target_statement_id: Option<Uuid>,
+    pub confidence: Option<f64>,
+}
+
+/// A query result row. `.0` is the variable bindings (unchanged
+/// shape from earlier DontoQL releases); `.1` is the evidence
+/// attached when the query carried a `WITH evidence` clause. With
+/// no `WITH evidence` clause, `.1` is an empty Vec.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EvalRow(pub Bindings, #[serde(default)] pub Vec<EvidenceRow>);
 
 pub async fn evaluate(client: &DontoClient, q: &Query) -> Result<Vec<EvalRow>, EvalError> {
     if q.patterns.is_empty() {
@@ -76,10 +92,10 @@ pub async fn evaluate(client: &DontoClient, q: &Query) -> Result<Vec<EvalRow>, E
             None
         };
 
-    // WITH evidence is recorded but the row shape today is Bindings
-    // only — evidence is not yet attached. Parse, then carry on; this
-    // is a future-shape directive, not a filter.
-    let _ = q.evidence_shape;
+    // WITH evidence — captured to drive result-row population
+    // below. Always-empty for `none` (default); populated below for
+    // `full` and `redacted_if_required`.
+    let evidence_mode = q.evidence_shape;
 
     let polarity = q.polarity;
     let scope = q.scope.clone();
@@ -220,12 +236,15 @@ pub async fn evaluate(client: &DontoClient, q: &Query) -> Result<Vec<EvalRow>, E
         });
     }
 
-    // PROJECT.
-    let rows: Vec<EvalRow> = current
+    // PROJECT + evidence attachment. Evidence is loaded *after*
+    // projection so that paged result sets pay the evidence query
+    // cost only for rows that survive ORDER BY / FILTER. (Limit is
+    // applied after — see below.)
+    let projected: Vec<(Bindings, Option<Uuid>)> = current
         .into_iter()
-        .map(|(env, _id)| {
+        .map(|(env, id)| {
             if q.project.is_empty() {
-                EvalRow(env)
+                (env, id)
             } else {
                 let mut out = Bindings::new();
                 for v in &q.project {
@@ -233,15 +252,92 @@ pub async fn evaluate(client: &DontoClient, q: &Query) -> Result<Vec<EvalRow>, E
                         out.insert(v.clone(), t.clone());
                     }
                 }
-                EvalRow(out)
+                (out, id)
             }
         })
         .collect();
 
-    // OFFSET / LIMIT.
+    // OFFSET / LIMIT — apply before loading evidence so we don't
+    // round-trip for rows the caller won't see.
     let off = q.offset.unwrap_or(0) as usize;
-    let lim = q.limit.unwrap_or(rows.len() as u64) as usize;
-    Ok(rows.into_iter().skip(off).take(lim).collect())
+    let lim = q.limit.unwrap_or(projected.len() as u64) as usize;
+    let windowed: Vec<(Bindings, Option<Uuid>)> = projected
+        .into_iter()
+        .skip(off)
+        .take(lim)
+        .collect();
+
+    let evidence_map = match evidence_mode {
+        EvidenceShape::None => HashMap::new(),
+        EvidenceShape::Full | EvidenceShape::RedactedIfRequired => {
+            load_evidence_for_rows(client, &windowed, evidence_mode, q.policy_allows.as_deref())
+                .await?
+        }
+    };
+
+    Ok(windowed
+        .into_iter()
+        .map(|(env, id)| {
+            let ev = id
+                .and_then(|i| evidence_map.get(&i).cloned())
+                .unwrap_or_default();
+            EvalRow(env, ev)
+        })
+        .collect())
+}
+
+/// Load evidence rows for each binding's statement_id. For
+/// `RedactedIfRequired`, drop rows whose policy denies
+/// `view_anchor_location`; for `Full`, return them all.
+async fn load_evidence_for_rows(
+    client: &DontoClient,
+    rows: &[(Bindings, Option<Uuid>)],
+    mode: EvidenceShape,
+    _policy_action: Option<&str>,
+) -> Result<HashMap<Uuid, Vec<EvidenceRow>>, EvalError> {
+    let ids: Vec<Uuid> = rows.iter().filter_map(|(_, id)| *id).collect();
+    if ids.is_empty() {
+        return Ok(HashMap::new());
+    }
+    let conn = client
+        .pool()
+        .get()
+        .await
+        .map_err(|e| EvalError::Client(donto_client::Error::Pool(e)))?;
+    let redacted = matches!(mode, EvidenceShape::RedactedIfRequired);
+    let sql = if redacted {
+        // Hide rows whose source-policy denies view_anchor_location.
+        "select el.statement_id, el.link_type, d.iri, el.target_statement_id, el.confidence \
+         from donto_evidence_link el \
+         left join donto_document d on d.document_id = el.target_document_id \
+         left join donto_policy_capsule p on p.policy_iri = d.policy_id \
+         where el.statement_id = any($1::uuid[]) \
+           and upper(el.tx_time) is null \
+           and (p.policy_iri is null \
+                or p.revocation_status <> 'active' \
+                or coalesce((p.allowed_actions->>'view_anchor_location')::boolean, false) = true)"
+    } else {
+        "select el.statement_id, el.link_type, d.iri, el.target_statement_id, el.confidence \
+         from donto_evidence_link el \
+         left join donto_document d on d.document_id = el.target_document_id \
+         where el.statement_id = any($1::uuid[]) \
+           and upper(el.tx_time) is null"
+    };
+    let pg_rows = conn
+        .query(sql, &[&ids])
+        .await
+        .map_err(|e| EvalError::Client(donto_client::Error::Postgres(e)))?;
+    let mut out: HashMap<Uuid, Vec<EvidenceRow>> = HashMap::new();
+    for r in pg_rows {
+        let stmt_id: Uuid = r.get(0);
+        out.entry(stmt_id).or_default().push(EvidenceRow {
+            link_type: r.get(1),
+            target_document_iri: r.try_get::<_, Option<String>>(2).ok().flatten(),
+            target_statement_id: r.try_get::<_, Option<Uuid>>(3).ok().flatten(),
+            confidence: r.try_get::<_, Option<f64>>(4).ok().flatten(),
+        });
+    }
+    Ok(out)
 }
 
 /// Build a `statement_id -> contradiction_pressure` map by calling

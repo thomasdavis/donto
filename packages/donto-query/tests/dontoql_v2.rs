@@ -678,9 +678,9 @@ async fn order_by_contradiction_pressure_orders_attacked_statements_first() {
     cleanup(&c, &ctx).await;
 }
 
-// WITH evidence is non-fatal — it's recorded but doesn't change row shape today.
+// WITH evidence — attaches evidence_link rows to the result.
 #[tokio::test]
-async fn with_evidence_clause_does_not_error() {
+async fn with_evidence_none_returns_empty_evidence_vec() {
     let Some((c, ctx, _)) = boot().await else {
         eprintln!("skip: no DB");
         return;
@@ -691,12 +691,152 @@ async fn with_evidence_clause_does_not_error() {
     .await
     .unwrap();
     let q = parse_dontoql(&format!(
-        "MATCH ?s ?p ?o SCOPE include {ctx} WITH evidence = redacted_if_required",
+        "MATCH ?s ?p ?o SCOPE include {ctx} WITH evidence = none",
         ctx = ctx
     ))
     .unwrap();
     let rows = evaluate(&c, &q).await.unwrap();
     assert_eq!(rows.len(), 1);
+    assert!(
+        rows[0].1.is_empty(),
+        "WITH evidence = none should leave evidence empty"
+    );
+    cleanup(&c, &ctx).await;
+}
 
+#[tokio::test]
+async fn with_evidence_full_attaches_evidence_link_rows() {
+    let Some((c, ctx, _)) = boot().await else {
+        eprintln!("skip: no DB");
+        return;
+    };
+    let stmt = c
+        .assert(
+            &StatementInput::new("ex:a", "ex:p", Object::iri("ex:b")).with_context(&ctx),
+        )
+        .await
+        .unwrap();
+    let conn = c.pool().get().await.unwrap();
+    let doc_iri = format!("{ctx}/doc/citable", ctx = ctx);
+    let doc_id: uuid::Uuid = conn
+        .query_one(
+            "insert into donto_document (iri, media_type, status) \
+             values ($1, 'text/plain', 'registered') returning document_id",
+            &[&doc_iri],
+        )
+        .await
+        .unwrap()
+        .get(0);
+    conn.execute(
+        "insert into donto_evidence_link \
+            (statement_id, link_type, target_document_id, confidence) \
+         values ($1, 'extracted_from', $2, 0.9)",
+        &[&stmt, &doc_id],
+    )
+    .await
+    .unwrap();
+
+    let q = parse_dontoql(&format!(
+        "MATCH ?s ?p ?o SCOPE include {ctx} WITH evidence = full",
+        ctx = ctx
+    ))
+    .unwrap();
+    let rows = evaluate(&c, &q).await.unwrap();
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].1.len(), 1, "one evidence link attached");
+    assert_eq!(rows[0].1[0].link_type, "extracted_from");
+    assert_eq!(rows[0].1[0].target_document_iri.as_deref(), Some(doc_iri.as_str()));
+    assert!((rows[0].1[0].confidence.unwrap() - 0.9).abs() < 1e-9);
+
+    let _ = conn
+        .execute(
+            "delete from donto_evidence_link where statement_id = $1",
+            &[&stmt],
+        )
+        .await;
+    let _ = conn
+        .execute("delete from donto_document where document_id = $1", &[&doc_id])
+        .await;
+    cleanup(&c, &ctx).await;
+}
+
+#[tokio::test]
+async fn with_evidence_redacted_drops_evidence_when_policy_denies() {
+    let Some((c, ctx, _)) = boot().await else {
+        eprintln!("skip: no DB");
+        return;
+    };
+    let stmt = c
+        .assert(
+            &StatementInput::new("ex:a", "ex:p", Object::iri("ex:b")).with_context(&ctx),
+        )
+        .await
+        .unwrap();
+    let conn = c.pool().get().await.unwrap();
+    let policy_iri = format!("{ctx}/policy/no-anchor", ctx = ctx);
+    conn.execute(
+        "insert into donto_policy_capsule (policy_iri, policy_kind, allowed_actions, created_by) \
+         values ($1, 'private', \
+                 jsonb_build_object('view_anchor_location', false), \
+                 'test')",
+        &[&policy_iri],
+    )
+    .await
+    .unwrap();
+    let doc_iri = format!("{ctx}/doc/restricted", ctx = ctx);
+    let doc_id: uuid::Uuid = conn
+        .query_one(
+            "insert into donto_document (iri, media_type, policy_id, status) \
+             values ($1, 'text/plain', $2, 'registered') returning document_id",
+            &[&doc_iri, &policy_iri],
+        )
+        .await
+        .unwrap()
+        .get(0);
+    conn.execute(
+        "insert into donto_evidence_link \
+            (statement_id, link_type, target_document_id) \
+         values ($1, 'extracted_from', $2)",
+        &[&stmt, &doc_id],
+    )
+    .await
+    .unwrap();
+
+    let q = parse_dontoql(&format!(
+        "MATCH ?s ?p ?o SCOPE include {ctx} WITH evidence = redacted_if_required",
+        ctx = ctx
+    ))
+    .unwrap();
+    let rows = evaluate(&c, &q).await.unwrap();
+    assert_eq!(rows.len(), 1, "the row itself is not dropped by WITH evidence");
+    assert!(
+        rows[0].1.is_empty(),
+        "evidence row is dropped because policy denies view_anchor_location"
+    );
+
+    // Now flip the policy to allow → evidence reappears.
+    conn.execute(
+        "update donto_policy_capsule set \
+           allowed_actions = jsonb_build_object('view_anchor_location', true) \
+         where policy_iri = $1",
+        &[&policy_iri],
+    )
+    .await
+    .unwrap();
+    let rows2 = evaluate(&c, &q).await.unwrap();
+    assert_eq!(rows2[0].1.len(), 1, "evidence reappears once policy allows");
+
+    let _ = conn
+        .execute(
+            "delete from donto_evidence_link where statement_id = $1",
+            &[&stmt],
+        )
+        .await;
+    let _ = conn
+        .execute("delete from donto_document where document_id = $1", &[&doc_id])
+        .await;
+    let _ = conn
+        .execute("delete from donto_policy_capsule where policy_iri = $1", &[&policy_iri])
+        .await;
     cleanup(&c, &ctx).await;
 }
