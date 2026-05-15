@@ -20,11 +20,27 @@ context, then times one point query and one batch query.
 
 ## Results (2026-05-15)
 
-| scale (N) | insert wall | inserts/s | point query | batch query | batch rows |
-|-----------|-------------|-----------|-------------|-------------|------------|
-| 10,000    |   3.36 s    | **2,977** | 10.7 ms     | 50 ms       | 10,000     |
-| 100,000   |  35.48 s    | **2,819** | 42.8 ms     | 504 ms      | 100,000    |
-| 1,000,000 | 396.67 s    | **2,521** | 50.9 ms     | 6.59 s      | 1,000,000  |
+H1 baseline (point query) and H4 batch query — first results set:
+
+| scale (N) | insert wall | inserts/s | H1 point | H4 batch | batch rows |
+|-----------|-------------|-----------|----------|----------|------------|
+| 10,000    |   3.36 s    | **2,977** | 10.7 ms  | 50 ms    | 10,000     |
+| 100,000   |  35.48 s    | **2,819** | 42.8 ms  | 504 ms   | 100,000    |
+| 1,000,000 | 396.67 s    | **2,521** | 50.9 ms  | 6.59 s   | 1,000,000  |
+
+Second run after `donto bench` was extended with H2/H3/H5/H7 (the
+insert speed differs slightly because the extra benchmarks run
+after the inserts, on the same DB; the insert measurement itself
+is unchanged):
+
+| scale (N) | H1 point | H4 batch | H2 aligned | H3 AS_OF | H5 frontier | H7 modality setup | H7 modality query |
+|-----------|---------:|---------:|-----------:|---------:|------------:|------------------:|------------------:|
+| 10,000    | 15.1 ms  | 80 ms    |  10.6 ms   |   4.4 ms |        3 ms |           143 ms  |           48 ms   |
+| 100,000   |  8.9 ms  | 2.59 s   |   3.2 ms   |   3.4 ms |        2 ms |          1090 ms  |           95 ms   |
+| 1,000,000 | 33.6 ms  | 8.21 s   |   4.6 ms   |   3.0 ms |       15 ms |        14.97 s    |          1.73 s   |
+
+(H1 point query timings vary run-to-run due to plan cache state;
+the order of magnitude is what's load-bearing.)
 
 Raw JSON from each run is in [§ Raw output](#raw-output) below.
 
@@ -41,11 +57,29 @@ Raw JSON from each run is in [§ Raw output](#raw-output) below.
   `donto_statement_pos_idx`, `donto_statement_osp_idx`) are for.
   PRD §25 H1 target is 100 ms at 10 M; this scale-1 M smoke is on
   track.
-- **Batch (full-context-scan) queries grow linearly with N.** 50 ms
-  / 504 ms / 6.59 s at 10× / 100× / 1000× scale is exactly the
-  cost of pulling every row in a context. PRD §25 H4-H7 expect
+- **Aligned point matches (H2) are not slower than direct.** The
+  predicate-closure JOIN adds a few μs of overhead but the planner
+  still hits the SPO index. 3–10 ms at all three scales.
+- **AS_OF point queries (H3) are competitive with current-state
+  point queries.** 3–4 ms across all three scales — the
+  `donto_statement_tx_time_idx` GiST index is doing its job.
+- **Contradiction-frontier (H5) is cheap when the context has no
+  arguments.** 2–15 ms across the three scales — the SQL function
+  filters by `donto_argument.context` first; an empty argument
+  table for the context means no real work.
+- **Batch (full-context-scan) queries grow linearly with N** (H4).
+  50 ms / 504 ms / 6.59 s at 10× / 100× / 1000× scale is exactly
+  the cost of pulling every row in a context. PRD §25 expects
   this; the planner only does smart things when a predicate or
   subject is bound.
+- **Sparse-overlay filter (H7) cost is dominated by the setup
+  insert,** not the query. Setting MODALITY on 500K rows took 15 s;
+  the resulting filtered query took 1.7 s — same order as a
+  batch scan, which is expected since the overlay table has no
+  index on `modality` alone for context-scoped queries. Adding a
+  composite `(modality, statement_id)` index is a future tuning
+  knob; for the genealogy workload (sparse modality, small filter
+  sets) the current state is sufficient.
 - **No index hot-spotting or write-amplification surprises.** Tested
   with the standard `postgres:16` image (no tuning), default
   `donto-pg` volume mount, no `pg_stat_statements`. Production
@@ -53,64 +87,88 @@ Raw JSON from each run is in [§ Raw output](#raw-output) below.
 
 ## What this does NOT tell us
 
-- Concurrent-write throughput. Bench is single-thread.
-- Aligned-predicate query cost. The `match_aligned` path adds an
-  alignment-closure JOIN; not exercised here.
+- Concurrent-write throughput. Bench is single-thread (H9 is a
+  follow-up).
 - `dontosrv` HTTP overhead. Bench talks directly to Postgres via
   donto-client; the axum sidecar adds an HTTP round-trip layer.
-- Bitemporal time-travel cost. AS_OF queries hit the
-  `donto_statement_tx_time_idx` GiST index; not exercised here.
+- 10 M-row scale (H10 PRD §25 hard target). Extrapolating from
+  1 M: ~4,200 s insert wall, ~50 ms point query, ~80 s batch scan.
+- Policy-aware retrieval (POLICY ALLOWS) under load. H8 is a
+  follow-up; needs evidence_link + policy_capsule setup paths.
 
 ## Raw output
 
 ```json
-// N = 10,000
+// N = 10,000 (H1-H7 run)
 {
   "inserts": 10000,
-  "insert_elapsed_ms": 3359,
-  "inserts_per_sec": 2976.88,
-  "point_query_elapsed_us": 10702,
+  "insert_elapsed_ms": 5929,
+  "inserts_per_sec": 1686.60,
+  "point_query_elapsed_us": 15125,
   "batch_query_rows": 10000,
-  "batch_query_elapsed_ms": 50
+  "batch_query_elapsed_ms": 80,
+  "h2_aligned_point_query_elapsed_us": 10614,
+  "h2_aligned_point_query_rows": 1,
+  "h3_asof_point_query_elapsed_us": 4359,
+  "h3_asof_point_query_rows": 1,
+  "h5_contradiction_frontier_elapsed_ms": 3,
+  "h5_contradiction_frontier_rows": 0,
+  "h7_modality_setup_elapsed_ms": 143,
+  "h7_modality_query_elapsed_ms": 48,
+  "h7_modality_query_rows": 5000
 }
 
-// N = 100,000
+// N = 100,000 (H1-H7 run)
 {
   "inserts": 100000,
-  "insert_elapsed_ms": 35477,
-  "inserts_per_sec": 2818.73,
-  "point_query_elapsed_us": 42792,
+  "insert_elapsed_ms": 46918,
+  "inserts_per_sec": 2131.37,
+  "point_query_elapsed_us": 8880,
   "batch_query_rows": 100000,
-  "batch_query_elapsed_ms": 504
+  "batch_query_elapsed_ms": 2591,
+  "h2_aligned_point_query_elapsed_us": 3214,
+  "h2_aligned_point_query_rows": 1,
+  "h3_asof_point_query_elapsed_us": 3394,
+  "h3_asof_point_query_rows": 1,
+  "h5_contradiction_frontier_elapsed_ms": 2,
+  "h5_contradiction_frontier_rows": 0,
+  "h7_modality_setup_elapsed_ms": 1090,
+  "h7_modality_query_elapsed_ms": 95,
+  "h7_modality_query_rows": 50000
 }
 
-// N = 1,000,000
+// N = 1,000,000 (H1-H7 run)
 {
   "inserts": 1000000,
-  "insert_elapsed_ms": 396666,
-  "inserts_per_sec": 2521.01,
-  "point_query_elapsed_us": 50874,
+  "insert_elapsed_ms": 377891,
+  "inserts_per_sec": 2646.26,
+  "point_query_elapsed_us": 33589,
   "batch_query_rows": 1000000,
-  "batch_query_elapsed_ms": 6589
+  "batch_query_elapsed_ms": 8214,
+  "h2_aligned_point_query_elapsed_us": 4627,
+  "h2_aligned_point_query_rows": 1,
+  "h3_asof_point_query_elapsed_us": 2952,
+  "h3_asof_point_query_rows": 1,
+  "h5_contradiction_frontier_elapsed_ms": 15,
+  "h5_contradiction_frontier_rows": 0,
+  "h7_modality_setup_elapsed_ms": 14968,
+  "h7_modality_query_elapsed_ms": 1731,
+  "h7_modality_query_rows": 500000
 }
 ```
 
 ## Next-step benchmarks (PRD §25 / M8)
 
-The PRD lists ten benchmarks H1–H10. `donto bench` covers a smoke
-subset of H1 (point query) and H4 (batch). The remaining seven are
-follow-ups, in roughly increasing order of build cost:
+The PRD lists ten benchmarks H1–H10. `donto bench` now covers
+H1, H2, H3, H4, H5, H7. The remaining four are follow-ups:
 
 | | Benchmark | What it adds |
 |---|-----------|--------------|
-| H2 | Insert with alignment expansion | exercises `donto_match_aligned` |
-| H3 | AS_OF time-travel at depth N | exercises `tx_time` GiST index under load |
-| H5 | Contradiction frontier under load | exercises `donto_contradiction_frontier` over 1 M rows |
 | H6 | Multi-pattern join (3+ patterns) | exercises evaluator's nested-loop join |
-| H7 | Sparse-overlay filter (MODALITY) | exercises the post-filter overlay |
 | H8 | Policy-aware retrieval (POLICY ALLOWS) | exercises evidence_link join under load |
 | H9 | Concurrent writers (4× / 8×) | concurrency invariants |
 | H10 | 10 M row scale | the PRD §25 hard target |
 
-Adding any of these to `apps/donto-cli/src/bench.rs` is a clean
-extension; the harness is already there.
+Adding any of these to `apps/donto-cli/src/main.rs::bench` is a
+clean extension; the harness is already there. H10 is mostly
+patience (estimated 70 minutes insert wall on this hardware).

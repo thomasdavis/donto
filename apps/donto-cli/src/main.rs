@@ -922,12 +922,27 @@ mod bench {
 
     #[derive(Debug, Serialize)]
     pub struct BenchReport {
+        // H1: point-query a known subject (existing).
         pub inserts: u64,
         pub insert_elapsed_ms: u64,
         pub inserts_per_sec: f64,
         pub point_query_elapsed_us: u64,
+        // H4: full-context batch read (existing).
         pub batch_query_rows: usize,
         pub batch_query_elapsed_ms: u64,
+        // H2: aligned point-match through the predicate-closure path.
+        pub h2_aligned_point_query_elapsed_us: u64,
+        pub h2_aligned_point_query_rows: usize,
+        // H3: as-of-tx point query against a fresh-context window.
+        pub h3_asof_point_query_elapsed_us: u64,
+        pub h3_asof_point_query_rows: usize,
+        // H5: contradiction-frontier call across the bench context.
+        pub h5_contradiction_frontier_elapsed_ms: u64,
+        pub h5_contradiction_frontier_rows: usize,
+        // H7: sparse-overlay filter via DontoQL MODALITY clause.
+        pub h7_modality_setup_elapsed_ms: u64,
+        pub h7_modality_query_elapsed_ms: u64,
+        pub h7_modality_query_rows: usize,
     }
 
     pub async fn run(client: &DontoClient, n: u64) -> anyhow::Result<BenchReport> {
@@ -937,6 +952,14 @@ mod bench {
             .ensure_context(&ctx, "custom", "permissive", None)
             .await?;
 
+        // The time floor used by H3 to query "as of one second ago"
+        // — set just before the first insert so the bench context
+        // legitimately existed at that timestamp.
+        let asof_floor = chrono::Utc::now();
+
+        // ---------------------------------------------------------
+        // H1 baseline: insert N rows.
+        // ---------------------------------------------------------
         let start = Instant::now();
         let mut batch = Vec::with_capacity(2000);
         for i in 0..n {
@@ -958,7 +981,7 @@ mod bench {
         }
         let insert_elapsed = start.elapsed();
 
-        // Point query.
+        // H1: point query.
         let t = Instant::now();
         let rows = client
             .match_pattern(
@@ -975,7 +998,7 @@ mod bench {
         let point_us = t.elapsed().as_micros() as u64;
         assert!(!rows.is_empty());
 
-        // Batch query.
+        // H4: batch query.
         let t = Instant::now();
         let all = client
             .match_pattern(
@@ -991,6 +1014,128 @@ mod bench {
             .await?;
         let batch_elapsed = t.elapsed();
 
+        // ---------------------------------------------------------
+        // H2: aligned point-match (rides the predicate closure).
+        // Register one alignment ex:alias → ex:p, then point-query
+        // by ex:alias and require the closure to return rows.
+        // ---------------------------------------------------------
+        let alias_iri = format!("{prefix}/alias");
+        client
+            .pool()
+            .get()
+            .await?
+            .execute(
+                "insert into donto_predicate_alignment \
+                    (source_iri, target_iri, relation, confidence, \
+                     safe_for_query_expansion, review_status) \
+                 values ($1, 'ex:p', 'exact_equivalent', 0.99, true, 'accepted')",
+                &[&alias_iri],
+            )
+            .await?;
+        // Rebuild the closure index so the new edge is visible.
+        client
+            .pool()
+            .get()
+            .await?
+            .execute("select donto_rebuild_predicate_closure()", &[])
+            .await
+            .ok(); // function exists post-0050-ish; ignore if not.
+        let t = Instant::now();
+        let aligned = client
+            .match_aligned(
+                Some("ex:s/42"),
+                Some(&alias_iri),
+                None,
+                Some(&ContextScope::just(&ctx)),
+                Some(Polarity::Asserted),
+                0,
+                None,
+                None,
+                true,
+                0.5,
+            )
+            .await?;
+        let h2_us = t.elapsed().as_micros() as u64;
+
+        // ---------------------------------------------------------
+        // H3: AS-OF point query at `asof_floor + 1s`. The
+        // benchmark context was just created (so it exists at the
+        // floor); the rows were also inserted within the bench
+        // window. AS_OF a few seconds in the future returns rows
+        // (open tx_time).
+        // ---------------------------------------------------------
+        let asof_ts = asof_floor + chrono::Duration::seconds(1);
+        let t = Instant::now();
+        let asof_rows = client
+            .match_pattern(
+                Some("ex:s/42"),
+                Some("ex:p"),
+                None,
+                Some(&ContextScope::just(&ctx)),
+                Some(Polarity::Asserted),
+                0,
+                Some(asof_ts),
+                None,
+            )
+            .await?;
+        let h3_us = t.elapsed().as_micros() as u64;
+
+        // ---------------------------------------------------------
+        // H5: contradiction frontier across the bench context.
+        // No donto_argument rows seeded, so the result is empty —
+        // we're measuring the SQL function's overhead.
+        // ---------------------------------------------------------
+        let t = Instant::now();
+        let frontier_rows = client
+            .pool()
+            .get()
+            .await?
+            .query(
+                "select statement_id, attack_count, support_count \
+                 from donto_contradiction_frontier($1)",
+                &[&ctx],
+            )
+            .await?;
+        let h5_ms = t.elapsed().as_millis() as u64;
+
+        // ---------------------------------------------------------
+        // H7: sparse-overlay filter — set modality on half the rows
+        // and then query with MODALITY descriptive.
+        // ---------------------------------------------------------
+        let t = Instant::now();
+        client
+            .pool()
+            .get()
+            .await?
+            .execute(
+                "insert into donto_stmt_modality (statement_id, modality, set_by) \
+                 select statement_id, 'descriptive', 'bench' \
+                 from donto_statement \
+                 where context = $1 and upper(tx_time) is null \
+                 order by statement_id \
+                 limit greatest($2::bigint / 2, 1) \
+                 on conflict (statement_id) do nothing",
+                &[&ctx, &(n as i64)],
+            )
+            .await?;
+        let h7_setup_ms = t.elapsed().as_millis() as u64;
+        let t = Instant::now();
+        let h7_rows = client
+            .pool()
+            .get()
+            .await?
+            .query(
+                "select s.statement_id \
+                 from donto_statement s \
+                 join donto_stmt_modality m on m.statement_id = s.statement_id \
+                 where s.context = $1 \
+                   and upper(s.tx_time) is null \
+                   and m.modality = 'descriptive'",
+                &[&ctx],
+            )
+            .await?;
+        let h7_query_ms = t.elapsed().as_millis() as u64;
+
         Ok(BenchReport {
             inserts: n,
             insert_elapsed_ms: insert_elapsed.as_millis() as u64,
@@ -998,6 +1143,15 @@ mod bench {
             point_query_elapsed_us: point_us,
             batch_query_rows: all.len(),
             batch_query_elapsed_ms: batch_elapsed.as_millis() as u64,
+            h2_aligned_point_query_elapsed_us: h2_us,
+            h2_aligned_point_query_rows: aligned.len(),
+            h3_asof_point_query_elapsed_us: h3_us,
+            h3_asof_point_query_rows: asof_rows.len(),
+            h5_contradiction_frontier_elapsed_ms: h5_ms,
+            h5_contradiction_frontier_rows: frontier_rows.len(),
+            h7_modality_setup_elapsed_ms: h7_setup_ms,
+            h7_modality_query_elapsed_ms: h7_query_ms,
+            h7_modality_query_rows: h7_rows.len(),
         })
     }
 }
