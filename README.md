@@ -257,10 +257,10 @@ language. Every PRD §11 v2 clause executes end-to-end against
 existing storage:
 
 ```text
-MATCH ?stmt ex:about ex:annie-davis,
+MATCH ?stmt ex:about ex:alice,
       ?stmt ex:predicate ex:born_in,
       ?stmt ex:object ?place
-SCOPE include ctx:genes/annie-davis ancestors
+SCOPE include ctx:project/alice ancestors
 PRESET curated                            # E2+ only
 POLARITY asserted
 TRANSACTION_TIME AS_OF "2026-04-01T00:00:00Z"
@@ -738,65 +738,6 @@ for Next.js and other JS/TS applications.
 
 ---
 
-## First user in production — a snapshot from one downstream consumer
-
-> donto is a database project. "genes" is **not** part of donto — it's
-> a **separate research workspace** (a North-Queensland genealogy /
-> oral-history corpus, served at `genes.apexpots.com`) that happens to
-> be donto's first heavy user. We include its numbers here only as a
-> reference point for what a real-world deployment looks like at
-> ~38 M-statement scale.
-
-As of 2026-05-15 the genes deployment holds **38,083,220 statements
-across 19,232 contexts**, with **919,938 distinct predicates** and
-**4,013,120 distinct subjects**. That single workflow exercises
-roughly half of donto's feature surface, and the unused half is
-informative about what donto built that hasn't yet been demanded by
-this kind of consumer.
-
-| Bucket | Coverage in this consumer's data |
-|--------|----------|
-| **Heavy use** (>10K rows or substantive functional use) | statements, contexts, predicate registry (implicit), evidence chain (8K documents, 16K revisions, 1.6K evidence_links), predicate alignment (4.5K closure edges driving `donto shadow`), argument graph (2.4K rebut/support edges), proof obligations (1K), snapshots (31), maturity ladder E0–E4, text-search trigram, frame-type registry, bench harness |
-| **Token use** (proof the wiring is alive) | bitemporal retraction (273 rows; 0.0007%), `POLARITY=negated` (795 rows), absent (31), unknown (31), identity hypotheses (3), entity symbols (103), content_regions (48), annotations (280) |
-| **Shipped by donto but unused by this consumer** | `donto_stmt_modality`, `donto_stmt_extraction_level`, `donto_access_assignment`, `donto_attestation`, `donto_event_log`, `donto_review_decision`, `donto_claim_frame`, `donto_statement_context` (multi-context), `donto_dataset_release`, `donto_release_artifact`, schema-lens membership, E5 (certified) maturity tier, `review_status='accepted'` alignment edges (0 / 4,501) |
-
-**Maturity distribution at 38M scale (this consumer's data):**
-
-| | Rows | Share |
-|---|------:|------:|
-| E0 raw | 20,982,497 | 55% |
-| E1 candidate | 14,837,033 | 39% |
-| E2 evidence-supported | 45,881 | 0.12% |
-| E3 reviewed | 222,354 | 0.58% |
-| E4 corroborated | 1,995,182 | 5.2% |
-| E5 certified | 0 | 0% |
-
-**Reading these numbers.** The half this consumer uses is the
-write-heavy *contradiction-aware research log* half — ingest, dedupe,
-alignment closure, contradiction surfacing. 919 K minted predicates
-is exactly the predicate-explosion problem the alignment layer
-solves; 2,244 `rebuts` edges vs 180 `supports` proves the argument
-graph is doing real work. The half this consumer doesn't touch is
-the *governance + curation* half donto also ships: Trust Kernel
-attestations, modality/extraction-level overlays, review workbench,
-n-ary claim frames, signed releases. Those are substrate-ready and
-waiting — they're what the PRD's "evidence operating system for
-contested knowledge" pitch needs for the *next* class of downstream
-user (medicine, law, language documentation).
-
-If you are evaluating donto for a similar deployment, three low-cost
-ways to widen utilisation without writing new donto code:
-
-1. Have your extraction pipeline populate `donto_stmt_modality` from
-   the model's own classification (descriptive / reconstructed /
-   inferred / …).
-2. Same for `donto_stmt_extraction_level` — the extraction kernel
-   already knows whether a claim is `quoted` vs `model_hypothesis`.
-3. Drive a representative slice through `donto release pipeline` to
-   produce a signed, citable release artifact.
-
----
-
 ## Use cases
 
 donto is domain-agnostic. The same schema handles any domain where
@@ -830,7 +771,7 @@ apps/
                                   extract, ling, release, analyze, bench, …
   dontosrv/                  HTTP sidecar (44 endpoints)
   donto-tui/                 Go/Charm TUI: dashboard, firehose, explorer, charts
-  donto-api/                 FastAPI public API (genes.apexpots.com)
+  donto-api/                 FastAPI public-API skeleton
   docs/                      Astro Starlight documentation site
 
 packages/
@@ -891,13 +832,10 @@ turbo.json                   Turborepo pipeline config
 - [`docs/REVIEW-FINDINGS.md`](docs/REVIEW-FINDINGS.md) — **pre-production
   adversarial review** (18 findings, F-1 closed by `0123`).
 - [`docs/GENEALOGY-GUIDE.md`](docs/GENEALOGY-GUIDE.md) — **genealogy
-  workflow** for the live `genes.apexpots.com` use case.
+  workflow** — a worked example of how to apply donto to one
+  research domain.
 - [`docs/EXTRACTION-MAXIMALISM.md`](docs/EXTRACTION-MAXIMALISM.md) —
   vision doc for the multi-aperture exhaustive-extraction kernel.
-- [`docs/PRODUCTION.md`](docs/PRODUCTION.md) — production runbook for
-  `genes.apexpots.com`: topology, deploy, backups, ops.
-- [`docs/DEV.md`](docs/DEV.md) — developing on the box: SSH, workspace
-  layout, `dev`/`dep` commands, daily backup, gh CLI.
 - [`apps/docs`](apps/docs) — Starlight documentation site with migration
   reference, schema gap audit, and guides.
 - [`ANTHROPOLOGY_README.md`](ANTHROPOLOGY_README.md) — research
