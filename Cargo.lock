@@ -609,7 +609,54 @@ dependencies = [
 ]
 
 [[package]]
+name = "donto-ling-eaf"
+version = "0.0.1"
+dependencies = [
+ "anyhow",
+ "donto-client",
+ "quick-xml",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 1.0.69",
+ "tokio",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
+name = "donto-ling-lift"
+version = "0.0.1"
+dependencies = [
+ "anyhow",
+ "donto-client",
+ "quick-xml",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 1.0.69",
+ "tokio",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
 name = "donto-ling-ud"
+version = "0.0.1"
+dependencies = [
+ "anyhow",
+ "donto-client",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 1.0.69",
+ "tokio",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
+name = "donto-ling-unimorph"
 version = "0.0.1"
 dependencies = [
  "anyhow",

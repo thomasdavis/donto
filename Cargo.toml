@@ -5,7 +5,10 @@ members = [
     "packages/donto-query",
     "packages/donto-ingest",
     "packages/donto-ling-cldf",
+    "packages/donto-ling-eaf",
+    "packages/donto-ling-lift",
     "packages/donto-ling-ud",
+    "packages/donto-ling-unimorph",
     "packages/donto-migrate",
     "packages/donto-release",
     "packages/donto-analytics",
@@ -65,6 +68,7 @@ tracing        = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 rio_api        = "0.8"
 rio_turtle     = "0.8"
+quick-xml      = "0.36"
 clap           = { version = "4", features = ["derive", "env"] }
 postgres-types = { version = "0.2", features = ["derive", "with-chrono-0_4", "with-uuid-1", "with-serde_json-1"] }
 futures-util   = "0.3"

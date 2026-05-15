@@ -1,0 +1,26 @@
+[package]
+name        = "donto-ling-eaf"
+version     = { workspace = true }
+edition     = { workspace = true }
+rust-version = { workspace = true }
+license     = { workspace = true }
+description = "EAF (ELAN) importer — turn time-aligned multimodal annotation into donto quads with loss reports"
+repository  = { workspace = true }
+
+[dependencies]
+donto-client = { path = "../donto-client" }
+serde        = { workspace = true }
+serde_json   = { workspace = true }
+anyhow       = { workspace = true }
+thiserror    = { workspace = true }
+tracing      = { workspace = true }
+tokio        = { workspace = true }
+quick-xml    = { workspace = true }
+
+[dev-dependencies]
+tempfile     = { workspace = true }
+tokio        = { workspace = true, features = ["macros", "rt-multi-thread"] }
+uuid         = { workspace = true }
+
+[lints]
+workspace = true
