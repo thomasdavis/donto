@@ -1,0 +1,10 @@
+[Unit]
+Description=donto nightly analyze timer (03:30 UTC daily)
+
+[Timer]
+OnCalendar=*-*-* 03:30:00 UTC
+Persistent=true
+Unit=donto-analyze.service
+
+[Install]
+WantedBy=timers.target

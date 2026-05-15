@@ -1,0 +1,15 @@
+[Unit]
+Description=donto nightly analyze — paraconsistency + reviewer-acceptance
+After=network.target docker.service
+Wants=docker.service
+
+[Service]
+Type=oneshot
+User=root
+Environment=DONTO_DSN=postgres://donto:ier4wG7oETKMmXY16meC0TAv@127.0.0.1:5432/donto
+# Run both detectors. stdout JSON goes to journald; warnings
+# automatically land in donto_detector_finding via the analyzers.
+ExecStart=/usr/local/bin/donto analyze paraconsistency --window-hours 168
+ExecStart=/usr/local/bin/donto analyze reviewer-acceptance --window-hours 168
+StandardOutput=journal
+StandardError=journal
