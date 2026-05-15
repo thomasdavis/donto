@@ -37,40 +37,45 @@ would be the next refinement; it's a cosmetic change.
 
 ## Big rocks still on the floor
 
-### M5 Extraction Kernel — polish
+### M5 Extraction Kernel — policy gate landed
 
-Recent commits land the multi-aperture exhaustive extraction
-(`14da3c6`, vision in `bfc3966`) and the domain-dispatched kernel
-(`76ca770`). Per-domain decomposers exist; missing pieces are:
+`donto extract --policy-check` ships (commit `ef1e7b2`):
+pre-flight call to `donto_action_allowed('document', <source>,
+'derive_claims')` blocks the OpenRouter call when the source's
+policy denies derivation. M5 acceptance bullet 4 satisfied.
 
-- **Reviewer acceptance/rejection metrics** in
-  `donto-analytics`. The schema (`donto_detector_finding`) is there
-  from `0119`; the metric extractor isn't.
-- **Policy check before external model call.** Today `donto extract`
-  unconditionally calls OpenRouter. Wire `donto_action_allowed(...,
-  'derive_claims')` for the source before the LLM call.
+Smallest next step: **reviewer acceptance/rejection metrics in
+`donto-analytics`**. Schema is in place (`donto_detector_finding`
+from migration 0119); needs a metric extractor that computes
+reviewer agreement rates per extractor model and emits findings.
+~150 LOC + tests.
 
-Smallest next step: a `donto extract --dry-run --policy-check`
-flag that prints whether the source is allowed and exits without
-hitting OpenRouter. ~50 LOC.
+### M6 Language Pilot — first importer done, four to go
 
-### M6 Language Pilot — start the importers
+CLDF importer landed (`packages/donto-ling-cldf`, commit
+`1e2bf79`). Reads CLDF directory datasets, maps the four
+canonical tables to donto quads, reports loss for any other
+tables. 5 integration tests pass against a synthetic WALS-toy
+fixture. Smallest next step:
 
-The hardest milestone left. Needs five importers and 18
-language-specific frame-types. Smallest next step:
+- **Run CLDF importer against a real dataset.** Glottolog's
+  `glottolog-cldf` or a Lexibank dataset is the smoke test —
+  thousands of rows, hundreds of parameters. Verify the loss
+  report stays compact (i.e. our four canonical tables cover
+  most of the real-world surface).
+- **CoNLL-U importer next.** One word per line, columns are
+  fixed, dependency relations across tokens become argument
+  edges. Crate: `packages/donto-ling-ud`. Same crate shape as
+  donto-ling-cldf — Importer struct, ImportOptions, Report,
+  emit_* helpers. ~300 LOC + tests.
 
-- **Implement CLDF importer first.** CLDF is the most native
-  fit — it's already a table-of-tables design that maps cleanly to
-  `(s, p, o, context)` quads. Crate skeleton:
-  `packages/donto-ling-cldf` with one workflow: read CLDF
-  parameters table → ingest as `donto_predicate_alignment` rows;
-  read values table → ingest as `donto_statement` rows.
-- Acceptance: ingest the Glottolog small-CLDF dataset (a few
-  thousand languages, registry-only) end-to-end, no value rows.
-  ~300 LOC + 5 tests.
+After CoNLL-U: UniMorph, LIFT, EAF. Each is the same shape with
+a different parser front-end.
 
-The other four importers (CoNLL-U, UniMorph, LIFT, EAF) follow
-the same shape. Bundle is ~2 days of focused work each.
+The 18 language-specific frame types (PRD §13) are a separate
+side-quest — they're configuration of `donto_frame_type` rows,
+not Rust code. Could be a single migration `0124_ling_frames.sql`
+once the importers reveal which frames they actually emit.
 
 ### M7 Release Builder — past skeleton
 
@@ -87,35 +92,43 @@ Smallest next step: a `donto release --dry-run` command that
 prints the rows it would include and the policies that would
 block them, without touching `donto_release_manifest`. ~80 LOC.
 
-### M8 Scale and Calibration — extend the benchmark
+### M8 Scale and Calibration — H1-H9 done, H10 remains
 
-`donto bench` now covers H1, H2, H3, H4, H5, H7
-([BENCH-RESULTS.md](BENCH-RESULTS.md)). The four follow-ups:
+`donto bench` now covers **H1, H2, H3, H4, H5, H6, H7, H8, H9**
+([BENCH-RESULTS.md](BENCH-RESULTS.md)). The single remaining
+H-number:
 
-- **H6 multi-pattern join.** Time a 3-pattern join (`?a knows ?b,
-  ?b name ?n, ?b age ?g`) at 10K / 100K / 1M. The evaluator does a
-  nested-loop join; this exercises that path.
-- **H8 policy-aware retrieval.** Insert N statements with
-  evidence_link rows, register a policy, time POLICY ALLOWS
-  filtering. Set up cost is real (one document/policy per N
-  rows); the query timing is the interesting half.
-- **H9 concurrent writers.** Two/four/eight parallel batch
-  asserters under the same context. Validates the advisory-lock /
-  unique-content-hash path under contention.
-- **H10 10 M row scale.** ~70 min insert wall on this hardware
+- **H10 10M row scale.** ~70 min insert wall on this hardware
   (extrapolated). Run once and lock the numbers as the PRD §25
-  hard target.
+  hard target. No code changes needed — just patience:
 
-Each is a clean extension of `apps/donto-cli/src/main.rs::bench`.
-H6 is the cheapest to start (~50 LOC, no new infrastructure).
+  ```bash
+  donto bench --insert-count 10000000 \
+    --dsn postgres://donto:donto@127.0.0.1:55432/donto \
+    > docs/H10-baseline.json
+  ```
 
-### M9 Federation Research Spike
+  Then add the numbers to BENCH-RESULTS.md.
 
-PRD §18 marks this as a research/decision phase, not an
-implementation. Smallest next step: a `docs/M9-FEDERATION-MEMO.md`
-that compares Verifiable Credentials, DID, Solid Pods, SPARQL
-Federation, and DataCite-style metadata exchange against donto's
-attestation + release-manifest model. ~1,000 words; no code.
+H6 is currently subject-pinned to dodge the Phase-4 evaluator's
+nested-loop cost. The Phase-10 planner work is the proper fix;
+revisit H6 then.
+
+### M9 Federation Research Spike — decision recorded
+
+Memo landed at [`M9-FEDERATION-MEMO.md`](M9-FEDERATION-MEMO.md).
+Decision:
+- **Proceed** — signed RO-Crate releases + DataCite-style
+  citation metadata.
+- **Reject** — live cross-instance SPARQL/DontoQL federation
+  (count-channel leak risk; revisit when mitigation funded).
+- **Defer** — Solid Pods (deployment-shape, not protocol).
+
+Smallest next step: the 200-LOC `donto release sign` /
+`donto release verify` spike outlined at the bottom of the memo.
+That delivers the M9 acceptance bullet ("two toy instances
+exchange policy-filtered release metadata") without committing
+to a full federation stack.
 
 ## Other documented gaps
 
