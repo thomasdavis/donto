@@ -37,18 +37,20 @@ would be the next refinement; it's a cosmetic change.
 
 ## Big rocks still on the floor
 
-### M5 Extraction Kernel — policy gate landed
+### M5 Extraction Kernel — gate + analyzer both landed
 
-`donto extract --policy-check` ships (commit `ef1e7b2`):
-pre-flight call to `donto_action_allowed('document', <source>,
-'derive_claims')` blocks the OpenRouter call when the source's
-policy denies derivation. M5 acceptance bullet 4 satisfied.
+- ✅ `donto extract --policy-check` ships (commit `ef1e7b2`).
+- ✅ Reviewer-acceptance analyzer ships in
+  `donto-analytics::analyzer_reviewer_acceptance` (commit `a025d14`).
+  Buckets `donto_review_decision` by `(review_context, reviewer_id)`,
+  emits a warning finding when reject_rate ≥ threshold and the bucket
+  has ≥5 decisions.
 
-Smallest next step: **reviewer acceptance/rejection metrics in
-`donto-analytics`**. Schema is in place (`donto_detector_finding`
-from migration 0119); needs a metric extractor that computes
-reviewer agreement rates per extractor model and emits findings.
-~150 LOC + tests.
+Smallest next step: **wire the analyzer into `donto analyze`** so
+it runs on a schedule alongside the paraconsistency and
+rule-duration detectors. Add a `donto analyze reviewer-acceptance`
+subcommand mirroring the existing `donto analyze paraconsistency`
+shape.
 
 ### M6 Language Pilot — 5/5 importers shipped
 
@@ -82,20 +84,30 @@ Remaining M6 work:
 ✅ **18 language-specific frame types** registered by migration
 `0124_ling_frame_types.sql`. Applied to prod 2026-05-15.
 
-### M7 Release Builder — past skeleton
+### M7 Release Builder — JSONL + RO-Crate + signed envelope live
 
-`d896cfc` lands a skeleton; `donto-release` has a `build_release`
-example binary. Missing:
+- ✅ `build_release` (`d896cfc`) — produces `ReleaseManifest`.
+- ✅ `write_native_jsonl` (`d896cfc`) — deterministic JSONL.
+- ✅ `write_ro_crate_metadata` (`acda3a1`) — minimal RO-Crate v1.1
+  with citation, hasPart, optional extra files.
+- ✅ `envelope::sign` / `verify` (`b4c227f`) — Ed25519 / did:key
+  envelope over the canonical manifest.
+- ✅ End-to-end pipeline test (`d1e12b7`) — instance A builds +
+  signs + writes a crate; instance B verifies from disk only.
 
-- **Loss report.** Adapter writes (e.g. lossy text → claims)
-  should emit a loss-report rowset. Today nothing populates it.
-- **RO-Crate export.** PRD §17 lists this; not started.
-- **CLDF release export.** Native-format export for a curated
-  release; blocked on the CLDF importer landing first (round-trip).
+Remaining M7 surface:
 
-Smallest next step: a `donto release --dry-run` command that
-prints the rows it would include and the policies that would
-block them, without touching `donto_release_manifest`. ~80 LOC.
+- **CLDF release exporter.** PRD §17 lists this for cross-linguistic
+  releases. Now buildable since the CLDF importer landed — the
+  exporter is the inverse mapping (donto quads → CLDF tables).
+  ~250 LOC.
+- **Loss report population.** Adapters emit losses via
+  `Importer::Report.losses`; the release builder should
+  aggregate those into `LossReport.note` rather than leaving
+  the rowset blank. ~30 LOC.
+- **Citation extraction.** Today `Citation` is caller-supplied;
+  could be partially derived from `donto_document.creators` /
+  `source_date`. ~50 LOC.
 
 ### M8 Scale and Calibration — H1-H9 done, H10 remains
 
