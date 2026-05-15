@@ -90,21 +90,24 @@ input, not just test cases.
 
 | Component | Count |
 |-----------|-------|
-| SQL migrations | 95 (28 new in this release) |
-| Tables | 80+ |
+| SQL migrations | **124** (0001 → 0124_ling_frame_types) |
+| Tables | 90+ |
 | SQL functions | 200+ |
-| HTTP endpoints | 44 (plus Trust Kernel surface) |
-| donto-client tests | 455 (212 new in this release, all green) |
+| HTTP endpoints | 44 + Trust Kernel + DontoQL surface |
+| Workspace tests | **700+** across 129 suites, 0 failing |
 | Lean modules | 21 |
 | Lean theorems | 62 |
-| Ingestion formats | 8 |
+| Generic ingestion formats | 8 (N-Quads, Turtle, TriG, JSON-LD, RDF/XML, CSV, JSONL, property graph) |
+| Linguistic importers | **5** (CLDF, CoNLL-U, UniMorph, LIFT, EAF) |
 | Anchor kinds | 13 (typed, validated) |
 | Alignment relations | 11 (with safety flags) |
-| Frame types | 24 seeded (18 linguistic + 6 cross-domain) |
+| Frame types | **42 seeded** (18 linguistic frames, 18 PRD §13 ling frames in 0124, 6 cross-domain) |
 | Default access policies | 4 |
 | Modality values | 14 |
 | Extraction levels | 10 |
 | Maturity ladder | E0–E5 |
+| DontoQL clauses | **19** (every PRD §11 v2 clause executes end-to-end) |
+| `donto bench` benchmarks | **H1–H9** (PRD §25; H10 = patience) |
 
 ---
 
@@ -114,7 +117,7 @@ input, not just test cases.
 git clone https://github.com/thomasdavis/donto
 cd donto
 
-# Bring up Postgres 16 and apply all migrations
+# Bring up Postgres 16 and apply all 124 migrations
 ./scripts/pg-up.sh
 cargo run -p donto-cli --quiet -- migrate
 
@@ -130,6 +133,41 @@ cd apps/donto-tui && go run .
 
 # Build the Lean verification layer (optional, requires elan / Lean 4)
 cd packages/lean && lake build
+```
+
+### The full CLI surface
+
+```bash
+donto migrate                       # apply embedded SQL migrations
+donto ingest <path> --format jsonl  # generic ingest (8 formats)
+donto match --subject ex:alice      # quick pattern match
+donto query 'MATCH ?s ?p ?o LIMIT 10'   # DontoQL — full PRD §11 surface
+donto extract <file> --policy-check # LLM extraction with policy gate
+donto align suggest <predicate>     # predicate-alignment workflow
+donto shadow --subject ex:alice     # alignment-aware match
+donto predicates --limit 50         # predicate registry
+donto retract <statement_uuid>      # bitemporal close
+
+# Linguistic importers (M6 — 5 formats)
+donto ling cldf <dir>      --context ctx:ling/wals
+donto ling ud <path>       --context ctx:ling/en-ewt
+donto ling unimorph <path> --context ctx:ling/eng --language eng
+donto ling lift <path>     --context ctx:ling/dict
+donto ling eaf <path>      --context ctx:ling/elan-corpus
+
+# Release pipeline (M7 — full chain)
+donto release keygen                # Ed25519 keypair + did:key
+donto release build --spec spec.json
+donto release pipeline --spec spec.json --out-dir release/ \
+    --seed-hex <hex> [--cldf]       # build → JSONL → sign → RO-Crate
+donto release sign   --manifest m.json --seed-hex <hex>
+donto release verify --envelope env.json --manifest m.json
+
+# Analytics + health (M5, M8)
+donto analyze paraconsistency       # detector
+donto analyze reviewer-acceptance   # detector
+donto analyze health                # detect-the-detector
+donto bench --insert-count 10000    # H1-H9 perf smoke
 ```
 
 ### Migrate a genealogy database
@@ -208,6 +246,122 @@ FROM donto_event_history(
     'src:fieldnotes/2024-recording-A.eaf',
     100
 );
+```
+
+---
+
+## DontoQL — the native query language
+
+donto's query surface is **DontoQL**, a small clause-oriented graph
+language. Every PRD §11 v2 clause executes end-to-end against
+existing storage:
+
+```text
+MATCH ?stmt ex:about ex:annie-davis,
+      ?stmt ex:predicate ex:born_in,
+      ?stmt ex:object ?place
+SCOPE include ctx:genes/annie-davis ancestors
+PRESET curated                            # E2+ only
+POLARITY asserted
+TRANSACTION_TIME AS_OF "2026-04-01T00:00:00Z"
+MODALITY descriptive, reconstructed
+EXTRACTION_LEVEL quoted, manual_entry
+IDENTITY_LENS expand_clusters
+PREDICATES EXPAND_ABOVE 80                # closure ≥ 0.80 confidence
+POLICY ALLOWS read_metadata
+SCHEMA_LENS ex:linguistics-core
+EXPANDS_FROM concept ex:case_marking USING schema_lens ex:linguistics-core
+ORDER BY contradiction_pressure DESC
+WITH evidence = redacted_if_required      # attach source rows, policy-redacted
+PROJECT ?stmt, ?place
+LIMIT 50
+```
+
+Run via the CLI (`donto query`), the sidecar (`POST /dontoql`), or
+programmatically through `donto-query::parse_dontoql` +
+`evaluate(&client, &query)`. Full reference:
+[`docs/DONTOQL.md`](docs/DONTOQL.md).
+
+A SPARQL 1.1 subset lowers to the same algebra
+([`packages/donto-query/src/sparql.rs`](packages/donto-query/src/sparql.rs)):
+`PREFIX` / `SELECT` / `WHERE` / `GRAPH` / `FILTER` / `LIMIT` /
+`OFFSET`. Use SPARQL for basic-graph-pattern interop; use DontoQL
+when you need any of the donto-specific dimensions
+(polarity / maturity / modality / extraction level / identity lens /
+AS_OF / POLICY ALLOWS / WITH evidence).
+
+---
+
+## Release builder — citable, signed, reproducible
+
+PRD §17 lists six things a donto release must do; all six now have
+a runnable code path:
+
+```bash
+# 1. Generate a keypair (Ed25519 + did:key).
+donto release keygen > kp.json
+SEED=$(jq -r .seed_hex kp.json)
+
+# 2. Drive the whole pipeline: build → JSONL → sign → RO-Crate (+ CLDF).
+donto release pipeline \
+    --spec spec.json \
+    --out-dir releases/wals-2026-05/ \
+    --seed-hex "$SEED" \
+    --cldf                       # optional: write CLDF tables too
+
+# Result on disk:
+# releases/wals-2026-05/
+#   manifest.jsonl             # deterministic per-statement checksums
+#   envelope.json              # Ed25519 signature + did:key issuer
+#   ro-crate-metadata.json     # RO-Crate v1.1, conforms to W3C
+#   <release_id>-metadata.json # CLDF descriptor (if --cldf)
+#   languages.csv …            # CLDF tables (if --cldf)
+```
+
+A consumer instance can verify the release without re-ingesting
+source data — only the envelope + manifest are needed:
+
+```bash
+donto release verify \
+    --envelope releases/wals-2026-05/envelope.json \
+    --manifest releases/wals-2026-05/manifest.jsonl
+# ok: envelope verified and manifest hash matches
+```
+
+PRD M9 federation memo: [`docs/M9-FEDERATION-MEMO.md`](docs/M9-FEDERATION-MEMO.md).
+M9 acceptance ("two toy instances exchange policy-filtered release
+metadata") is satisfied by this two-instance smoke flow.
+
+---
+
+## Language pilot importers (M6)
+
+Five linguistic-format importers map native formats into donto
+quads, each with an explicit loss report (PRD I9 — adapters must
+report what they couldn't represent):
+
+| Crate | Format | Native source |
+|-------|--------|---------------|
+| `donto-ling-cldf` | CLDF (tabular) | Glottolog, WALS, Lexibank, Phoible |
+| `donto-ling-ud` | CoNLL-U | Universal Dependencies treebanks |
+| `donto-ling-unimorph` | UniMorph TSV | UniMorph paradigm files |
+| `donto-ling-lift` | LIFT XML | SIL FieldWorks lexicons |
+| `donto-ling-eaf` | EAF / ELAN XML | Time-aligned multimodal corpora |
+
+Each exposes the same Rust surface: `Importer::new(client, ctx) ->
+import(path, opts) -> Report`. The `Report` carries counts +
+`losses: Vec<String>`; `--strict` aborts when losses are non-empty.
+
+Plus 18 linguistic frame-types seeded in migration `0124` and ready
+for claim-frame extraction:
+
+```text
+phonological-process, phoneme-inventory-item, morpheme-segmentation,
+inflection-paradigm, grammatical-relation, constituent,
+argument-structure, lexical-sense, semantic-frame,
+translation-equivalent, typological-feature, cognate-set,
+utterance-context, register-attribution, multimodal-annotation,
+elicited-form, reconstructed-form, restricted-cultural-claim
 ```
 
 ---
@@ -613,26 +767,48 @@ contexts, then converged through the predicate alignment layer.
 
 ```
 apps/
-  donto-cli/                 CLI: migrate, ingest, query, match, retract
+  donto-cli/                 CLI: migrate, ingest, query, match, retract,
+                                  extract, ling, release, analyze, bench, …
   dontosrv/                  HTTP sidecar (44 endpoints)
   donto-tui/                 Go/Charm TUI: dashboard, firehose, explorer, charts
+  donto-api/                 FastAPI public API (genes.apexpots.com)
   docs/                      Astro Starlight documentation site
 
 packages/
   donto-client/              Typed Rust wrapper + test suite
-  donto-query/               DontoQL + SPARQL parser and evaluator
+  donto-query/               DontoQL + SPARQL parser and evaluator (PRD §11)
   donto-ingest/              8 ingestion format parsers
-  donto-migrate/             External store migrators (genealogy SQLite)
-  pg_donto/                  pgrx Postgres extension
-  sql/migrations/            95 idempotent SQL migrations (source of truth)
+  donto-migrate/             External-store migrators (genealogy SQLite)
+  donto-release/             Release builder + JSONL + RO-Crate + CLDF +
+                             Ed25519 envelope (PRD §17 / §M9)
+  donto-analytics/           Detectors: rule-duration, paraconsistency,
+                             reviewer-acceptance; alert-sink trait
+  donto-synthetic/           Synthetic-data harnesses for detectors
+  donto-alert-sink/          Alert-sink implementations
+  donto-ling-cldf/           CLDF importer (M6)
+  donto-ling-ud/             CoNLL-U / Universal Dependencies importer (M6)
+  donto-ling-unimorph/       UniMorph paradigm importer (M6)
+  donto-ling-lift/           LIFT XML lexicon importer (M6)
+  donto-ling-eaf/            EAF / ELAN time-aligned annotation importer (M6)
+  pg_donto/                  pgrx Postgres extension (optional packaging)
+  sql/migrations/            124 idempotent SQL migrations (source of truth)
   sql/fixtures/              Example data for smoke tests
   sql/scripts/               Epistemic sweep and batch operations
   lean/                      21 Lean 4 modules, 62 theorems
   client-ts/                 TypeScript client (@donto/client)
   tsconfig/                  Shared TypeScript config
 
-PRD.md                       Design specification (principles + maturity ladder)
+infra/
+  systemd/                   Service + timer unit reference copies
+                             (donto-analyze.timer fires nightly at 03:30 UTC)
+
+PRD.md / docs/DONTO-PRD.md   Canonical product spec
 CLAUDE.md                    Working contract for AI/human contributors
+docs/DONTOQL.md              DontoQL v2 reference (every clause)
+docs/BENCH-RESULTS.md        H1-H9 benchmark numbers
+docs/M9-FEDERATION-MEMO.md   Federation decision memo
+docs/ROADMAP-NEXT.md         Per-milestone "what's next" handoff
+docs/REVIEW-FINDINGS.md      Pre-production adversarial review notes
 turbo.json                   Turborepo pipeline config
 ```
 
@@ -641,14 +817,30 @@ turbo.json                   Turborepo pipeline config
 ## Documentation
 
 - [`PRD.md`](PRD.md) — top-level pointer to the canonical PRD.
-- [`docs/DONTO-PRD.md`](docs/DONTO-PRD.md) — **canonical
-  product requirements**. The canonical reference.
-- [`docs/PRODUCTION.md`](docs/PRODUCTION.md) — **production runbook**
-  for `genes.apexpots.com`: topology, deploy, backups, ops.
-- [`docs/DEV.md`](docs/DEV.md) — **developing on the box**: SSH,
-  workspace layout, `dev`/`dep` commands, daily backup, gh CLI.
-- [`apps/docs`](apps/docs) — Starlight documentation site with
-  migration reference, schema gap audit, and guides.
+- [`docs/DONTO-PRD.md`](docs/DONTO-PRD.md) — **canonical product
+  requirements**. The reference for every milestone and invariant.
+- [`docs/DONTOQL.md`](docs/DONTOQL.md) — **DontoQL v2 reference**.
+  Every clause, grammar, semantics, worked example.
+- [`docs/BENCH-RESULTS.md`](docs/BENCH-RESULTS.md) — **H1-H9 benchmark
+  numbers** at 10K / 100K / 1M scales.
+- [`docs/M9-FEDERATION-MEMO.md`](docs/M9-FEDERATION-MEMO.md) — **federation
+  decision memo** (Ed25519 + did:key + RO-Crate; rejects live SPARQL
+  federation for v1).
+- [`docs/ROADMAP-NEXT.md`](docs/ROADMAP-NEXT.md) — **per-milestone
+  handoff**. What landed, what's still on the floor, smallest credible
+  next step for each gap.
+- [`docs/REVIEW-FINDINGS.md`](docs/REVIEW-FINDINGS.md) — **pre-production
+  adversarial review** (18 findings, F-1 closed by `0123`).
+- [`docs/GENEALOGY-GUIDE.md`](docs/GENEALOGY-GUIDE.md) — **genealogy
+  workflow** for the live `genes.apexpots.com` use case.
+- [`docs/EXTRACTION-MAXIMALISM.md`](docs/EXTRACTION-MAXIMALISM.md) —
+  vision doc for the multi-aperture exhaustive-extraction kernel.
+- [`docs/PRODUCTION.md`](docs/PRODUCTION.md) — production runbook for
+  `genes.apexpots.com`: topology, deploy, backups, ops.
+- [`docs/DEV.md`](docs/DEV.md) — developing on the box: SSH, workspace
+  layout, `dev`/`dep` commands, daily backup, gh CLI.
+- [`apps/docs`](apps/docs) — Starlight documentation site with migration
+  reference, schema gap audit, and guides.
 - [`ANTHROPOLOGY_README.md`](ANTHROPOLOGY_README.md) — research
   philosophy and domain context.
 - Historical (superseded by the canonical PRD; kept for provenance):
@@ -660,22 +852,46 @@ turbo.json                   Turborepo pipeline config
 
 ## Status
 
-donto is **early and moving fast**. The data model, evidence substrate,
-predicate alignment layer, and Lean verification layer are solid.
-Current focus areas:
+PRD M0–M9 milestone coverage:
 
-- **Predicate alignment at scale** — embedding-based alignment,
-  auto-suggest, canonical shadow materialization
-- **AI extraction pipeline** — LLM-powered observation → interpretation
-  → judgment chain with full provenance
-- **TUI polish** — charts, claim card viewer, context explorer
-- **Source-support verification** — automated checking of whether a
-  source span actually supports its claim
-- **More Lean certificates** — proof-carrying shapes, derivation
-  trees, and certificate verifiers
+| | Milestone | State |
+|---|---|---|
+| M0 | Trust Kernel | ✅ substrate complete; F-1 closed (`0123_document_policy_id_required.sql`); HTTP middleware shipped |
+| M1 | Evidence Kernel | partial — anchor validators per kind still open |
+| M2 | Claim Kernel | ✅ modality + extraction-level overlays, multi-context, valid-time + tx-time, n-ary frames |
+| M3 | Schema & Identity Kernel | ✅ 11-relation predicate alignment, identity hypotheses, schema lenses, lens-scoped expansion |
+| M4 | Argument & Review Kernel | partial — claim-card UI / review-workbench tab still open |
+| M5 | Extraction Kernel | ✅ `donto extract --policy-check` + `donto-analytics::analyzer_reviewer_acceptance` + nightly systemd timer |
+| M6 | Language Pilot | ✅ 5/5 importers + 18 linguistic frame types + `donto ling …` CLI |
+| M7 | Release Builder | ✅ build + JSONL + RO-Crate + CLDF + Ed25519 envelope + auto-citation + loss report + `donto release pipeline` |
+| M8 | Scale & Calibration | ✅ H1–H9 in `donto bench` ([BENCH-RESULTS.md](docs/BENCH-RESULTS.md)); H10 is patience |
+| M9 | Federation Spike | ✅ memo + sign/verify CLI + cross-party prod smoke |
 
-Performance is not yet a goal (PRD §25). Current focus: correctness,
-PRD coverage, test depth.
+DontoQL v2 surface from PRD §11 is feature-complete:
+
+- ✅ SCOPE, PRESET, MATCH, FILTER (= ≠ < ≤ > ≥), POLARITY, MATURITY
+- ✅ IDENTITY / IDENTITY_LENS, PREDICATES (STRICT / EXPAND / EXPAND_ABOVE)
+- ✅ MODALITY, EXTRACTION_LEVEL (sparse-overlay filters)
+- ✅ TRANSACTION_TIME AS_OF (bitemporal time-travel)
+- ✅ POLICY ALLOWS \<action\> (Trust Kernel join)
+- ✅ SCHEMA_LENS, EXPANDS_FROM concept(..) USING schema_lens(..)
+- ✅ ORDER BY contradiction_pressure (joins donto_contradiction_frontier)
+- ✅ WITH evidence = none|full|redacted_if_required
+- ✅ PROJECT, LIMIT, OFFSET
+
+Remaining work, in increasing scope:
+
+- **Real-dataset importer runs** — Glottolog, EWT, UniMorph-eng, …
+- **Anchor validators per kind** (M1 polish)
+- **Claim-card / review workbench TUI tab** (M4)
+- **H10 10M-row baseline** — patience, ~70 min insert wall
+- **Phase-10 query planner** — unblocks unconstrained multi-pattern joins
+  (today H6 is subject-pinned)
+
+Performance is "kept in mind, not optimised for" (PRD §25). H1–H9
+results confirm sub-100 ms point queries through 1M rows, ~2.7K
+inserts/sec single-threaded, and ~400 ms concurrent batch
+throughput for 4 writers.
 
 ---
 
