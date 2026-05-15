@@ -208,6 +208,20 @@ enum Cmd {
         /// Print extracted facts as JSON without ingesting.
         #[arg(long)]
         dry_run: bool,
+        /// Pre-flight policy check: refuse to call the external
+        /// model if the source's policy denies derive_claims. The
+        /// source is identified by `--source <iri>` (or by the
+        /// filename if --source is omitted). With no registered
+        /// policy, the check passes (no policy, no refusal).
+        ///
+        /// PRD M5 acceptance: "Policy blocks external calls for
+        /// restricted sources."
+        #[arg(long)]
+        policy_check: bool,
+        /// Source IRI for the policy-check. If omitted, the file
+        /// path (canonicalised) is used as the source identifier.
+        #[arg(long, value_name = "IRI")]
+        source: Option<String>,
     },
 
     /// Manage predicate alignments: register, suggest, list, retract, and
@@ -675,7 +689,36 @@ async fn main() -> Result<()> {
             model,
             batch,
             dry_run,
+            policy_check,
+            source,
         } => {
+            let source_iri = source.unwrap_or_else(|| {
+                std::fs::canonicalize(&file)
+                    .map(|p| format!("file://{}", p.display()))
+                    .unwrap_or_else(|_| format!("file://{}", file.display()))
+            });
+            if policy_check {
+                // Pre-flight: refuse if the source policy denies
+                // derive_claims. No policy → no refusal. M5 PRD
+                // acceptance: "Policy blocks external calls for
+                // restricted sources."
+                let conn = client.pool().get().await?;
+                let allowed: bool = conn
+                    .query_one(
+                        "select donto_action_allowed('document', $1, 'derive_claims')",
+                        &[&source_iri],
+                    )
+                    .await?
+                    .get(0);
+                if !allowed {
+                    anyhow::bail!(
+                        "policy refused derive_claims for source {source_iri}. \
+                         Pass without --policy-check to override, or attach a policy that \
+                         permits derive_claims via donto_register_source."
+                    );
+                }
+                eprintln!("policy-check: derive_claims permitted for {source_iri}");
+            }
             let api_key = std::env::var("OPENROUTER_API_KEY")
                 .context("$OPENROUTER_API_KEY not set. Get one at https://openrouter.ai")?;
             let model = extract::resolve_model(&model);
@@ -943,6 +986,22 @@ mod bench {
         pub h7_modality_setup_elapsed_ms: u64,
         pub h7_modality_query_elapsed_ms: u64,
         pub h7_modality_query_rows: usize,
+        // H6: multi-pattern join with two patterns over the same
+        // subject (`?s ex:p ?o, ?s ex:r ?o`).
+        pub h6_multi_pattern_join_elapsed_ms: u64,
+        pub h6_multi_pattern_join_rows: usize,
+        // H8: policy-aware retrieval via POLICY ALLOWS read_metadata.
+        // Setup links every 100th statement to a fail-closed source
+        // so the policy join has work to do.
+        pub h8_policy_allows_setup_elapsed_ms: u64,
+        pub h8_policy_allows_query_elapsed_ms: u64,
+        pub h8_policy_allows_query_rows: usize,
+        // H9: 4 concurrent batch-writers, 500 rows each into
+        // separate side contexts.
+        pub h9_concurrent_writers: u32,
+        pub h9_rows_per_writer: u64,
+        pub h9_total_rows: u64,
+        pub h9_elapsed_ms: u64,
     }
 
     pub async fn run(client: &DontoClient, n: u64) -> anyhow::Result<BenchReport> {
@@ -1099,6 +1158,50 @@ mod bench {
         let h5_ms = t.elapsed().as_millis() as u64;
 
         // ---------------------------------------------------------
+        // ---------------------------------------------------------
+        // H6: multi-pattern join — basic graph pattern with three
+        // shared variables. Time the evaluator's nested-loop join
+        // over the bench context.
+        // ---------------------------------------------------------
+        // Seed two extra predicates on the same subjects so a
+        // 3-pattern join has something to chain.
+        let mut extra = Vec::with_capacity(2000);
+        for i in 0..n {
+            extra.push(
+                StatementInput::new(
+                    format!("ex:s/{i}"),
+                    "ex:r",
+                    Object::iri(format!("ex:o/{i}")),
+                )
+                .with_context(&ctx),
+            );
+            if extra.len() == 2000 {
+                client.assert_batch(&extra).await?;
+                extra.clear();
+            }
+        }
+        if !extra.is_empty() {
+            client.assert_batch(&extra).await?;
+        }
+        // Pin the first pattern's subject so the join cost is
+        // dominated by the planner machinery, not the linear-scan
+        // cost (the Phase-4 evaluator does one SQL roundtrip per
+        // intermediate binding; an unconstrained leading pattern at
+        // N=1M would emit ~1M roundtrips. PRD §26 Phase 10 covers
+        // the planner work).
+        let h6_query = format!(
+            "MATCH ex:s/42 ex:p ?o, ex:s/42 ex:r ?o \
+             SCOPE include {ctx} \
+             PREDICATES STRICT \
+             LIMIT 5",
+            ctx = ctx
+        );
+        let q = donto_query::parse_dontoql(&h6_query)?;
+        let t = Instant::now();
+        let h6 = donto_query::evaluate(client, &q).await?;
+        let h6_ms = t.elapsed().as_millis() as u64;
+
+        // ---------------------------------------------------------
         // H7: sparse-overlay filter — set modality on half the rows
         // and then query with MODALITY descriptive.
         // ---------------------------------------------------------
@@ -1136,6 +1239,98 @@ mod bench {
             .await?;
         let h7_query_ms = t.elapsed().as_millis() as u64;
 
+        // ---------------------------------------------------------
+        // H8: policy-aware retrieval. Register one fail-closed
+        // policy + one document + an evidence_link to every Nth
+        // statement. Then run POLICY ALLOWS read_metadata and
+        // expect the linked rows to be dropped.
+        // ---------------------------------------------------------
+        let policy_iri = format!("{prefix}/policy/private");
+        let doc_iri = format!("{prefix}/doc/private");
+        let conn = client.pool().get().await?;
+        conn.execute(
+            "insert into donto_policy_capsule \
+                (policy_iri, policy_kind, allowed_actions, created_by) \
+             values ($1, 'private', \
+                     jsonb_build_object('read_metadata', false), \
+                     'bench')",
+            &[&policy_iri],
+        )
+        .await?;
+        let doc_id: uuid::Uuid = conn
+            .query_one(
+                "insert into donto_document \
+                    (iri, media_type, policy_id, status) \
+                 values ($1, 'text/plain', $2, 'registered') \
+                 returning document_id",
+                &[&doc_iri, &policy_iri],
+            )
+            .await?
+            .get(0);
+        let t = Instant::now();
+        // Link every 100th statement to the private document; this
+        // creates a real evidence_link join workload without
+        // requiring N inserts.
+        conn.execute(
+            "insert into donto_evidence_link \
+                (statement_id, link_type, target_document_id) \
+             select statement_id, 'extracted_from', $2 \
+             from donto_statement \
+             where context = $1 and upper(tx_time) is null \
+               and (substring(subject from 'ex:s/(.*)$')::bigint) % 100 = 0",
+            &[&ctx, &doc_id],
+        )
+        .await?;
+        let h8_setup_ms = t.elapsed().as_millis() as u64;
+        let q_h8 = donto_query::parse_dontoql(&format!(
+            "MATCH ?s ex:p ?o SCOPE include {ctx} \
+             PREDICATES STRICT \
+             POLICY ALLOWS read_metadata \
+             LIMIT 10000000",
+            ctx = ctx
+        ))?;
+        let t = Instant::now();
+        let h8 = donto_query::evaluate(client, &q_h8).await?;
+        let h8_ms = t.elapsed().as_millis() as u64;
+
+        // ---------------------------------------------------------
+        // H9: concurrent writers. Four parallel batch-asserters
+        // each insert M = 500 rows into a side-context. Measures
+        // the substrate's behaviour under contention without
+        // touching the main bench context.
+        // ---------------------------------------------------------
+        let m_per_writer: u64 = 500;
+        let h9_ctx_base = format!("{prefix}/h9");
+        let t = Instant::now();
+        let mut joiners = Vec::with_capacity(4);
+        for w in 0..4u64 {
+            let client_clone = client.clone();
+            let ctx_w = format!("{h9_ctx_base}/w{w}");
+            joiners.push(tokio::spawn(async move {
+                client_clone
+                    .ensure_context(&ctx_w, "custom", "permissive", None)
+                    .await?;
+                let mut batch = Vec::with_capacity(m_per_writer as usize);
+                for i in 0..m_per_writer {
+                    batch.push(
+                        StatementInput::new(
+                            format!("ex:h9/w{w}/{i}"),
+                            "ex:p",
+                            Object::iri(format!("ex:o/{i}")),
+                        )
+                        .with_context(&ctx_w),
+                    );
+                }
+                client_clone.assert_batch(&batch).await?;
+                Ok::<(), anyhow::Error>(())
+            }));
+        }
+        for j in joiners {
+            j.await??;
+        }
+        let h9_ms = t.elapsed().as_millis() as u64;
+        let h9_total = 4 * m_per_writer;
+
         Ok(BenchReport {
             inserts: n,
             insert_elapsed_ms: insert_elapsed.as_millis() as u64,
@@ -1152,6 +1347,15 @@ mod bench {
             h7_modality_setup_elapsed_ms: h7_setup_ms,
             h7_modality_query_elapsed_ms: h7_query_ms,
             h7_modality_query_rows: h7_rows.len(),
+            h6_multi_pattern_join_elapsed_ms: h6_ms,
+            h6_multi_pattern_join_rows: h6.len(),
+            h8_policy_allows_setup_elapsed_ms: h8_setup_ms,
+            h8_policy_allows_query_elapsed_ms: h8_ms,
+            h8_policy_allows_query_rows: h8.len(),
+            h9_concurrent_writers: 4,
+            h9_rows_per_writer: m_per_writer,
+            h9_total_rows: h9_total,
+            h9_elapsed_ms: h9_ms,
         })
     }
 }

@@ -39,6 +39,20 @@ is unchanged):
 | 100,000   |  8.9 ms  | 2.59 s   |   3.2 ms   |   3.4 ms |        2 ms |          1090 ms  |           95 ms   |
 | 1,000,000 | 33.6 ms  | 8.21 s   |   4.6 ms   |   3.0 ms |       15 ms |        14.97 s    |          1.73 s   |
 
+Third run adding H6 (multi-pattern join, subject-pinned), H8
+(POLICY ALLOWS), and H9 (4 concurrent writers, 500 rows each):
+
+| scale (N) | H6 join | H8 setup | H8 query | H8 rows kept | H9 4× concurrent (2,000 rows) |
+|-----------|--------:|---------:|---------:|-------------:|-------------------------------:|
+| 10,000    |    6 ms |  106 ms  |  107 ms  |  9,900       |  385 ms                        |
+| 100,000   |    6 ms |  798 ms  |  812 ms  | 99,000       |  428 ms                        |
+
+H9 is invariant in N because the writers operate on side-contexts
+of fixed size (500 rows × 4 writers). H6 is constant because the
+benchmark pins the leading subject — see the "honest H6" note
+below. H8's setup grows with N (it has to attach evidence_link to
+1% of rows); the query timing is what matters.
+
 (H1 point query timings vary run-to-run due to plan cache state;
 the order of magnitude is what's load-bearing.)
 
@@ -80,6 +94,27 @@ Raw JSON from each run is in [§ Raw output](#raw-output) below.
   composite `(modality, statement_id)` index is a future tuning
   knob; for the genealogy workload (sparse modality, small filter
   sets) the current state is sufficient.
+- **Multi-pattern join (H6) is **subject-pinned** in this
+  benchmark.** The Phase-4 evaluator does one SQL roundtrip per
+  intermediate binding (nested-loop join); an unconstrained
+  leading pattern at 1 M rows would emit ~1 M roundtrips and take
+  tens of minutes. To measure the join *machinery* without
+  amplifying the planner gap, H6 pins the leading subject to
+  `ex:s/42` — giving 1 binding feeding into pattern 2. The 6 ms
+  result is the cost of two real-DB roundtrips plus unification.
+  The planner upgrade (PRD §26 Phase 10) is what makes the
+  unconstrained join shape practical at scale.
+- **POLICY ALLOWS (H8) scales with N, modestly.** 107 ms at 10K,
+  812 ms at 100K — the join through `donto_evidence_link →
+  donto_document → donto_policy_capsule.allowed_actions` is
+  cheap when the leading set is bounded by `statement_id = any(...)`.
+  Extrapolating: ~8 s at 1 M, which is fine for a curated read
+  workload but a tuning candidate for hot paths.
+- **4× concurrent writers (H9) complete in ~400 ms regardless of
+  the bench scale.** Each writer takes its own context; the
+  advisory-lock + unique-content-hash path doesn't contend.
+  Concurrency at this scale is bounded by Postgres connection
+  pool, not by donto's invariants.
 - **No index hot-spotting or write-amplification surprises.** Tested
   with the standard `postgres:16` image (no tuning), default
   `donto-pg` volume mount, no `pg_stat_statements`. Production
@@ -87,14 +122,17 @@ Raw JSON from each run is in [§ Raw output](#raw-output) below.
 
 ## What this does NOT tell us
 
-- Concurrent-write throughput. Bench is single-thread (H9 is a
-  follow-up).
 - `dontosrv` HTTP overhead. Bench talks directly to Postgres via
   donto-client; the axum sidecar adds an HTTP round-trip layer.
 - 10 M-row scale (H10 PRD §25 hard target). Extrapolating from
   1 M: ~4,200 s insert wall, ~50 ms point query, ~80 s batch scan.
-- Policy-aware retrieval (POLICY ALLOWS) under load. H8 is a
-  follow-up; needs evidence_link + policy_capsule setup paths.
+  Run once and lock the numbers when the budget allows.
+- Multi-pattern join under load with an unconstrained leading
+  pattern. The Phase-10 planner work makes this tractable; today
+  H6 is intentionally subject-pinned.
+- Concurrent writers >> 4 (contention thresholds, deadlock
+  exposure). H9 at 4 writers is the smoke; tuning a real
+  production workload would go higher.
 
 ## Raw output
 
@@ -159,16 +197,12 @@ Raw JSON from each run is in [§ Raw output](#raw-output) below.
 
 ## Next-step benchmarks (PRD §25 / M8)
 
-The PRD lists ten benchmarks H1–H10. `donto bench` now covers
-H1, H2, H3, H4, H5, H7. The remaining four are follow-ups:
+`donto bench` now covers H1–H9. The single remaining H-number is:
 
 | | Benchmark | What it adds |
 |---|-----------|--------------|
-| H6 | Multi-pattern join (3+ patterns) | exercises evaluator's nested-loop join |
-| H8 | Policy-aware retrieval (POLICY ALLOWS) | exercises evidence_link join under load |
-| H9 | Concurrent writers (4× / 8×) | concurrency invariants |
-| H10 | 10 M row scale | the PRD §25 hard target |
+| H10 | 10 M row scale | the PRD §25 hard target — mostly patience (~70 min insert wall extrapolated) |
 
-Adding any of these to `apps/donto-cli/src/main.rs::bench` is a
-clean extension; the harness is already there. H10 is mostly
-patience (estimated 70 minutes insert wall on this hardware).
+H6 currently uses a subject-pinned shape; the unbounded
+multi-pattern join becomes practical when the PRD §26 Phase 10
+planner work lands.
