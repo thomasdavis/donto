@@ -420,6 +420,17 @@ enum BlobCmd {
         concurrency: usize,
         #[arg(long)]
         no_register: bool,
+        /// Also create a donto_document + donto_document_revision for
+        /// every uploaded file, so they become queryable sources.
+        /// Document IRI is `donto:blob/sha256/<hex>` (content-
+        /// addressed; same file → same document).
+        #[arg(long)]
+        create_documents: bool,
+        /// Skip files larger than this (bytes). Useful to avoid
+        /// loading e.g. multi-gigabyte audio/video into the body.
+        /// 0 = no limit.
+        #[arg(long, default_value_t = 0, value_name = "BYTES")]
+        max_size: u64,
     },
     /// List blobs registered in donto_blob (most-recent first).
     List {
@@ -444,6 +455,18 @@ enum BlobCmd {
     Gc {
         #[arg(long)]
         delete: bool,
+    },
+    /// Backfill: for every donto_blob without a bucket_uri, find a
+    /// donto_document_revision that has its body inline, write the
+    /// body to the configured BlobStore, and set bucket_uri on
+    /// the blob row. Idempotent.
+    BackfillRevisions {
+        /// Max blobs to process this run. Default: all.
+        #[arg(long, value_name = "N")]
+        limit: Option<u32>,
+        /// Concurrent uploads.
+        #[arg(long, default_value_t = 8, value_name = "N")]
+        concurrency: usize,
     },
 }
 
@@ -1697,7 +1720,7 @@ async fn main() -> Result<()> {
                         })
                     );
                 }
-                BlobCmd::Sync { dir, exclude, concurrency, no_register } => {
+                BlobCmd::Sync { dir, exclude, concurrency, no_register, create_documents, max_size } => {
                     let re = exclude
                         .as_deref()
                         .map(|p| regex::Regex::new(p))
@@ -1706,6 +1729,7 @@ async fn main() -> Result<()> {
                     // Walk the tree, collect paths, then upload with
                     // bounded concurrency.
                     let mut paths: Vec<PathBuf> = Vec::new();
+                    let mut skipped_size = 0u64;
                     for entry in walkdir::WalkDir::new(&dir)
                         .into_iter()
                         .filter_map(|e| e.ok())
@@ -1719,7 +1743,18 @@ async fn main() -> Result<()> {
                                 continue;
                             }
                         }
+                        if max_size > 0 {
+                            if let Ok(meta) = std::fs::metadata(&p) {
+                                if meta.len() > max_size {
+                                    skipped_size += 1;
+                                    continue;
+                                }
+                            }
+                        }
                         paths.push(p);
+                    }
+                    if skipped_size > 0 {
+                        eprintln!("skipped {skipped_size} files larger than --max-size");
                     }
                     let total_files = paths.len();
                     eprintln!("found {total_files} files; uploading with concurrency={concurrency}");
@@ -1741,6 +1776,7 @@ async fn main() -> Result<()> {
                             }
                         })
                         .buffer_unordered(concurrency);
+                    let mut documents_created = 0u64;
                     while let Some((i, p, res, client_ref)) = stream.next().await {
                         match res {
                             Ok(s) => {
@@ -1749,6 +1785,93 @@ async fn main() -> Result<()> {
                                         donto_blob::register_with_db(&client_ref, &s).await
                                     {
                                         eprintln!("register failed for {p:?}: {e}");
+                                    }
+                                }
+                                if create_documents {
+                                    let sha_hex = donto_blob::sha_hex(&s.sha256);
+                                    let doc_iri = format!("donto:blob/sha256/{sha_hex}");
+                                    let file_name = p
+                                        .file_name()
+                                        .map(|n| n.to_string_lossy().to_string())
+                                        .unwrap_or_else(|| "unnamed".into());
+                                    let file_uri = format!("file://{}", p.display());
+                                    let mime = s.mime_type.clone().unwrap_or_else(|| "application/octet-stream".into());
+                                    match client_ref
+                                        .ensure_document(
+                                            &doc_iri,
+                                            &mime,
+                                            Some(&file_name),
+                                            Some(&file_uri),
+                                            None,
+                                        )
+                                        .await
+                                    {
+                                        Ok(doc_id) => {
+                                            // Add a revision only if none exists yet for
+                                            // this document (cheap to check via SELECT).
+                                            let conn_r = match client_ref.pool().get().await {
+                                                Ok(c) => c,
+                                                Err(_) => continue,
+                                            };
+                                            let has_rev_row = conn_r
+                                                .query_one(
+                                                    "select count(*)::bigint from donto_document_revision where document_id = $1",
+                                                    &[&doc_id],
+                                                )
+                                                .await
+                                                .ok();
+                                            let exists = has_rev_row
+                                                .map(|r| r.get::<_, i64>(0) > 0)
+                                                .unwrap_or(false);
+                                            if !exists {
+                                                // For text-ish files, populate body_inline so FTS works.
+                                                let inline_body: Option<String> =
+                                                    if s.mime_type.as_deref().map(|m| {
+                                                        m.starts_with("text/")
+                                                            || m == "application/json"
+                                                            || m == "application/xml"
+                                                            || m == "application/x-ndjson"
+                                                    }) == Some(true)
+                                                    {
+                                                        tokio::fs::read_to_string(&p).await.ok()
+                                                    } else {
+                                                        None
+                                                    };
+                                                let storage = if inline_body.is_some() {
+                                                    "both"
+                                                } else {
+                                                    "bucket"
+                                                };
+                                                let rev_res = conn_r
+                                                    .execute(
+                                                        "insert into donto_document_revision \
+                                                            (document_id, revision_number, body, \
+                                                             content_hash, parser_version, \
+                                                             blob_hash, body_uri, body_inline, \
+                                                             byte_size, body_storage) \
+                                                         values ($1, 1, $2, $3, 'blob-sync/1', \
+                                                                 $4, $5, $6, $7, $8) \
+                                                         on conflict do nothing",
+                                                        &[
+                                                            &doc_id,
+                                                            &inline_body,
+                                                            &s.sha256.as_slice(),
+                                                            &s.sha256.as_slice(),
+                                                            &s.uri,
+                                                            &inline_body,
+                                                            &(s.byte_size as i64),
+                                                            &storage,
+                                                        ],
+                                                    )
+                                                    .await;
+                                                if rev_res.is_ok() {
+                                                    documents_created += 1;
+                                                }
+                                            }
+                                        }
+                                        Err(e) => {
+                                            eprintln!("ensure_document failed for {p:?}: {e}");
+                                        }
                                     }
                                 }
                                 total_bytes += s.byte_size;
@@ -1779,6 +1902,7 @@ async fn main() -> Result<()> {
                             "already_present": already,
                             "failed": failed,
                             "total_bytes": total_bytes,
+                            "documents_created": documents_created,
                             "backend": store_ref.backend(),
                         })
                     );
@@ -1863,6 +1987,101 @@ async fn main() -> Result<()> {
                             use std::io::Write;
                             std::io::stdout().write_all(&bytes)?;
                         }
+                    }
+                }
+                BlobCmd::BackfillRevisions { limit, concurrency } => {
+                    let conn = client.pool().get().await?;
+                    // Pick the candidate blob rows (those without a
+                    // bucket_uri). For each, find one revision that
+                    // still has the body inline.
+                    let limit_sql = limit.map(|n| format!(" limit {n}")).unwrap_or_default();
+                    let sql = format!(
+                        "select b.sha256, b.byte_size, b.mime_type, r.body \
+                         from donto_blob b \
+                         join lateral ( \
+                            select body from donto_document_revision \
+                             where blob_hash = b.sha256 and body is not null \
+                             limit 1 \
+                         ) r on true \
+                         where b.bucket_uri is null{}",
+                        limit_sql
+                    );
+                    let rows = conn.query(sql.as_str(), &[]).await?;
+                    let total = rows.len();
+                    eprintln!("found {total} blobs to backfill; concurrency={concurrency}");
+                    if total == 0 {
+                        println!("{}", serde_json::json!({"backfilled": 0, "total": 0}));
+                    } else {
+                        use futures_util::stream::StreamExt;
+                        let store_ref = std::sync::Arc::new(store);
+                        let client_ref = std::sync::Arc::new(client);
+                        let mut uploaded = 0u64;
+                        let mut failed = 0u64;
+                        let progress_every = std::cmp::max(total / 20, 1);
+                        let mut stream = futures_util::stream::iter(rows.into_iter().enumerate())
+                            .map(|(i, r)| {
+                                let store_ref = store_ref.clone();
+                                let client_ref = client_ref.clone();
+                                async move {
+                                    let sha: Vec<u8> = r.get(0);
+                                    let mime: Option<String> = r.try_get(2).ok().flatten();
+                                    let body: String = r.get(3);
+                                    let mut sha_arr = [0u8; 32];
+                                    if sha.len() == 32 {
+                                        sha_arr.copy_from_slice(&sha);
+                                    }
+                                    let res = store_ref
+                                        .put_bytes_at_hash(
+                                            &sha_arr,
+                                            body.as_bytes(),
+                                            mime.as_deref(),
+                                        )
+                                        .await;
+                                    (i, sha_arr, res, client_ref)
+                                }
+                            })
+                            .buffer_unordered(concurrency);
+                        while let Some((i, sha_arr, res, client_ref)) = stream.next().await {
+                            match res {
+                                Ok(summary) => {
+                                    // Stamp the bucket_uri on donto_blob.
+                                    if let Ok(c) = client_ref.pool().get().await {
+                                        let _ = c
+                                            .execute(
+                                                "select donto_blob_set_bucket_uri($1, $2)",
+                                                &[
+                                                    &sha_arr.as_slice(),
+                                                    &summary.uri,
+                                                ],
+                                            )
+                                            .await;
+                                    }
+                                    uploaded += 1;
+                                }
+                                Err(e) => {
+                                    eprintln!(
+                                        "backfill failed for {}: {e}",
+                                        hex::encode(sha_arr)
+                                    );
+                                    failed += 1;
+                                }
+                            }
+                            if (i + 1) % progress_every == 0 || (i + 1) == total {
+                                eprintln!(
+                                    "[{}/{total}] backfilled={uploaded} failed={failed}",
+                                    i + 1
+                                );
+                            }
+                        }
+                        println!(
+                            "{}",
+                            serde_json::json!({
+                                "scanned": total,
+                                "backfilled": uploaded,
+                                "failed": failed,
+                                "backend": store_ref.backend(),
+                            })
+                        );
                     }
                 }
                 BlobCmd::Gc { delete } => {
