@@ -1,8 +1,9 @@
 use anyhow::{Context, Result};
+use donto_blob::BlobStore;
 use donto_client::{DontoClient, Literal, Object, Polarity, StatementInput};
-use donto_ingest::pipeline::Pipeline;
 use serde::{Deserialize, Serialize};
 use std::path::Path;
+use uuid::Uuid;
 
 const OPENROUTER_URL: &str = "https://openrouter.ai/api/v1/chat/completions";
 
@@ -19,6 +20,17 @@ pub struct ExtractReport {
     pub tiers: TierBreakdown,
     pub cost_estimate: Option<f64>,
     pub elapsed_ms: u64,
+    /// SHA-256 of the source bytes (hex).
+    pub source_sha256: Option<String>,
+    /// Storage URI where the source bytes live.
+    pub source_uri: Option<String>,
+    /// donto_document.iri for the source.
+    pub document_iri: Option<String>,
+    /// donto_document_revision.revision_id linked from each statement.
+    pub revision_id: Option<Uuid>,
+    /// Number of donto_evidence_link rows created (one per
+    /// asserted statement when blob wiring is on).
+    pub evidence_links: u64,
 }
 
 #[derive(Debug, Default, Serialize)]
@@ -196,9 +208,10 @@ pub async fn run(
     source_path: &Path,
     context: &str,
     model: &str,
-    batch_size: usize,
+    _batch_size: usize,
     api_key: &str,
     dry_run: bool,
+    blob_store: Option<&dyn BlobStore>,
 ) -> Result<ExtractReport> {
     let start = std::time::Instant::now();
     let source_name = source_path
@@ -214,6 +227,75 @@ pub async fn run(
         source_name,
         text.len()
     );
+
+    // 1. Source blob: hash + register + (optionally) upload.
+    //    Skipped entirely on dry-run so we don't touch the DB.
+    let mut source_sha256: Option<String> = None;
+    let mut source_uri: Option<String> = None;
+    let mut document_iri: Option<String> = None;
+    let mut revision_id: Option<Uuid> = None;
+    if !dry_run {
+        if let Some(store) = blob_store {
+            let mime = donto_blob::sniff_mime(source_path)
+                .or_else(|| Some("text/markdown".into()));
+            let summary = store
+                .put_bytes(text.as_bytes(), mime.as_deref())
+                .await
+                .with_context(|| "blob put failed")?;
+            donto_blob::register_with_db(client, &summary).await?;
+            let sha_hex = donto_blob::sha_hex(&summary.sha256);
+            source_sha256 = Some(sha_hex.clone());
+            source_uri = Some(summary.uri.clone());
+
+            // 2. Source document: IRI is content-addressed so the
+            //    same file always maps to the same document.
+            let doc_iri = format!("donto:blob/sha256/{}", &sha_hex);
+            document_iri = Some(doc_iri.clone());
+            // ensure_document → idempotent on iri. Default-policy
+            // handling is done by migration 0123 (NOT NULL +
+            // fallback to policy:default/restricted_pending_review).
+            let document_id = client
+                .ensure_document(
+                    &doc_iri,
+                    mime.as_deref().unwrap_or("text/plain"),
+                    Some(&source_name),
+                    Some(&format!("file://{}", source_path.display())),
+                    None,
+                )
+                .await?;
+
+            // 3. Revision (one per extraction run — the body is
+            //    immutable per sha256, but a fresh revision_id makes
+            //    the evidence-link chain trivial to reason about).
+            let rev_id = client
+                .add_revision(
+                    document_id,
+                    Some(&text),
+                    None,
+                    Some(&format!("donto-extract/{model}")),
+                )
+                .await?;
+            // Stamp the revision with blob_hash + uri + body_storage.
+            // Inline + bucket = "both"; FTS works on body_inline,
+            // canonical bytes are addressable via bucket_uri.
+            let conn = client.pool().get().await?;
+            conn.execute(
+                "update donto_document_revision \
+                 set blob_hash = $1, body_uri = $2, body_inline = $3, \
+                     byte_size = $4, body_storage = 'both' \
+                 where revision_id = $5",
+                &[
+                    &summary.sha256.as_slice(),
+                    &summary.uri,
+                    &text,
+                    &(summary.byte_size as i64),
+                    &rev_id,
+                ],
+            )
+            .await?;
+            revision_id = Some(rev_id);
+        }
+    }
 
     let facts = call_llm(api_key, model, &text).await?;
     let num_facts = facts.len() as u64;
@@ -238,12 +320,10 @@ pub async fn run(
         count_active_tiers(&tiers)
     );
 
-    let stmts: Vec<StatementInput> = facts
-        .iter()
-        .map(|f| fact_to_statement(f, context))
-        .collect();
+    let mut ingested: u64 = 0;
+    let mut evidence_links: u64 = 0;
 
-    let ingested = if dry_run {
+    if dry_run {
         eprintln!("  dry-run: skipping ingest");
         for (i, fact) in facts.iter().enumerate() {
             println!(
@@ -262,17 +342,37 @@ pub async fn run(
                 })
             );
         }
-        0
     } else {
         client
             .ensure_context(context, "custom", "permissive", None)
             .await?;
-        let report = Pipeline::new(client, context)
-            .batch_size(batch_size)
-            .run(&source_name, "extract", stmts)
-            .await?;
-        report.statements_inserted
-    };
+        // 4. Insert each statement individually so we get the
+        //    statement_id back, then link it to the revision.
+        //    Slower than assert_batch but the only way to record
+        //    per-statement evidence without a returning extension
+        //    to the batch path.
+        for (fact, stmt) in facts.iter().zip(
+            facts
+                .iter()
+                .map(|f| fact_to_statement(f, context))
+                .collect::<Vec<_>>()
+                .iter(),
+        ) {
+            let stmt_id = client.assert(stmt).await?;
+            ingested += 1;
+            if let Some(rev_id) = revision_id {
+                let conn = client.pool().get().await?;
+                conn.execute(
+                    "insert into donto_evidence_link \
+                        (statement_id, link_type, target_revision_id, confidence) \
+                     values ($1, 'extracted_from', $2, $3)",
+                    &[&stmt_id, &rev_id, &fact.confidence],
+                )
+                .await?;
+                evidence_links += 1;
+            }
+        }
+    }
 
     Ok(ExtractReport {
         source: source_name,
@@ -283,6 +383,11 @@ pub async fn run(
         tiers,
         cost_estimate: None,
         elapsed_ms: start.elapsed().as_millis() as u64,
+        source_sha256,
+        source_uri,
+        document_iri,
+        revision_id,
+        evidence_links,
     })
 }
 

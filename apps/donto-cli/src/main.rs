@@ -1120,8 +1120,27 @@ async fn main() -> Result<()> {
                 let model_short = model.split('/').last().unwrap_or(model);
                 format!("ctx:extract/{source_stem}/{model_short}")
             });
-            let report =
-                extract::run(&client, &file, &ctx, model, batch, &api_key, dry_run).await?;
+            // Wire a BlobStore so the extracted source gets
+            // registered + every emitted statement gets an
+            // evidence_link back to its revision. Same flags as
+            // `donto blob`.
+            let store = resolve_blob_store(
+                &cli.blob_backend,
+                cli.blob_root.as_deref(),
+                cli.blob_bucket.as_deref(),
+                cli.blob_gcloud_config.as_deref(),
+            )?;
+            let report = extract::run(
+                &client,
+                &file,
+                &ctx,
+                model,
+                batch,
+                &api_key,
+                dry_run,
+                Some(store.as_ref()),
+            )
+            .await?;
             eprintln!();
             println!("{}", serde_json::to_string_pretty(&report)?);
         }
