@@ -174,6 +174,10 @@ enum Cmd {
         insert_count: u64,
     },
 
+    /// Release-signing spike (M9 federation).
+    #[command(subcommand)]
+    Release(ReleaseCmd),
+
     /// Extract knowledge from unstructured text using an LLM, then ingest
     /// the resulting facts into donto. Uses OpenRouter (Grok 4.1 Fast by
     /// default) to extract 8-tier predicates from articles, transcripts,
@@ -328,6 +332,32 @@ enum Cmd {
     Analyze {
         #[command(subcommand)]
         action: AnalyzeCmd,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+enum ReleaseCmd {
+    /// Generate a fresh Ed25519 keypair, print the did:key and the
+    /// secret seed (hex). The seed is the only thing you need to
+    /// keep — pass it to `sign --seed-hex` to reconstruct the key.
+    Keygen,
+    /// Sign a release manifest. Reads JSON from `--manifest`, hashes
+    /// it canonically, and emits a `ReleaseEnvelope` to stdout.
+    Sign {
+        #[arg(long, value_name = "PATH")]
+        manifest: PathBuf,
+        /// 32-byte Ed25519 seed in hex. Use `keygen` to generate one.
+        #[arg(long, value_name = "HEX")]
+        seed_hex: String,
+    },
+    /// Verify a release envelope. With `--manifest`, also confirms
+    /// the manifest hashes to the value the envelope was signed
+    /// over.
+    Verify {
+        #[arg(long, value_name = "PATH")]
+        envelope: PathBuf,
+        #[arg(long, value_name = "PATH")]
+        manifest: Option<PathBuf>,
     },
 }
 
@@ -739,6 +769,55 @@ async fn main() -> Result<()> {
             let report = bench::run(&client, insert_count).await?;
             println!("{}", serde_json::to_string_pretty(&report)?);
         }
+        Cmd::Release(action) => match action {
+            ReleaseCmd::Keygen => {
+                let kp = donto_release::envelope::Keypair::generate();
+                println!(
+                    "{}",
+                    serde_json::json!({
+                        "did_key": kp.did_key(),
+                        "seed_hex": hex::encode(kp.seed_bytes()),
+                        "note": "keep the seed secret; the did_key is public",
+                    })
+                );
+            }
+            ReleaseCmd::Sign { manifest, seed_hex } => {
+                let manifest_text = std::fs::read_to_string(&manifest)
+                    .with_context(|| format!("reading manifest {manifest:?}"))?;
+                let manifest_value: serde_json::Value = serde_json::from_str(&manifest_text)
+                    .with_context(|| "manifest must be JSON")?;
+                let seed_bytes = hex::decode(seed_hex.trim())
+                    .with_context(|| "seed_hex must be a 64-char hex string")?;
+                if seed_bytes.len() != 32 {
+                    anyhow::bail!(
+                        "expected 32-byte seed (64 hex chars), got {} bytes",
+                        seed_bytes.len()
+                    );
+                }
+                let mut seed = [0u8; 32];
+                seed.copy_from_slice(&seed_bytes);
+                let kp = donto_release::envelope::Keypair::from_seed(seed);
+                let env = donto_release::envelope::sign(&manifest_value, &kp)
+                    .with_context(|| "signing")?;
+                println!("{}", serde_json::to_string_pretty(&env)?);
+            }
+            ReleaseCmd::Verify { envelope, manifest } => {
+                let env_text = std::fs::read_to_string(&envelope)?;
+                let env: donto_release::envelope::ReleaseEnvelope =
+                    serde_json::from_str(&env_text).with_context(|| "envelope must be JSON")?;
+                if let Some(m_path) = manifest {
+                    let m_text = std::fs::read_to_string(&m_path)?;
+                    let m_value: serde_json::Value = serde_json::from_str(&m_text)?;
+                    donto_release::envelope::verify_against_manifest(&env, &m_value)
+                        .with_context(|| "verify against manifest")?;
+                    println!("ok: envelope verified and manifest hash matches");
+                } else {
+                    donto_release::envelope::verify(&env)
+                        .with_context(|| "verify signature")?;
+                    println!("ok: envelope signature verified (manifest hash not re-checked)");
+                }
+            }
+        },
         Cmd::Align { action } => match action {
             AlignCmd::Register {
                 source,

@@ -17,6 +17,7 @@ donto-analytics   = { path = "../../packages/donto-analytics" }
 donto-alert-sink  = { path = "../../packages/donto-alert-sink" }
 donto-query       = { path = "../../packages/donto-query" }
 donto-ingest      = { path = "../../packages/donto-ingest" }
+donto-release     = { path = "../../packages/donto-release" }
 tokio             = { workspace = true }
 clap              = { workspace = true }
 anyhow            = { workspace = true }
@@ -31,6 +32,7 @@ rio_turtle        = { workspace = true }
 clap_mangen       = "0.2"
 clap_complete     = "4"
 reqwest           = { workspace = true }
+hex               = { workspace = true }
 
 [lints]
 workspace = true

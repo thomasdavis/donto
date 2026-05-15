@@ -419,6 +419,10 @@ pub const MIGRATIONS: &[(&str, &str)] = &[
         "0123_document_policy_id_required",
         include_str!("../../sql/migrations/0123_document_policy_id_required.sql"),
     ),
+    (
+        "0124_ling_frame_types",
+        include_str!("../../sql/migrations/0124_ling_frame_types.sql"),
+    ),
 ];
 
 fn sha256_of(s: &str) -> Vec<u8> {

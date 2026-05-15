@@ -26,11 +26,13 @@
 //! [`manifest::ReleaseManifest`] when implemented.
 
 pub mod builder;
+pub mod envelope;
 pub mod export;
 pub mod manifest;
 pub mod policy;
 
 pub use builder::{build_release, ReleaseSpec};
+pub use envelope::{Keypair, ReleaseEnvelope};
 pub use export::write_native_jsonl;
 pub use manifest::{Citation, LossReport, PolicyReport, ReleaseManifest, StatementChecksum};
 
