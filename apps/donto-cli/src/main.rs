@@ -178,6 +178,14 @@ enum Cmd {
     #[command(subcommand)]
     Release(ReleaseCmd),
 
+    /// Import linguistic-format datasets into donto (M6).
+    ///
+    /// One subcommand per supported format. Each parses the
+    /// source, maps to quads, ingests into the given context, and
+    /// prints a JSON Report with counts + loss list.
+    #[command(subcommand)]
+    Ling(LingCmd),
+
     /// Extract knowledge from unstructured text using an LLM, then ingest
     /// the resulting facts into donto. Uses OpenRouter (Grok 4.1 Fast by
     /// default) to extract 8-tier predicates from articles, transcripts,
@@ -332,6 +340,60 @@ enum Cmd {
     Analyze {
         #[command(subcommand)]
         action: AnalyzeCmd,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+enum LingCmd {
+    /// Import a CLDF directory dataset (TSV tables + metadata.json).
+    Cldf {
+        #[arg(value_name = "DIR")]
+        path: PathBuf,
+        /// Target context IRI for the ingested statements.
+        #[arg(long, value_name = "IRI")]
+        context: String,
+        /// Abort if the loss report is non-empty.
+        #[arg(long)]
+        strict: bool,
+    },
+    /// Import a CoNLL-U file (Universal Dependencies).
+    Ud {
+        #[arg(value_name = "PATH")]
+        path: PathBuf,
+        #[arg(long, value_name = "IRI")]
+        context: String,
+        #[arg(long)]
+        strict: bool,
+    },
+    /// Import a UniMorph paradigm TSV file.
+    Unimorph {
+        #[arg(value_name = "PATH")]
+        path: PathBuf,
+        #[arg(long, value_name = "IRI")]
+        context: String,
+        /// Language code (ISO 639-3 or any) used as the IRI prefix.
+        #[arg(long, default_value = "und", value_name = "CODE")]
+        language: String,
+        #[arg(long)]
+        strict: bool,
+    },
+    /// Import a LIFT XML lexicon (SIL FieldWorks dictionaries).
+    Lift {
+        #[arg(value_name = "PATH")]
+        path: PathBuf,
+        #[arg(long, value_name = "IRI")]
+        context: String,
+        #[arg(long)]
+        strict: bool,
+    },
+    /// Import an EAF (ELAN) time-aligned annotation document.
+    Eaf {
+        #[arg(value_name = "PATH")]
+        path: PathBuf,
+        #[arg(long, value_name = "IRI")]
+        context: String,
+        #[arg(long)]
+        strict: bool,
     },
 }
 
@@ -769,6 +831,74 @@ async fn main() -> Result<()> {
             let report = bench::run(&client, insert_count).await?;
             println!("{}", serde_json::to_string_pretty(&report)?);
         }
+        Cmd::Ling(action) => match action {
+            LingCmd::Cldf { path, context, strict } => {
+                let importer = donto_ling_cldf::Importer::new(&client, &context);
+                let report = importer
+                    .import(
+                        &path,
+                        donto_ling_cldf::ImportOptions {
+                            strict,
+                            ..donto_ling_cldf::ImportOptions::default()
+                        },
+                    )
+                    .await?;
+                println!("{}", serde_json::to_string_pretty(&report)?);
+            }
+            LingCmd::Ud { path, context, strict } => {
+                let importer = donto_ling_ud::Importer::new(&client, &context);
+                let report = importer
+                    .import(
+                        &path,
+                        donto_ling_ud::ImportOptions {
+                            strict,
+                            ..donto_ling_ud::ImportOptions::default()
+                        },
+                    )
+                    .await?;
+                println!("{}", serde_json::to_string_pretty(&report)?);
+            }
+            LingCmd::Unimorph { path, context, language, strict } => {
+                let importer = donto_ling_unimorph::Importer::new(&client, &context);
+                let report = importer
+                    .import(
+                        &path,
+                        donto_ling_unimorph::ImportOptions {
+                            strict,
+                            language,
+                            ..donto_ling_unimorph::ImportOptions::default()
+                        },
+                    )
+                    .await?;
+                println!("{}", serde_json::to_string_pretty(&report)?);
+            }
+            LingCmd::Lift { path, context, strict } => {
+                let importer = donto_ling_lift::Importer::new(&client, &context);
+                let report = importer
+                    .import(
+                        &path,
+                        donto_ling_lift::ImportOptions {
+                            strict,
+                            ..donto_ling_lift::ImportOptions::default()
+                        },
+                    )
+                    .await?;
+                println!("{}", serde_json::to_string_pretty(&report)?);
+            }
+            LingCmd::Eaf { path, context, strict } => {
+                let importer = donto_ling_eaf::Importer::new(&client, &context);
+                let report = importer
+                    .import(
+                        &path,
+                        donto_ling_eaf::ImportOptions {
+                            strict,
+                            ..donto_ling_eaf::ImportOptions::default()
+                        },
+                    )
+                    .await?;
+                println!("{}", serde_json::to_string_pretty(&report)?);
+            }
+        },
         Cmd::Release(action) => match action {
             ReleaseCmd::Keygen => {
                 let kp = donto_release::envelope::Keypair::generate();

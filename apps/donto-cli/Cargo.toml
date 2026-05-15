@@ -18,6 +18,11 @@ donto-alert-sink  = { path = "../../packages/donto-alert-sink" }
 donto-query       = { path = "../../packages/donto-query" }
 donto-ingest      = { path = "../../packages/donto-ingest" }
 donto-release     = { path = "../../packages/donto-release" }
+donto-ling-cldf      = { path = "../../packages/donto-ling-cldf" }
+donto-ling-ud        = { path = "../../packages/donto-ling-ud" }
+donto-ling-unimorph  = { path = "../../packages/donto-ling-unimorph" }
+donto-ling-lift      = { path = "../../packages/donto-ling-lift" }
+donto-ling-eaf       = { path = "../../packages/donto-ling-eaf" }
 tokio             = { workspace = true }
 clap              = { workspace = true }
 anyhow            = { workspace = true }
