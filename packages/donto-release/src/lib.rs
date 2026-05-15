@@ -33,7 +33,7 @@ pub mod policy;
 
 pub use builder::{build_release, ReleaseSpec};
 pub use envelope::{Keypair, ReleaseEnvelope};
-pub use export::write_native_jsonl;
+pub use export::{write_native_jsonl, write_ro_crate_metadata};
 pub use manifest::{Citation, LossReport, PolicyReport, ReleaseManifest, StatementChecksum};
 
 #[derive(Debug, thiserror::Error)]
