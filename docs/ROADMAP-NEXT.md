@@ -50,32 +50,38 @@ from migration 0119); needs a metric extractor that computes
 reviewer agreement rates per extractor model and emits findings.
 ~150 LOC + tests.
 
-### M6 Language Pilot — first importer done, four to go
+### M6 Language Pilot — 5/5 importers shipped
 
-CLDF importer landed (`packages/donto-ling-cldf`, commit
-`1e2bf79`). Reads CLDF directory datasets, maps the four
-canonical tables to donto quads, reports loss for any other
-tables. 5 integration tests pass against a synthetic WALS-toy
-fixture. Smallest next step:
+All five importers from PRD §M6 are in:
 
-- **Run CLDF importer against a real dataset.** Glottolog's
-  `glottolog-cldf` or a Lexibank dataset is the smoke test —
-  thousands of rows, hundreds of parameters. Verify the loss
-  report stays compact (i.e. our four canonical tables cover
-  most of the real-world surface).
-- **CoNLL-U importer next.** One word per line, columns are
-  fixed, dependency relations across tokens become argument
-  edges. Crate: `packages/donto-ling-ud`. Same crate shape as
-  donto-ling-cldf — Importer struct, ImportOptions, Report,
-  emit_* helpers. ~300 LOC + tests.
+| Crate                       | Format            | Tests |
+|-----------------------------|-------------------|-------|
+| `donto-ling-cldf`           | CLDF (TSV+JSON-LD)| 5     |
+| `donto-ling-ud`             | CoNLL-U           | 6     |
+| `donto-ling-unimorph`       | UniMorph TSV      | 3     |
+| `donto-ling-lift`           | LIFT XML          | 3     |
+| `donto-ling-eaf`            | EAF / ELAN XML    | 3     |
 
-After CoNLL-U: UniMorph, LIFT, EAF. Each is the same shape with
-a different parser front-end.
+Each crate exposes the same surface: `Importer::new(client, ctx)`,
+`Importer::import(path, opts) -> Report`. `ImportOptions` carries
+`batch_size`, `strict`, format-specific options. `Report` returns
+per-format counts + a `losses: Vec<String>` per PRD I9.
 
-The 18 language-specific frame types (PRD §13) are a separate
-side-quest — they're configuration of `donto_frame_type` rows,
-not Rust code. Could be a single migration `0124_ling_frames.sql`
-once the importers reveal which frames they actually emit.
+Remaining M6 work:
+
+- **Run importers against real datasets** (not synthetic
+  fixtures). Glottolog-CLDF, the English EWT UD treebank,
+  UniMorph English paradigm, a small SIL LIFT dictionary, and
+  one ELAN annotation file. Goal: verify the loss reports stay
+  compact under real-world inputs.
+- **18 language-specific frame types** (PRD §13). They're a
+  single migration `0124_ling_frames.sql` registering rows in
+  `donto_frame_type`. Best authored after the importers reveal
+  which frames they actually emit.
+- **CLI wiring.** `donto extract` and `donto ingest` already
+  exist for generic formats; the linguistic importers would
+  benefit from `donto ling cldf <path>` style subcommands.
+  ~50 LOC per importer dispatch.
 
 ### M7 Release Builder — past skeleton
 
