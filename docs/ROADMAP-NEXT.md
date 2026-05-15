@@ -37,20 +37,16 @@ would be the next refinement; it's a cosmetic change.
 
 ## Big rocks still on the floor
 
-### M5 Extraction Kernel — gate + analyzer both landed
+### M5 Extraction Kernel — gate + analyzer + CLI all landed
 
-- ✅ `donto extract --policy-check` ships (commit `ef1e7b2`).
-- ✅ Reviewer-acceptance analyzer ships in
-  `donto-analytics::analyzer_reviewer_acceptance` (commit `a025d14`).
-  Buckets `donto_review_decision` by `(review_context, reviewer_id)`,
-  emits a warning finding when reject_rate ≥ threshold and the bucket
-  has ≥5 decisions.
+- ✅ `donto extract --policy-check` (commit `ef1e7b2`).
+- ✅ Reviewer-acceptance analyzer (commit `a025d14`).
+- ✅ `donto analyze reviewer-acceptance` subcommand (commit `c35fd9e`).
 
-Smallest next step: **wire the analyzer into `donto analyze`** so
-it runs on a schedule alongside the paraconsistency and
-rule-duration detectors. Add a `donto analyze reviewer-acceptance`
-subcommand mirroring the existing `donto analyze paraconsistency`
-shape.
+Smallest next step: **scheduled runs**. A cron unit or systemd
+timer that runs `donto analyze reviewer-acceptance --window-hours 168`
+nightly and forwards to the configured alert sink. ~20 LOC of
+shell + systemd unit; no Rust changes.
 
 ### M6 Language Pilot — 5/5 importers shipped
 
@@ -95,19 +91,24 @@ Remaining M6 work:
 - ✅ End-to-end pipeline test (`d1e12b7`) — instance A builds +
   signs + writes a crate; instance B verifies from disk only.
 
-Remaining M7 surface:
+Remaining M7 surface: **nothing substantive.** All the
+acceptance bullets from PRD §17 are reachable:
 
-- **CLDF release exporter.** PRD §17 lists this for cross-linguistic
-  releases. Now buildable since the CLDF importer landed — the
-  exporter is the inverse mapping (donto quads → CLDF tables).
-  ~250 LOC.
-- **Loss report population.** Adapters emit losses via
-  `Importer::Report.losses`; the release builder should
-  aggregate those into `LossReport.note` rather than leaving
-  the rowset blank. ~30 LOC.
-- **Citation extraction.** Today `Citation` is caller-supplied;
-  could be partially derived from `donto_document.creators` /
-  `source_date`. ~50 LOC.
+- ✅ CLDF release exporter (commit `c35fd9e`,
+  `write_cldf_release`).
+- ✅ Loss-report population (commit `c35fd9e`,
+  `ReleaseSpec.adapter_losses`).
+- ✅ Citation extraction from `donto_document` (commit
+  `c35fd9e`, `ReleaseSpec.auto_citation`).
+- ✅ RO-Crate (commit `acda3a1`).
+- ✅ Native JSONL (already in skeleton).
+- ✅ Ed25519-signed envelope (commit `b4c227f`).
+- ✅ End-to-end pipeline test (commit `d1e12b7`).
+
+What's left is a `donto release` CLI subcommand that drives the
+five-step pipeline (build → write_native_jsonl → write_ro_crate
+→ envelope::sign → optional write_cldf_release). The library
+side is done.
 
 ### M8 Scale and Calibration — H1-H9 done, H10 remains
 
