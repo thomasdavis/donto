@@ -186,6 +186,32 @@ enum Cmd {
     #[command(subcommand)]
     Ling(LingCmd),
 
+    /// One-shot JSON summary of the database. Use this first when
+    /// you (or an agent) need to orient on the live deployment:
+    /// what's in it, which features are active, how big each table
+    /// is, distribution across maturity / polarity / modality, etc.
+    Status,
+
+    /// Read the donto canonical model: registered frame types,
+    /// alignment relations, default policies, allowed modality
+    /// values, extraction levels, predicate-clause vocabulary, etc.
+    /// Use this when you (or an agent) need to know "what are the
+    /// valid values here?" without grepping the migrations.
+    Schema,
+
+    /// Set / read sparse overlays on a statement.
+    #[command(subcommand)]
+    Modality(ModalityCmd),
+
+    /// Set / read the extraction-level overlay on a statement.
+    #[command(subcommand)]
+    ExtractionLevel(ExtractionLevelCmd),
+
+    /// Trust Kernel CRUD: register a policy capsule, assign a
+    /// policy to a target, check whether an action is allowed.
+    #[command(subcommand)]
+    Policy(PolicyCmd),
+
     /// Extract knowledge from unstructured text using an LLM, then ingest
     /// the resulting facts into donto. Uses OpenRouter (Grok 4.1 Fast by
     /// default) to extract 8-tier predicates from articles, transcripts,
@@ -341,6 +367,98 @@ enum Cmd {
         #[command(subcommand)]
         action: AnalyzeCmd,
     },
+}
+
+#[derive(Subcommand, Debug)]
+enum ModalityCmd {
+    /// Set the modality of a statement (overlay row, sparse).
+    /// Valid values: descriptive, prescriptive, reconstructed,
+    /// inferred, elicited, corpus_observed, typological_summary,
+    /// experimental_result, clinical_observation, legal_holding,
+    /// archival_metadata, oral_history, community_protocol,
+    /// model_output, other.
+    Set {
+        #[arg(value_name = "STATEMENT_UUID")]
+        statement: Uuid,
+        #[arg(value_name = "MODALITY")]
+        value: String,
+        #[arg(long, default_value = "cli", value_name = "ACTOR")]
+        set_by: String,
+    },
+    /// Read the modality (if any) of a statement.
+    Get {
+        #[arg(value_name = "STATEMENT_UUID")]
+        statement: Uuid,
+    },
+    /// Distribution of modalities across the store.
+    Stats,
+}
+
+#[derive(Subcommand, Debug)]
+enum ExtractionLevelCmd {
+    /// Set the extraction-level of a statement. Valid values:
+    /// quoted, table_read, example_observed,
+    /// source_generalization, cross_source_inference,
+    /// model_hypothesis, human_hypothesis, manual_entry,
+    /// registry_import, adapter_import.
+    Set {
+        #[arg(value_name = "STATEMENT_UUID")]
+        statement: Uuid,
+        #[arg(value_name = "LEVEL")]
+        value: String,
+        #[arg(long, default_value = "cli", value_name = "ACTOR")]
+        set_by: String,
+    },
+    Get {
+        #[arg(value_name = "STATEMENT_UUID")]
+        statement: Uuid,
+    },
+    Stats,
+}
+
+#[derive(Subcommand, Debug)]
+enum PolicyCmd {
+    /// Register a new policy capsule. Idempotent on policy_iri.
+    Register {
+        #[arg(value_name = "POLICY_IRI")]
+        policy_iri: String,
+        /// One of: public, open_metadata_restricted_content,
+        /// community_restricted, embargoed, licensed, private,
+        /// regulated, sealed, unknown_restricted.
+        #[arg(long, value_name = "KIND")]
+        kind: String,
+        /// Comma-separated allow-list of actions, e.g.
+        /// `read_metadata,read_content,quote`. Anything not listed
+        /// is denied. Pass `all` to permit everything.
+        #[arg(long, value_name = "ACTIONS", default_value = "")]
+        allow: String,
+        #[arg(long, value_name = "TEXT")]
+        summary: Option<String>,
+    },
+    /// Assign an existing policy to a target (document, claim,
+    /// context, …).
+    Assign {
+        #[arg(long, value_name = "KIND")]
+        target_kind: String,
+        #[arg(long, value_name = "ID")]
+        target_id: String,
+        #[arg(long, value_name = "POLICY_IRI")]
+        policy_iri: String,
+        #[arg(long, default_value = "cli", value_name = "ACTOR")]
+        assigned_by: String,
+    },
+    /// Check whether an action is allowed against a target.
+    /// Prints {allowed: bool, effective_actions: {...}}.
+    Check {
+        #[arg(long, value_name = "KIND")]
+        target_kind: String,
+        #[arg(long, value_name = "ID")]
+        target_id: String,
+        #[arg(long, value_name = "ACTION")]
+        action: String,
+    },
+    /// List registered policies (joined with assignment count).
+    List,
 }
 
 #[derive(Subcommand, Debug)]
@@ -966,6 +1084,458 @@ async fn main() -> Result<()> {
                     )
                     .await?;
                 println!("{}", serde_json::to_string_pretty(&report)?);
+            }
+        },
+        Cmd::Status => {
+            let conn = client.pool().get().await?;
+            // Pull everything in one round-trip-light pass; the
+            // queries are individually trivial.
+            let q = |sql: &str| -> String { sql.to_string() };
+            macro_rules! count {
+                ($sql:expr) => {{
+                    let r = conn.query_one($sql, &[]).await?;
+                    r.get::<_, i64>(0)
+                }};
+            }
+            let stmts = count!("select count(*)::bigint from donto_statement");
+            let stmts_open = count!(
+                "select count(*)::bigint from donto_statement where upper(tx_time) is null"
+            );
+            let retracted = stmts - stmts_open;
+            let contexts = count!("select count(*)::bigint from donto_context");
+            let predicates = count!(
+                "select count(distinct predicate)::bigint from donto_statement where upper(tx_time) is null"
+            );
+            let docs = count!("select count(*)::bigint from donto_document");
+            let evidence = count!("select count(*)::bigint from donto_evidence_link");
+            let alignment = count!("select count(*)::bigint from donto_predicate_alignment");
+            let arguments = count!("select count(*)::bigint from donto_argument");
+            let modality = count!("select count(*)::bigint from donto_stmt_modality");
+            let extraction = count!("select count(*)::bigint from donto_stmt_extraction_level");
+            let policies = count!("select count(*)::bigint from donto_policy_capsule");
+            let assignments = count!("select count(*)::bigint from donto_access_assignment");
+            let attestations = count!("select count(*)::bigint from donto_attestation");
+            let frames = count!("select count(*)::bigint from donto_frame_type");
+            let claim_frames = count!("select count(*)::bigint from donto_claim_frame");
+            let reviews = count!("select count(*)::bigint from donto_review_decision");
+            let findings = count!("select count(*)::bigint from donto_detector_finding");
+            let snapshots = count!("select count(*)::bigint from donto_snapshot");
+
+            // Maturity distribution.
+            let mat_rows = conn
+                .query(
+                    "select donto_maturity(flags)::int as m, count(*)::bigint \
+                     from donto_statement where upper(tx_time) is null group by 1 order by 1",
+                    &[],
+                )
+                .await?;
+            let mut maturity = serde_json::Map::new();
+            for r in mat_rows {
+                let m: i32 = r.get(0);
+                let n: i64 = r.get(1);
+                maturity.insert(format!("E{m}"), serde_json::json!(n));
+            }
+            // Polarity distribution.
+            let pol_rows = conn
+                .query(
+                    "select (flags::int & 3) as p, count(*)::bigint \
+                     from donto_statement where upper(tx_time) is null group by 1 order by 1",
+                    &[],
+                )
+                .await?;
+            let mut polarity = serde_json::Map::new();
+            let p_names = ["asserted", "negated", "absent", "unknown"];
+            for r in pol_rows {
+                let p: i32 = r.get(0);
+                let n: i64 = r.get(1);
+                polarity.insert(
+                    p_names.get(p as usize).copied().unwrap_or("other").into(),
+                    serde_json::json!(n),
+                );
+            }
+
+            // Top contexts and predicates.
+            let top_ctx_rows = conn
+                .query(
+                    "select context, count(*)::bigint \
+                     from donto_statement where upper(tx_time) is null \
+                     group by 1 order by 2 desc limit 5",
+                    &[],
+                )
+                .await?;
+            let top_ctx: Vec<_> = top_ctx_rows
+                .iter()
+                .map(|r| serde_json::json!({"context": r.get::<_, String>(0), "n": r.get::<_, i64>(1)}))
+                .collect();
+            let top_pred_rows = conn
+                .query(
+                    "select predicate, count(*)::bigint \
+                     from donto_statement where upper(tx_time) is null \
+                     group by 1 order by 2 desc limit 5",
+                    &[],
+                )
+                .await?;
+            let top_pred: Vec<_> = top_pred_rows
+                .iter()
+                .map(|r| serde_json::json!({"predicate": r.get::<_, String>(0), "n": r.get::<_, i64>(1)}))
+                .collect();
+            let _ = q;
+
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&serde_json::json!({
+                    "core": {
+                        "statements_total": stmts,
+                        "statements_open": stmts_open,
+                        "statements_retracted": retracted,
+                        "contexts": contexts,
+                        "distinct_predicates": predicates,
+                        "documents": docs,
+                        "evidence_links": evidence,
+                    },
+                    "maturity": maturity,
+                    "polarity": polarity,
+                    "alignment": {
+                        "edges": alignment,
+                    },
+                    "argument_graph": {"edges": arguments},
+                    "overlays": {
+                        "modality_rows": modality,
+                        "extraction_level_rows": extraction,
+                    },
+                    "trust_kernel": {
+                        "policies": policies,
+                        "assignments": assignments,
+                        "attestations": attestations,
+                    },
+                    "frames": {"types_registered": frames, "claim_frames": claim_frames},
+                    "review_workbench": {"decisions": reviews},
+                    "analytics": {"detector_findings": findings},
+                    "releases": {"snapshots": snapshots},
+                    "top_contexts": top_ctx,
+                    "top_predicates": top_pred,
+                }))?
+            );
+        }
+        Cmd::Schema => {
+            let conn = client.pool().get().await?;
+            // Allowed modality + extraction-level values come from
+            // the column CHECK constraints.
+            let modality_values: Vec<String> = vec![
+                "descriptive", "prescriptive", "reconstructed", "inferred",
+                "elicited", "corpus_observed", "typological_summary",
+                "experimental_result", "clinical_observation", "legal_holding",
+                "archival_metadata", "oral_history", "community_protocol",
+                "model_output", "other",
+            ].into_iter().map(String::from).collect();
+            let extraction_levels: Vec<String> = vec![
+                "quoted", "table_read", "example_observed",
+                "source_generalization", "cross_source_inference",
+                "model_hypothesis", "human_hypothesis", "manual_entry",
+                "registry_import", "adapter_import",
+            ].into_iter().map(String::from).collect();
+            let policy_kinds: Vec<String> = vec![
+                "public", "open_metadata_restricted_content",
+                "community_restricted", "embargoed", "licensed", "private",
+                "regulated", "sealed", "unknown_restricted",
+            ].into_iter().map(String::from).collect();
+            let actions: Vec<String> = vec![
+                "read_metadata", "read_content", "quote",
+                "view_anchor_location", "derive_claims",
+                "derive_embeddings", "translate", "summarize",
+                "export_claims", "export_sources", "export_anchors",
+                "train_model", "publish_release",
+                "share_with_third_party", "federated_query",
+            ].into_iter().map(String::from).collect();
+            // Frame types from the registry.
+            let frame_rows = conn
+                .query(
+                    "select frame_type, domain, array_length(required_roles, 1) as req_n, \
+                            array_length(optional_roles, 1) as opt_n \
+                     from donto_frame_type \
+                     order by domain, frame_type",
+                    &[],
+                )
+                .await?;
+            let frames: Vec<_> = frame_rows
+                .iter()
+                .map(|r| {
+                    serde_json::json!({
+                        "frame_type": r.get::<_, String>(0),
+                        "domain": r.get::<_, String>(1),
+                        "required_roles": r.get::<_, Option<i32>>(2).unwrap_or(0),
+                        "optional_roles": r.get::<_, Option<i32>>(3).unwrap_or(0),
+                    })
+                })
+                .collect();
+            let alignment_relations: Vec<String> = vec![
+                "exact_equivalent", "inverse_equivalent", "sub_property_of",
+                "super_property_of", "close_match", "decomposition",
+                "not_equivalent", "broader_match", "narrower_match",
+                "related", "context_specific",
+            ].into_iter().map(String::from).collect();
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&serde_json::json!({
+                    "maturity_ladder": ["E0", "E1", "E2", "E3", "E4", "E5"],
+                    "polarity_values": ["asserted", "negated", "absent", "unknown"],
+                    "modality_values": modality_values,
+                    "extraction_levels": extraction_levels,
+                    "policy_kinds": policy_kinds,
+                    "policy_actions": actions,
+                    "alignment_relations": alignment_relations,
+                    "identity_modes": [
+                        "default", "expand_clusters",
+                        "expand_sameas_transitive", "strict"
+                    ],
+                    "predicate_expansion": ["EXPAND", "STRICT", "EXPAND_ABOVE <pct>"],
+                    "frame_types": frames,
+                }))?
+            );
+        }
+        Cmd::Modality(action) => match action {
+            ModalityCmd::Set { statement, value, set_by } => {
+                let conn = client.pool().get().await?;
+                conn.execute(
+                    "select donto_set_modality($1, $2, $3)",
+                    &[&statement, &value, &set_by],
+                )
+                .await?;
+                println!(
+                    "{}",
+                    serde_json::json!({"statement_id": statement, "modality": value})
+                );
+            }
+            ModalityCmd::Get { statement } => {
+                let conn = client.pool().get().await?;
+                let row = conn
+                    .query_opt(
+                        "select modality, set_at, set_by \
+                         from donto_stmt_modality where statement_id = $1",
+                        &[&statement],
+                    )
+                    .await?;
+                match row {
+                    Some(r) => {
+                        let m: String = r.get(0);
+                        let set_at: chrono::DateTime<chrono::Utc> = r.get(1);
+                        let set_by: Option<String> = r.get(2);
+                        println!(
+                            "{}",
+                            serde_json::json!({
+                                "statement_id": statement,
+                                "modality": m,
+                                "set_at": set_at,
+                                "set_by": set_by,
+                            })
+                        );
+                    }
+                    None => println!("{}", serde_json::json!({"statement_id": statement, "modality": null})),
+                }
+            }
+            ModalityCmd::Stats => {
+                let conn = client.pool().get().await?;
+                let rows = conn
+                    .query(
+                        "select modality, count(*)::bigint from donto_stmt_modality \
+                         group by 1 order by 2 desc",
+                        &[],
+                    )
+                    .await?;
+                let dist: Vec<_> = rows
+                    .iter()
+                    .map(|r| serde_json::json!({"modality": r.get::<_, String>(0), "n": r.get::<_, i64>(1)}))
+                    .collect();
+                println!("{}", serde_json::to_string_pretty(&dist)?);
+            }
+        },
+        Cmd::ExtractionLevel(action) => match action {
+            ExtractionLevelCmd::Set { statement, value, set_by } => {
+                let conn = client.pool().get().await?;
+                conn.execute(
+                    "select donto_set_extraction_level($1, $2, $3)",
+                    &[&statement, &value, &set_by],
+                )
+                .await?;
+                println!(
+                    "{}",
+                    serde_json::json!({"statement_id": statement, "extraction_level": value})
+                );
+            }
+            ExtractionLevelCmd::Get { statement } => {
+                let conn = client.pool().get().await?;
+                let row = conn
+                    .query_opt(
+                        "select level, set_at, set_by \
+                         from donto_stmt_extraction_level where statement_id = $1",
+                        &[&statement],
+                    )
+                    .await?;
+                match row {
+                    Some(r) => {
+                        let l: String = r.get(0);
+                        let set_at: chrono::DateTime<chrono::Utc> = r.get(1);
+                        let set_by: Option<String> = r.get(2);
+                        println!(
+                            "{}",
+                            serde_json::json!({
+                                "statement_id": statement,
+                                "extraction_level": l,
+                                "set_at": set_at,
+                                "set_by": set_by,
+                            })
+                        );
+                    }
+                    None => println!("{}", serde_json::json!({"statement_id": statement, "extraction_level": null})),
+                }
+            }
+            ExtractionLevelCmd::Stats => {
+                let conn = client.pool().get().await?;
+                let rows = conn
+                    .query(
+                        "select level, count(*)::bigint from donto_stmt_extraction_level \
+                         group by 1 order by 2 desc",
+                        &[],
+                    )
+                    .await?;
+                let dist: Vec<_> = rows
+                    .iter()
+                    .map(|r| serde_json::json!({"level": r.get::<_, String>(0), "n": r.get::<_, i64>(1)}))
+                    .collect();
+                println!("{}", serde_json::to_string_pretty(&dist)?);
+            }
+        },
+        Cmd::Policy(action) => match action {
+            PolicyCmd::Register {
+                policy_iri,
+                kind,
+                allow,
+                summary,
+            } => {
+                let conn = client.pool().get().await?;
+                // Build allowed_actions JSONB. `all` = wildcard.
+                let allow_actions: Vec<&str> = if allow == "all" {
+                    vec![
+                        "read_metadata", "read_content", "quote",
+                        "view_anchor_location", "derive_claims",
+                        "derive_embeddings", "translate", "summarize",
+                        "export_claims", "export_sources", "export_anchors",
+                        "train_model", "publish_release",
+                        "share_with_third_party", "federated_query",
+                    ]
+                } else if allow.is_empty() {
+                    vec![]
+                } else {
+                    allow.split(',').map(|s| s.trim()).filter(|s| !s.is_empty()).collect()
+                };
+                let mut allowed = serde_json::Map::new();
+                for a in &allow_actions {
+                    allowed.insert((*a).to_string(), serde_json::Value::Bool(true));
+                }
+                let allowed_json = serde_json::Value::Object(allowed);
+                conn.execute(
+                    "insert into donto_policy_capsule \
+                        (policy_iri, policy_kind, allowed_actions, created_by, \
+                         human_readable_summary) \
+                     values ($1, $2, $3, 'cli', $4) \
+                     on conflict (policy_iri) do update set \
+                       policy_kind = excluded.policy_kind, \
+                       allowed_actions = excluded.allowed_actions, \
+                       human_readable_summary = excluded.human_readable_summary",
+                    &[&policy_iri, &kind, &allowed_json, &summary],
+                )
+                .await?;
+                println!(
+                    "{}",
+                    serde_json::json!({
+                        "policy_iri": policy_iri,
+                        "kind": kind,
+                        "allow": allow_actions,
+                    })
+                );
+            }
+            PolicyCmd::Assign {
+                target_kind,
+                target_id,
+                policy_iri,
+                assigned_by,
+            } => {
+                let conn = client.pool().get().await?;
+                conn.execute(
+                    "insert into donto_access_assignment \
+                        (target_kind, target_id, policy_iri, assigned_by) \
+                     values ($1, $2, $3, $4)",
+                    &[&target_kind, &target_id, &policy_iri, &assigned_by],
+                )
+                .await?;
+                println!(
+                    "{}",
+                    serde_json::json!({
+                        "target_kind": target_kind,
+                        "target_id": target_id,
+                        "policy_iri": policy_iri,
+                    })
+                );
+            }
+            PolicyCmd::Check {
+                target_kind,
+                target_id,
+                action,
+            } => {
+                let conn = client.pool().get().await?;
+                let allowed: bool = conn
+                    .query_one(
+                        "select donto_action_allowed($1, $2, $3)",
+                        &[&target_kind, &target_id, &action],
+                    )
+                    .await?
+                    .get(0);
+                let effective: serde_json::Value = conn
+                    .query_one(
+                        "select donto_effective_actions($1, $2)",
+                        &[&target_kind, &target_id],
+                    )
+                    .await?
+                    .get(0);
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&serde_json::json!({
+                        "target_kind": target_kind,
+                        "target_id": target_id,
+                        "action": action,
+                        "allowed": allowed,
+                        "effective_actions": effective,
+                    }))?
+                );
+            }
+            PolicyCmd::List => {
+                let conn = client.pool().get().await?;
+                let rows = conn
+                    .query(
+                        "select p.policy_iri, p.policy_kind, p.revocation_status, \
+                                p.allowed_actions, \
+                                count(a.*)::bigint as assignments \
+                         from donto_policy_capsule p \
+                         left join donto_access_assignment a on a.policy_iri = p.policy_iri \
+                         group by p.policy_iri, p.policy_kind, p.revocation_status, \
+                                  p.allowed_actions \
+                         order by p.policy_iri",
+                        &[],
+                    )
+                    .await?;
+                let out: Vec<_> = rows
+                    .iter()
+                    .map(|r| {
+                        serde_json::json!({
+                            "policy_iri": r.get::<_, String>(0),
+                            "policy_kind": r.get::<_, String>(1),
+                            "revocation_status": r.get::<_, String>(2),
+                            "allowed_actions": r.get::<_, serde_json::Value>(3),
+                            "assignments": r.get::<_, i64>(4),
+                        })
+                    })
+                    .collect();
+                println!("{}", serde_json::to_string_pretty(&out)?);
             }
         },
         Cmd::Release(action) => match action {
