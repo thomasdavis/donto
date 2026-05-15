@@ -101,7 +101,7 @@ input, not just test cases.
 | Linguistic importers | **5** (CLDF, CoNLL-U, UniMorph, LIFT, EAF) |
 | Anchor kinds | 13 (typed, validated) |
 | Alignment relations | 11 (with safety flags) |
-| Frame types | **42 seeded** (18 linguistic frames, 18 PRD §13 ling frames in 0124, 6 cross-domain) |
+| Frame types | **43 seeded** (18 PRD §13 ling frames in `0124`, 18 prior linguistic frames, 7 cross-domain) |
 | Default access policies | 4 |
 | Modality values | 14 |
 | Extraction levels | 10 |
@@ -735,6 +735,57 @@ scalable.
 
 A TypeScript client (`packages/client-ts`) mirrors the HTTP surface
 for Next.js and other JS/TS applications.
+
+---
+
+## In production — what `genes.apexpots.com` actually uses
+
+The live deployment is one researcher's North-Queensland genealogy
+corpus running against this codebase. As of 2026-05-15 the
+production DB has **38.1 M statements across 19,232 contexts**, with
+**920 K distinct predicates** and **4.0 M distinct subjects**. That
+single workflow exercises roughly half of donto's feature surface
+— heavily.
+
+| Bucket | Coverage |
+|--------|----------|
+| **Heavy use** (>10K rows or substantive functional use) | statements, contexts, predicate registry (implicit), evidence chain (8K documents, 16K revisions, 1.6K evidence_links), predicate alignment (4.5K closure edges driving `donto shadow`), argument graph (2.4K rebut/support edges), proof obligations (1K), snapshots (31), maturity ladder E0–E4, text-search trigram, frame-type registry, bench harness |
+| **Token use** (proof the wiring is alive) | bitemporal retraction (273 rows; 0.0007%), `POLARITY=negated` (795 rows), absent (31), unknown (31), identity hypotheses (3), entity symbols (103), content_regions (48), annotations (280) |
+| **Shipped but unused in this corpus** | `donto_stmt_modality`, `donto_stmt_extraction_level`, `donto_access_assignment`, `donto_attestation`, `donto_event_log`, `donto_review_decision`, `donto_claim_frame`, `donto_statement_context` (multi-context), `donto_dataset_release`, `donto_release_artifact`, schema-lens membership, E5 (certified) maturity tier, `review_status='accepted'` alignment edges (0 / 4,501) |
+
+**Maturity distribution at 38M scale:**
+
+| | Rows | Share |
+|---|------:|------:|
+| E0 raw | 20,982,497 | 55% |
+| E1 candidate | 14,837,033 | 39% |
+| E2 evidence-supported | 45,881 | 0.12% |
+| E3 reviewed | 222,354 | 0.58% |
+| E4 corroborated | 1,995,182 | 5.2% |
+| E5 certified | 0 | 0% |
+
+**What this says.** The half genes uses is the write-heavy
+*contradiction-aware research log* half — ingest, dedupe, alignment
+closure, contradiction surfacing. 919 K minted predicates is exactly
+the predicate-explosion problem the alignment layer solves; 2,244
+`rebuts` edges vs 180 `supports` proves the argument graph is doing
+real work. The half genes doesn't use is the *governance + curation*
+half: Trust Kernel attestations, modality/extraction-level overlays,
+review workbench, n-ary claim frames, signed releases. Those are
+substrate ready and waiting; nothing in the genealogy workflow has
+demanded them yet. They are exactly what the PRD's "evidence
+operating system for contested knowledge" pitch needs for the *next*
+proving domain (medicine, law, language documentation).
+
+Three low-cost ways to widen genes' utilisation without writing new
+donto code:
+
+1. Have `donto extract` populate `donto_stmt_modality` from the LLM's
+   own classification (descriptive / reconstructed / inferred / …).
+2. Same for `donto_stmt_extraction_level` — the extraction kernel
+   already knows whether a claim is `quoted` vs `model_hypothesis`.
+3. Drive a representative slice through `donto release pipeline` to
+   produce the first signed citable artifact.
 
 ---
 
