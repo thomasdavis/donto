@@ -593,6 +593,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "donto-ling-cldf"
+version = "0.0.1"
+dependencies = [
+ "anyhow",
+ "csv",
+ "donto-client",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 1.0.69",
+ "tokio",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
 name = "donto-migrate"
 version = "0.0.1"
 dependencies = [
