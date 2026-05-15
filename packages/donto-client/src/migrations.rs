@@ -415,6 +415,10 @@ pub const MIGRATIONS: &[(&str, &str)] = &[
         "0122_detector_finding_retention",
         include_str!("../../sql/migrations/0122_detector_finding_retention.sql"),
     ),
+    (
+        "0123_document_policy_id_required",
+        include_str!("../../sql/migrations/0123_document_policy_id_required.sql"),
+    ),
 ];
 
 fn sha256_of(s: &str) -> Vec<u8> {

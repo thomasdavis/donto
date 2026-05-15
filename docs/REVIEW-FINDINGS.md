@@ -22,38 +22,46 @@
 
 ---
 
-## F-1. Trust Kernel substrate exists; HTTP middleware does not
+## F-1. Trust Kernel substrate gap closed (RESOLVED)
 
-**Category:** Trust Kernel completeness. **Severity:** DEFER.
+**Category:** Trust Kernel completeness. **Severity:** HARD —
+resolved 2026-05-15 by migration
+`0123_document_policy_id_required.sql`.
 
-The SQL substrate (migrations 0111/0112) lands `donto_register_source`
-which refuses to register a source without `policy_id`. The legacy
-`donto_ensure_document` and `donto_register_document` (migrations 0023)
-do not enforce policy and remain reachable. The dontosrv HTTP endpoint
-`/documents/register` calls `client.ensure_document` →
-`donto_ensure_document`, which is the legacy path.
+Historical state (pre-`0123`): the legacy `donto_ensure_document`
+SQL function did not require `policy_id`, leaving the I2 invariant
+("no source without policy") enforced only by fail-closed read
+defaults rather than write-time refusal.
 
-**Behavioural state today:**
-- A document can be inserted without `policy_id` via the legacy SQL
-  function or the HTTP endpoint.
-- Such a document falls through to the *default-restricted* policy at
-  query time, so content is not exposed by accident.
-- However, the I2 invariant ("no source without policy") is enforced
-  by *fail-closed default*, not by *write-time refusal*.
+**Resolution:**
+- `0123` backfills any NULL `policy_id` with
+  `policy:default/restricted_pending_review` (seeded by 0111 with
+  zero allowed_actions — fail-closed).
+- `0123` sets that capsule as the column DEFAULT so any legacy
+  caller (`donto_ensure_document`, direct INSERT) that omits
+  `policy_id` lands on the fail-closed policy rather than creating
+  an unpoliced row. Real callers using `donto_register_source`
+  continue to pass policy explicitly.
+- `0123` promotes `donto_document.policy_id` to NOT NULL.
+- `0123` validates the previously-`NOT VALID` FK on `policy_id`.
 
-**Tripwire:** `invariants_adversarial::legacy_register_document_does_not_enforce_policy`
-asserts the bypass exists. When the M0 middleware step closes the
-gap (sidecar refuses the legacy entry point or a NOT NULL constraint
-is added on `donto_document.policy_id`), this test will fail and
-prompt a deliberate migration.
+The combination preserves the I2 invariant ("no source without a
+policy") at write time without breaking existing legacy ingest
+paths. Documents inserted via the legacy path receive a
+fail-closed policy; explicit-policy callers continue to set their
+own.
 
-**Mitigation path:**
-1. Add a NOT NULL constraint on `donto_document.policy_id` *after*
-   backfilling existing data with `policy:default/restricted_pending_review`.
-2. Or: rewrite the dontosrv `/documents/register` handler to call
-   `donto_register_source` and refuse requests without policy.
+**Tripwire (inverted):**
+`invariants_adversarial::legacy_register_document_lands_on_default_restricted_policy`
+asserts the legacy path succeeds and that the produced document
+has the fail-closed policy. If a future migration removes the
+default or the constraint, this test fails and prompts a
+deliberate decision.
 
-Both are M0 application-layer work; the substrate is correct.
+**Production state at resolution:** 8,211 legacy `donto_document`
+rows backfilled to `policy:default/restricted_pending_review`.
+Read access remained fail-closed both before and after — the
+change is purely write-side enforcement.
 
 ---
 
@@ -365,7 +373,7 @@ and similar.
 
 | # | Finding | Severity | Tripwire |
 |---|---|---|---|
-| 1 | Legacy `/documents/register` bypass | DEFER | adversarial::legacy_register_document_does_not_enforce_policy |
+| 1 | Legacy `/documents/register` bypass | HARD (fixed by 0123) | adversarial::legacy_register_document_lands_on_default_restricted_policy |
 | 2 | Max-restriction over policies | DOC | adversarial::three_policy_max_restriction |
 | 3 | Revoked policies excluded | DOC | adversarial::revoked_policy_does_not_contribute_to_effective_actions |
 | 4 | Revocation TOCTOU | DOC | governance_scenarios::revocation_immediate_for_new_checks |

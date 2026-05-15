@@ -13,25 +13,23 @@ use serde_json::json;
 // --------------------------------------------------------------------
 // Trust Kernel — gap tripwires.
 //
-// The legacy `donto_ensure_document` and `donto_register_document` SQL
-// functions DO NOT require policy_id. The  entry point
-// `donto_register_source` does. Until the HTTP layer is migrated
-// in M0's middleware step, callers using the legacy functions can
-// still register a source with NULL policy_id. These tests pin the
-// current state so a future middleware change isn't surprising:
+// Migration 0123 closes the F-1 substrate gap: donto_document.policy_id
+// is NOT NULL with a DEFAULT of
+// 'policy:default/restricted_pending_review' (fail-closed, zero
+// allowed_actions). Legacy callers that don't supply a policy_id
+// still satisfy NOT NULL — they land on the fail-closed default
+// rather than creating an unpoliced row.
 //
-//   * `legacy_register_document_does_not_enforce_policy` — asserts
-//     the bypass exists today (so the test will FAIL when the bypass
-//     is closed, prompting a deliberate migration).
-//   * `register_source_enforces_policy` — asserts the  path is
-//     correct.
+//   * `legacy_register_document_lands_on_default_restricted_policy`
+//     — asserts donto_ensure_document succeeds and produces a
+//     document whose policy is fail-closed.
 // --------------------------------------------------------------------
 
 #[tokio::test]
-async fn legacy_register_document_does_not_enforce_policy() {
+async fn legacy_register_document_lands_on_default_restricted_policy() {
     let client = pg_or_skip!(connect().await);
     let c = client.pool().get().await.unwrap();
-    let prefix = tag("adv-legacy-bypass");
+    let prefix = tag("adv-legacy-defaulted");
     let iri = format!("src:{prefix}/legacy");
     let id: uuid::Uuid = c
         .query_one(
@@ -41,9 +39,7 @@ async fn legacy_register_document_does_not_enforce_policy() {
         .await
         .unwrap()
         .get(0);
-
-    // Document is created without policy_id.
-    let policy: Option<String> = c
+    let policy: String = c
         .query_one(
             "select policy_id from donto_document where document_id = $1",
             &[&id],
@@ -51,12 +47,13 @@ async fn legacy_register_document_does_not_enforce_policy() {
         .await
         .unwrap()
         .get(0);
-    assert!(
-        policy.is_none(),
-        "legacy path bypasses policy requirement; M0 middleware must close this"
+    assert_eq!(
+        policy, "policy:default/restricted_pending_review",
+        "legacy path must default-assign the fail-closed policy"
     );
 
-    // Effective actions still default-restrict because no policy is assigned.
+    // Effective actions remain fail-closed because the default
+    // policy has zero allowed_actions.
     let allowed_read: bool = c
         .query_one(
             "select donto_action_allowed('document', $1, 'read_content')",
@@ -67,7 +64,7 @@ async fn legacy_register_document_does_not_enforce_policy() {
         .get(0);
     assert!(
         !allowed_read,
-        "fail-closed default still applies even when policy_id is NULL"
+        "default policy must not grant read_content"
     );
 }
 
