@@ -74,14 +74,13 @@ Remaining M6 work:
   UniMorph English paradigm, a small SIL LIFT dictionary, and
   one ELAN annotation file. Goal: verify the loss reports stay
   compact under real-world inputs.
-- **18 language-specific frame types** (PRD §13). They're a
-  single migration `0124_ling_frames.sql` registering rows in
-  `donto_frame_type`. Best authored after the importers reveal
-  which frames they actually emit.
 - **CLI wiring.** `donto extract` and `donto ingest` already
   exist for generic formats; the linguistic importers would
   benefit from `donto ling cldf <path>` style subcommands.
   ~50 LOC per importer dispatch.
+
+✅ **18 language-specific frame types** registered by migration
+`0124_ling_frame_types.sql`. Applied to prod 2026-05-15.
 
 ### M7 Release Builder — past skeleton
 
@@ -120,21 +119,19 @@ H6 is currently subject-pinned to dodge the Phase-4 evaluator's
 nested-loop cost. The Phase-10 planner work is the proper fix;
 revisit H6 then.
 
-### M9 Federation Research Spike — decision recorded
+### M9 Federation Research Spike — signed envelopes shipped
 
 Memo landed at [`M9-FEDERATION-MEMO.md`](M9-FEDERATION-MEMO.md).
-Decision:
-- **Proceed** — signed RO-Crate releases + DataCite-style
-  citation metadata.
-- **Reject** — live cross-instance SPARQL/DontoQL federation
-  (count-channel leak risk; revisit when mitigation funded).
-- **Defer** — Solid Pods (deployment-shape, not protocol).
+Sign/verify spike landed at `donto-release::envelope` +
+`donto release {keygen,sign,verify}` CLI subcommands. Ed25519
+over canonical-JSON SHA-256, did:key encoding, 8 unit tests,
+end-to-end prod smoke (A signs, B verifies, tamper detected).
 
-Smallest next step: the 200-LOC `donto release sign` /
-`donto release verify` spike outlined at the bottom of the memo.
-That delivers the M9 acceptance bullet ("two toy instances
-exchange policy-filtered release metadata") without committing
-to a full federation stack.
+Smallest next step: **publish a release manifest** end-to-end —
+write a release with `donto-release::build_release`, sign with
+the spike, push to DataCite or a stand-in registry. Currently
+`build_release` produces a manifest and the envelope wraps any
+JSON; what's missing is the glue + a citation-metadata extractor.
 
 ## Other documented gaps
 

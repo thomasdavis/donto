@@ -10,6 +10,7 @@
 
 pub mod alert;
 pub mod analyzer_paraconsistency;
+pub mod analyzer_reviewer_acceptance;
 pub mod detector_rule_duration;
 pub mod features;
 pub mod findings;
