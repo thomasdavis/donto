@@ -23,6 +23,10 @@ donto-ling-ud        = { path = "../../packages/donto-ling-ud" }
 donto-ling-unimorph  = { path = "../../packages/donto-ling-unimorph" }
 donto-ling-lift      = { path = "../../packages/donto-ling-lift" }
 donto-ling-eaf       = { path = "../../packages/donto-ling-eaf" }
+donto-blob           = { path = "../../packages/donto-blob" }
+walkdir              = "2"
+regex                = "1"
+futures-util         = { workspace = true }
 tokio             = { workspace = true }
 clap              = { workspace = true }
 anyhow            = { workspace = true }

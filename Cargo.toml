@@ -12,6 +12,7 @@ members = [
     "packages/donto-migrate",
     "packages/donto-release",
     "packages/donto-analytics",
+    "packages/donto-blob",
     "packages/donto-synthetic",
     "packages/donto-alert-sink",
     "apps/donto-cli",

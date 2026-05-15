@@ -51,6 +51,22 @@ struct Cli {
     )]
     dsn: String,
 
+    /// Blob-store backend used by `donto blob ...`. Default: local.
+    #[arg(long, global = true, default_value = "local", value_name = "BACKEND")]
+    blob_backend: String,
+    /// Local-FS blob root (when --blob-backend=local).
+    /// Reads $DONTO_BLOB_ROOT, defaults to /mnt/donto-data/blobs.
+    #[arg(long, global = true, env = "DONTO_BLOB_ROOT", value_name = "DIR")]
+    blob_root: Option<String>,
+    /// GCS bucket name (when --blob-backend=gcs).
+    /// Reads $DONTO_BLOB_BUCKET.
+    #[arg(long, global = true, env = "DONTO_BLOB_BUCKET", value_name = "BUCKET")]
+    blob_bucket: Option<String>,
+    /// `gcloud --configuration=<name>` to use (when --blob-backend=gcs).
+    /// Reads $DONTO_BLOB_GCLOUD_CONFIG.
+    #[arg(long, global = true, env = "DONTO_BLOB_GCLOUD_CONFIG", value_name = "NAME")]
+    blob_gcloud_config: Option<String>,
+
     #[command(subcommand)]
     cmd: Cmd,
 }
@@ -212,6 +228,13 @@ enum Cmd {
     #[command(subcommand)]
     Policy(PolicyCmd),
 
+    /// Content-addressed blob store CRUD. Two backends:
+    ///   local — writes to <root>/sha256/<hex> on disk
+    ///   gcs   — writes to gs://<bucket>/sha256/<hex> via gcloud
+    /// Default: local-fs at $DONTO_BLOB_ROOT or /mnt/donto-data/blobs.
+    #[command(subcommand)]
+    Blob(BlobCmd),
+
     /// Extract knowledge from unstructured text using an LLM, then ingest
     /// the resulting facts into donto. Uses OpenRouter (Grok 4.1 Fast by
     /// default) to extract 8-tier predicates from articles, transcripts,
@@ -367,6 +390,94 @@ enum Cmd {
         #[command(subcommand)]
         action: AnalyzeCmd,
     },
+}
+
+#[derive(Subcommand, Debug)]
+enum BlobCmd {
+    /// Upload a single file. Idempotent: re-uploading the same
+    /// bytes is a no-op (the SHA-256 already exists).
+    Upload {
+        #[arg(value_name = "PATH")]
+        path: PathBuf,
+        /// Optional MIME type. Auto-sniffed from the file extension
+        /// when omitted.
+        #[arg(long)]
+        mime: Option<String>,
+        /// Skip registering the blob in donto_blob; just upload.
+        #[arg(long)]
+        no_register: bool,
+    },
+    /// Walk a directory recursively and upload every file. Idempotent
+    /// per file. Prints a JSON summary at the end.
+    Sync {
+        #[arg(value_name = "DIR")]
+        dir: PathBuf,
+        /// Skip files matching this regex (applied to the absolute path).
+        #[arg(long, value_name = "REGEX")]
+        exclude: Option<String>,
+        /// Max concurrent uploads.
+        #[arg(long, default_value_t = 8, value_name = "N")]
+        concurrency: usize,
+        #[arg(long)]
+        no_register: bool,
+    },
+    /// List blobs registered in donto_blob (most-recent first).
+    List {
+        #[arg(long, default_value_t = 50, value_name = "N")]
+        limit: u32,
+        /// Only show blobs whose bucket_uri is NULL.
+        #[arg(long)]
+        only_unsynced: bool,
+    },
+    /// Aggregate stats: count, total bytes, by-mime breakdown.
+    Stats,
+    /// Fetch a blob by its sha256 hex; writes to stdout (or --out).
+    Fetch {
+        #[arg(value_name = "SHA256_HEX")]
+        sha: String,
+        #[arg(long, value_name = "PATH")]
+        out: Option<PathBuf>,
+    },
+    /// Find blobs that have zero referring revisions (`ref_count = 0`).
+    /// Prints a list; pass `--delete` to actually drop them from the
+    /// store + DB (irreversible).
+    Gc {
+        #[arg(long)]
+        delete: bool,
+    },
+}
+
+/// Resolve a BlobStore from CLI flags + environment. Common to all
+/// blob subcommands.
+fn resolve_blob_store(
+    backend: &str,
+    root: Option<&str>,
+    bucket: Option<&str>,
+    configuration: Option<&str>,
+) -> anyhow::Result<Box<dyn donto_blob::BlobStore>> {
+    match backend {
+        "local" | "local-fs" => {
+            let root = root
+                .map(String::from)
+                .or_else(|| std::env::var("DONTO_BLOB_ROOT").ok())
+                .unwrap_or_else(|| "/mnt/donto-data/blobs".into());
+            Ok(Box::new(donto_blob::LocalFsBlobStore::new(root)))
+        }
+        "gcs" => {
+            let bucket = bucket
+                .map(String::from)
+                .or_else(|| std::env::var("DONTO_BLOB_BUCKET").ok())
+                .ok_or_else(|| {
+                    anyhow::anyhow!("gcs backend requires --bucket or $DONTO_BLOB_BUCKET")
+                })?;
+            let mut store = donto_blob::GcsBlobStore::new(bucket);
+            if let Some(cfg) = configuration {
+                store = store.with_configuration(cfg);
+            }
+            Ok(Box::new(store))
+        }
+        other => anyhow::bail!("unknown blob backend `{other}` (expected local|gcs)"),
+    }
 }
 
 #[derive(Subcommand, Debug)]
@@ -1538,6 +1649,243 @@ async fn main() -> Result<()> {
                 println!("{}", serde_json::to_string_pretty(&out)?);
             }
         },
+        Cmd::Blob(action) => {
+            let store = resolve_blob_store(
+                &cli.blob_backend,
+                cli.blob_root.as_deref(),
+                cli.blob_bucket.as_deref(),
+                cli.blob_gcloud_config.as_deref(),
+            )?;
+            match action {
+                BlobCmd::Upload { path, mime, no_register } => {
+                    let summary = store
+                        .put_file(&path, mime.as_deref())
+                        .await
+                        .with_context(|| format!("uploading {path:?}"))?;
+                    if !no_register {
+                        donto_blob::register_with_db(&client, &summary).await?;
+                    }
+                    println!(
+                        "{}",
+                        serde_json::json!({
+                            "sha256": donto_blob::sha_hex(&summary.sha256),
+                            "uri": summary.uri,
+                            "byte_size": summary.byte_size,
+                            "mime_type": summary.mime_type,
+                            "already_present": summary.already_present,
+                            "backend": store.backend(),
+                            "registered": !no_register,
+                        })
+                    );
+                }
+                BlobCmd::Sync { dir, exclude, concurrency, no_register } => {
+                    let re = exclude
+                        .as_deref()
+                        .map(|p| regex::Regex::new(p))
+                        .transpose()
+                        .context("--exclude must be a valid regex")?;
+                    // Walk the tree, collect paths, then upload with
+                    // bounded concurrency.
+                    let mut paths: Vec<PathBuf> = Vec::new();
+                    for entry in walkdir::WalkDir::new(&dir)
+                        .into_iter()
+                        .filter_map(|e| e.ok())
+                    {
+                        if !entry.file_type().is_file() {
+                            continue;
+                        }
+                        let p = entry.into_path();
+                        if let Some(re) = &re {
+                            if re.is_match(&p.to_string_lossy()) {
+                                continue;
+                            }
+                        }
+                        paths.push(p);
+                    }
+                    let total_files = paths.len();
+                    eprintln!("found {total_files} files; uploading with concurrency={concurrency}");
+                    use futures_util::stream::StreamExt;
+                    let store_ref = std::sync::Arc::new(store);
+                    let client_ref = std::sync::Arc::new(client);
+                    let mut uploaded = 0u64;
+                    let mut already = 0u64;
+                    let mut total_bytes = 0u64;
+                    let mut failed = 0u64;
+                    let progress_every = std::cmp::max(total_files / 20, 1);
+                    let mut stream = futures_util::stream::iter(paths.into_iter().enumerate())
+                        .map(|(i, p)| {
+                            let store_ref = store_ref.clone();
+                            let client_ref = client_ref.clone();
+                            async move {
+                                let res = store_ref.put_file(&p, None).await;
+                                (i, p, res, client_ref)
+                            }
+                        })
+                        .buffer_unordered(concurrency);
+                    while let Some((i, p, res, client_ref)) = stream.next().await {
+                        match res {
+                            Ok(s) => {
+                                if !no_register {
+                                    if let Err(e) =
+                                        donto_blob::register_with_db(&client_ref, &s).await
+                                    {
+                                        eprintln!("register failed for {p:?}: {e}");
+                                    }
+                                }
+                                total_bytes += s.byte_size;
+                                if s.already_present {
+                                    already += 1;
+                                } else {
+                                    uploaded += 1;
+                                }
+                            }
+                            Err(e) => {
+                                failed += 1;
+                                eprintln!("upload failed for {p:?}: {e}");
+                            }
+                        }
+                        if (i + 1) % progress_every == 0 || (i + 1) == total_files {
+                            eprintln!(
+                                "[{}/{total_files}] uploaded={uploaded} already={already} failed={failed}",
+                                i + 1
+                            );
+                        }
+                    }
+                    println!(
+                        "{}",
+                        serde_json::json!({
+                            "dir": dir,
+                            "files_seen": total_files,
+                            "uploaded": uploaded,
+                            "already_present": already,
+                            "failed": failed,
+                            "total_bytes": total_bytes,
+                            "backend": store_ref.backend(),
+                        })
+                    );
+                }
+                BlobCmd::List { limit, only_unsynced } => {
+                    let conn = client.pool().get().await?;
+                    let sql = if only_unsynced {
+                        "select sha256, byte_size, mime_type, bucket_uri, first_seen_at \
+                         from donto_blob where bucket_uri is null \
+                         order by first_seen_at desc limit $1"
+                    } else {
+                        "select sha256, byte_size, mime_type, bucket_uri, first_seen_at \
+                         from donto_blob order by first_seen_at desc limit $1"
+                    };
+                    let rows = conn.query(sql, &[&(limit as i64)]).await?;
+                    let out: Vec<_> = rows
+                        .iter()
+                        .map(|r| {
+                            let sha: Vec<u8> = r.get(0);
+                            serde_json::json!({
+                                "sha256": hex::encode(&sha),
+                                "byte_size": r.get::<_, i64>(1),
+                                "mime_type": r.get::<_, Option<String>>(2),
+                                "bucket_uri": r.get::<_, Option<String>>(3),
+                                "first_seen_at": r.get::<_, chrono::DateTime<chrono::Utc>>(4),
+                            })
+                        })
+                        .collect();
+                    println!("{}", serde_json::to_string_pretty(&out)?);
+                }
+                BlobCmd::Stats => {
+                    let conn = client.pool().get().await?;
+                    let agg = conn
+                        .query_one(
+                            "select count(*)::bigint, \
+                                    coalesce(sum(byte_size), 0)::bigint, \
+                                    count(*) filter (where bucket_uri is not null)::bigint \
+                             from donto_blob",
+                            &[],
+                        )
+                        .await?;
+                    let by_mime = conn
+                        .query(
+                            "select coalesce(mime_type, '(unknown)') as mime, \
+                                    count(*)::bigint, \
+                                    coalesce(sum(byte_size), 0)::bigint \
+                             from donto_blob group by 1 order by 2 desc limit 20",
+                            &[],
+                        )
+                        .await?;
+                    let mime_dist: Vec<_> = by_mime
+                        .iter()
+                        .map(|r| {
+                            serde_json::json!({
+                                "mime": r.get::<_, String>(0),
+                                "blobs": r.get::<_, i64>(1),
+                                "bytes": r.get::<_, i64>(2),
+                            })
+                        })
+                        .collect();
+                    println!(
+                        "{}",
+                        serde_json::to_string_pretty(&serde_json::json!({
+                            "total_blobs": agg.get::<_, i64>(0),
+                            "total_bytes": agg.get::<_, i64>(1),
+                            "with_bucket_uri": agg.get::<_, i64>(2),
+                            "without_bucket_uri": agg.get::<_, i64>(0) - agg.get::<_, i64>(2),
+                            "top_mime_types": mime_dist,
+                        }))?
+                    );
+                }
+                BlobCmd::Fetch { sha, out } => {
+                    let sha_bytes = donto_blob::sha_from_hex(&sha)
+                        .with_context(|| "invalid --sha hex")?;
+                    let bytes = store.fetch(&sha_bytes).await?;
+                    match out {
+                        Some(p) => {
+                            tokio::fs::write(&p, &bytes).await?;
+                            eprintln!("wrote {} bytes to {p:?}", bytes.len());
+                        }
+                        None => {
+                            use std::io::Write;
+                            std::io::stdout().write_all(&bytes)?;
+                        }
+                    }
+                }
+                BlobCmd::Gc { delete } => {
+                    let conn = client.pool().get().await?;
+                    let rows = conn
+                        .query(
+                            "select sha256, byte_size from donto_blob \
+                             where donto_blob_ref_count(sha256) = 0 \
+                             order by byte_size desc limit 1000",
+                            &[],
+                        )
+                        .await?;
+                    let orphans: Vec<_> = rows
+                        .iter()
+                        .map(|r| {
+                            let sha: Vec<u8> = r.get(0);
+                            serde_json::json!({
+                                "sha256": hex::encode(&sha),
+                                "byte_size": r.get::<_, i64>(1),
+                            })
+                        })
+                        .collect();
+                    println!(
+                        "{}",
+                        serde_json::to_string_pretty(&serde_json::json!({
+                            "orphans": orphans.len(),
+                            "would_delete": delete,
+                            "rows": orphans,
+                        }))?
+                    );
+                    if delete {
+                        // Future work: delete bucket objects + DB rows.
+                        // For now, print and refuse — destructive ops
+                        // need an extra confirm flag.
+                        anyhow::bail!(
+                            "blob gc --delete not yet implemented; \
+                             review the orphan list above first"
+                        );
+                    }
+                }
+            }
+        }
         Cmd::Release(action) => match action {
             ReleaseCmd::Keygen => {
                 let kp = donto_release::envelope::Keypair::generate();

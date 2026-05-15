@@ -1,0 +1,33 @@
+[package]
+name        = "donto-blob"
+version     = { workspace = true }
+edition     = { workspace = true }
+rust-version = { workspace = true }
+license     = { workspace = true }
+description = "Content-addressed blob store for donto: trait + local-FS + GCS backends"
+repository  = { workspace = true }
+
+[dependencies]
+donto-client = { path = "../donto-client" }
+serde        = { workspace = true }
+serde_json   = { workspace = true }
+anyhow       = { workspace = true }
+thiserror    = { workspace = true }
+tracing      = { workspace = true }
+tokio        = { workspace = true, features = ["macros", "rt-multi-thread", "fs", "io-util", "process"] }
+sha2         = { workspace = true }
+hex          = { workspace = true }
+async-trait  = "0.1"
+tempfile     = { workspace = true }
+
+[features]
+default = []
+mock    = []
+
+[dev-dependencies]
+tempfile     = { workspace = true }
+tokio        = { workspace = true, features = ["macros", "rt-multi-thread"] }
+uuid         = { workspace = true }
+
+[lints]
+workspace = true
